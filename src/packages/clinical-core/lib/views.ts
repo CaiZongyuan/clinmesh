@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { trimmedInput } from '../../operation-catalog';
 import { caseTruthSchema, catalogSchema, manifestSchema, publicCaseSchema } from '../../data-pack';
 import { gateItem, practitionerRole, sessionSchema, workbenchTab } from '../../platform';
 import { visitSchema } from '../../patient-visit';
@@ -11,7 +12,7 @@ export type WorkspaceView = z.infer<typeof workspaceSchema>;
 
 export const noteFields = z.record(z.string().min(1).max(100), z.string().max(16000));
 export const retiredReview = z.strictObject({ decision: z.enum(['include', 'discard']), localFields: noteFields });
-export const diagnosisMember = z.strictObject({ codeSystem: z.url(), code: z.string().trim().min(1).max(128), primary: z.boolean() });
+export const diagnosisMember = z.strictObject({ codeSystem: z.url(), code: trimmedInput(1, 128), primary: z.boolean() });
 export const diagnosisMembers = z.array(diagnosisMember).min(1).max(8);
 const revision = z.object({ id: z.uuidv7(), revision: z.int().positive(), previousId: z.uuidv7().nullable(), signedBy: z.string(), virtualAt: z.iso.datetime() });
 export const recordRevision = revision.extend({ fields: noteFields });

@@ -1,5 +1,6 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
+import { trimmedInput } from '../../operation-catalog';
 import { organizationSchema } from '../../data-pack';
 import type { ClinicalBillingPort } from '../../mod-billing';
 import { requireEncounter } from '../../patient-visit';
@@ -7,7 +8,7 @@ import { checkVersion, CoreError, type ClinicalQualityIntent, type CommandContex
 import type { EntityRow, StoreReader, StoreScope, StoreTx } from '../../store';
 
 export const id = z.uuidv7();
-export const text = z.string().trim().min(1).max(1000);
+export const text = trimmedInput(1, 1000);
 export const receipt = z.object({ version: z.int().positive() });
 export const wardsBase = '/api/his/ward';
 export const access = (...capabilities: string[]) => ({ capabilities, visitorOnly: true });

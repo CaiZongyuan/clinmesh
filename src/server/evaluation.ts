@@ -2,7 +2,7 @@ import { v7 } from 'uuid';
 import { z } from 'zod';
 import { receiptSchema, replyEvent } from '../packages/agent-protocol';
 import { clinicianTool, PatientRuntime, resolveAgentProvider, runEvaluationDoctor, type AgentEnvironment, type EvaluationAction } from '../packages/agent-runtime';
-import { debriefSchema, encounterViewSchema } from '../packages/clinical-core';
+import { readCompletedDebrief, encounterViewSchema } from '../packages/clinical-core';
 import { installHospitalDataPack, type Coding } from '../packages/data-pack';
 import { prescribingViewSchema } from '../packages/mod-pharmacy';
 import { CoreError, permits, resolveActor, type Credential, type ModuleRegistry, type OperationCatalog } from '../packages/platform';
@@ -115,7 +115,7 @@ export async function evaluateEncounter(store: StorePort, catalog: OperationCata
   });
   const final = await encounter();
   const completed = final.status === 'completed';
-  const debrief = completed ? debriefSchema.parse(await catalog.require('encounter.debrief').invoke({ store, credential, targetId: encounterId, body: async () => ({}) })) : undefined;
+  const debrief = completed ? await store.read(reader => readCompletedDebrief(reader, resolveActor(reader, credential, new Date().toISOString()), encounterId)) : undefined;
   const truth = debrief?.caseTruth;
   const reported = await studies.signed();
   const medications = prescribing ? await pharmacy() : undefined;

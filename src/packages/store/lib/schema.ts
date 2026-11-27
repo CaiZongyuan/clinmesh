@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const uuid = z.uuidv7().regex(/^[0-9a-f-]+$/);
-const caseId = z.union([uuid, z.uuid({ version: 'v5' }).regex(/^[0-9a-f-]+$/)]);
+export const caseId = z.union([uuid, z.uuid({ version: 'v5' }).regex(/^[0-9a-f-]+$/)]);
 export const instant = z.iso.datetime();
 export const workspace = z.strictObject({ id: uuid, recorded_at: instant });
 export type Workspace = z.infer<typeof workspace>;

@@ -7,7 +7,7 @@ import { adjust, collect, confirm, currentBill, deposit, paymentResult, preview,
 
 const base = '/api/his/encounters/:id/billing';
 const cashier = { capabilities: ['settle'], visitorOnly: true };
-const route = (name: string) => ({ name, path: `${base}/${name}`, method: 'POST' as const, access: cashier });
+const route = (name: string) => ({ name, path: `${base}/${name}`, method: 'POST' as const, access: cashier, mode: name.endsWith('.preview') ? 'preview' as const : undefined });
 
 export function createBillingModule(options: BillingOptions = {}) {
   return {
@@ -44,7 +44,7 @@ export function createBillingModule(options: BillingOptions = {}) {
       }
       catalog.command(route('payment.recover'), { paymentId: id, paymentVersion: positive }, paymentResult, (ctx, input) => recover(ctx, read(ctx), input.paymentId, input.paymentVersion, options));
       catalog.command(route('charge.adjust'), { chargeId: id, amountMinor: positive, reason }, z.object({ adjustmentId: id }), (ctx, input) => adjust(ctx, read(ctx), input, false, options));
-      catalog.command(route('inpatient.correction'), { chargeId: id, amountMinor: z.int().refine(value => value !== 0), reason }, z.object({ adjustmentId: id }), (ctx, input) => adjust(ctx, read(ctx), input, true, options));
+      catalog.command(route('inpatient.correction'), { chargeId: id, amountMinor: z.union([z.int().negative(), z.int().positive()]), reason }, z.object({ adjustmentId: id }), (ctx, input) => adjust(ctx, read(ctx), input, true, options));
       catalog.command(route('inpatient.settlement.preview'), {}, previewSchema, ctx => { const bill = read(ctx); return preview(ctx, bill, settlementPlan(bill)); });
       catalog.command(route('inpatient.discharge.settle'), { commitToken: id }, snapshotSchema, (ctx, { commitToken }) => settle(ctx, read(ctx), commitToken));
     },

@@ -46,12 +46,12 @@ it('discovers the workbench, edits real drafts, and requires human approval for 
     expect(new Set(visible.map(entry => entry.label)).size).toBe(visible.length);
   };
   const formal = async (label: string, suffix: string) => {
-    const button = screen.getByRole('button', { name: label });
-    await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
-    expect(button.getAttribute('data-agent-confirm')).toBeTruthy();
+    const button = () => screen.getByRole('button', { name: label });
+    await waitFor(() => expect(button().hasAttribute('disabled'), `${label} must be ready`).toBe(false));
+    expect(button().getAttribute('data-agent-confirm')).toBeTruthy();
     expect((await agent.act({ steps: [{ ref: label, action: 'press' }] })).ok).toBe(false);
     expect(submitted.filter(path => path.endsWith(suffix))).toHaveLength(0);
-    await human.click(button);
+    await human.click(button());
     await waitFor(() => expect(submitted.filter(path => path.endsWith(suffix))).toHaveLength(1));
   };
   await withNodeWorkspace(async origin => {
@@ -159,6 +159,8 @@ it('discovers the workbench, edits real drafts, and requires human approval for 
     await screen.findByRole('tab', { name: 'Debrief' }); await set('Clinical views', 'Debrief'); await screen.findByRole('heading', { name: 'Case debrief' });
     expect((await agent.act({ steps: [{ ref: 'Role · Family clinician', action: 'press', args: ['Clinic administrator'] }] })).ok).toBe(true);
     await screen.findByRole('button', { name: 'Role · Clinic administrator' });
+    expect(screen.queryByRole('tab', { name: 'Debrief' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Case debrief' })).toBeNull();
     await human.click(screen.getByRole('button', { name: 'Teaching outpatient clinic' }));
     await screen.findByRole('button', { name: 'Review epoch reset' }); discover();
     await set('Hospital data pack', 'Teaching cardiovascular centre');

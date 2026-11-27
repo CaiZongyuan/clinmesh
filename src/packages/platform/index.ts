@@ -2,6 +2,6 @@ export { ModuleRegistry, gateItem, parseRuntimeHealth, workbenchTab, type ClinMe
 export { CoreError, createVisitorGate, sha256, type Credential, type GateSettings, type Ticket } from './lib/visitor-gate';
 export { authorize, checkVersion, commandEnvelope, executeCommand, localizedName, permits, practitionerRole, resolveActor, type Access, type Actor, type CommandContext, type CommandEnvelope, type Route } from './lib/commands';
 export { OperationCatalog, type ReadContext } from './lib/operation-catalog';
-export type { ClinicalQualityIntent } from './lib/clinical-quality';
+export { clinicalOverrideInput, overrideReasons, overrideSchema, type ClinicalQualityIntent } from './lib/clinical-quality';
 export type { ClinicalQualityGate } from './lib/commands';
 export { administer, registerPlatformOperations, sessionSchema, sessionView } from './lib/control-plane';

@@ -32,7 +32,7 @@ function protectEnvelope(input: object, config: AgentProvider) {
 }
 
 export function registerPatientOperations(catalog: OperationCatalog, env: AgentEnvironment) {
-  catalog.command({ name: 'consultation.question', method: 'POST', path: `${base}/turns`, access: assess }, turnInput.shape, z.union([receiptSchema, priorReceipt]), async (context, input, _, headers) => {
+  catalog.command({ name: 'consultation.question', method: 'POST', path: `${base}/turns`, access: assess, risk: 'write' }, turnInput.shape, z.union([receiptSchema, priorReceipt]), async (context, input, _, headers) => {
     const { tx, at, targetId } = context;
     const encounter = requireEncounter(tx, at, targetId);
     if (encounter.active_practitioner_role === context.actor.role.id && encounter.status === 'active' && tx.list(at, 'consultations', { encounter_id: targetId })[0]?.reply_pending) throw new CoreError(409, 'CONSULTATION_REPLY_IN_FLIGHT');
@@ -50,7 +50,7 @@ export function registerPatientOperations(catalog: OperationCatalog, env: AgentE
     return pending && lastQuestion ? { sessionId: targetId, questionId: lastQuestion.id, attempt: 0, status: 'stopped', code: 'PATIENT_REPLY_NEEDS_RESUME' } : null;
   });
   for (const action of ['stop', 'retry'] as const) {
-    catalog.command({ name: `consultation.${action}`, method: 'POST', path: `${base}/${action}`, access: assess }, { questionId: z.uuidv7(), attempt: z.int().nonnegative() }, receiptSchema, async (context, input, _, headers) => {
+    catalog.command({ name: `consultation.${action}`, method: 'POST', path: `${base}/${action}`, access: assess, risk: 'write', expectedVersionFields: ['attempt'] }, { questionId: z.uuidv7(), attempt: z.int().nonnegative() }, receiptSchema, async (context, input, _, headers) => {
       const { tx, at, targetId } = context;
       const version = editEncounter(context);
       const { run, lastQuestion, pending } = latestQuestion(tx, at, targetId);
