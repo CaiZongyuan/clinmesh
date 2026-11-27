@@ -127,6 +127,12 @@ export function seedConformance(tx: StoreTx): string[] {
   add('billing_recoveries', { id: fixtureId(105), payment_id: fixtureId(51), status: 'succeeded', ...times });
   add('billing_releases', { id: fixtureId(106), charge_id: fixtureId(49), ...times });
   add('billing_settlements', { id: fixtureId(107), encounter_id, preview_id: fixtureId(103), snapshot: { netMinor: 12300 }, ...times });
+  add('clinical_risk_assessments', { id: fixtureId(131), encounter_id, fields: { killipClass: 'II' }, signed_by: practitioner_role, ...firstRevision, ...times });
+  add('clinical_override_reasons', { id: tx.list(at, 'clinical_overrides')[0]!.id, audit_id: fixtureId(14), command_name: 'synthetic.sign', reason_code: 'specialist-judgment' });
+  add('patients', { id: fixtureId(132), display_name: 'Former identity', birth_date: null, version: 1 });
+  tx.update(at, 'patients', fixtureId(132), 1, { display_name: 'Current identity' });
+  tx.update(at, 'clinical_orders', order_id, 1, { status: 'reported' });
+  names.push('patient_identity_versions', 'encounter_state_versions', 'clinical_order_versions');
   tx.insert(otherEpoch, 'audit_events', { id: fixtureId(14), actor: 'older-actor', practitioner_role, operation: 'older-audit', target_id: encounter_id, outcome: 'accepted', ...times });
   tx.insert(otherWorkspace, 'patients', { id: patient_id, display_name: 'Other Workspace', birth_date: null, version: 1 });
   return names;

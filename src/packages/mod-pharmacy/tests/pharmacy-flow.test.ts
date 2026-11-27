@@ -17,7 +17,8 @@ async function pharmacyFlow(fetchApi: PharmacyHttp) {
   const cap = await start('Avery Reed', 'J18.9');
   const sign = (version: number, lines: typeof dose[], extra: object = {}) => command(`${cap}/prescriptions`, version, { lines, ...extra });
   const refused = async (request: ReturnType<typeof command>, code: string) => { const response = await request; expect([response.status, await response.json()]).toEqual([409, { code }]); };
-  await refused(sign(5, [{ ...dose, code: 'amoxicillin', dose: 500 }], { override: { reason: 'synthetic override' } }), 'MEDICATION_ALLERGY_CONFLICT');
+  const allergy = await sign(5, [{ ...dose, code: 'amoxicillin', dose: 500 }], { override: { reason: 'synthetic override' } });
+  expect([allergy.status, await allergy.json()]).toEqual([409, { code: 'CLINICAL_QUALITY_RED_LINE', details: { ruleCodes: 'MEDICATION_ALLERGY_CONFLICT' } }]);
   await refused(sign(5, [dose, { ...dose, codeSystem: 'urn:clinmesh:general:community-drug', code: 'doxy-100' }]), 'PRESCRIPTION_MIXED_CATALOG_SOURCES');
   await refused(sign(5, [{ ...dose, routeCode: 'PR' }]), 'PRESCRIPTION_ROUTE_NOT_ALLOWED');
   const signed = receipt.parse(await (await sign(5, [dose])).json());

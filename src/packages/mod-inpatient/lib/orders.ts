@@ -6,11 +6,27 @@ import { requireEncounter } from '../../patient-visit';
 import { checkVersion, type CommandContext, type OperationCatalog } from '../../platform';
 import type { EntityRow, StoreReader, StoreScope } from '../../store';
 import { expand, localDay, policy, task } from './calendar';
-import { advance, chargeOrder, conflict, id, mutateAdmission, openOrder, quality, receipt, route, text, times, wardDepartment, type WardBilling } from './ward';
+import { advance, chargeOrder, conflict, id, mutateAdmission, openOrder, receipt, route, text, times, wardDepartment, type WardBilling } from './ward';
 
 export const identifiers = z.array(id).min(1).max(20).refine(ids => new Set(ids).size === ids.length);
 const diagnosis = z.strictObject({ codeSystem: z.url(), code: text, primary: z.boolean(), ordinal: z.int().min(1).max(8), poa: z.enum(['Y', 'N', 'U', 'W', '1']) });
 const directions = z.object({ dose: z.number().positive(), route: text, quantity: z.int().positive(), timesPerDay: z.int().positive() });
+export function wardMedicationDirections(reader: StoreReader, at: StoreScope, order: EntityRow<'clinical_orders'>) {
+  const signed = reader.get(at, 'ward_order_directions', order.id);
+  if (order.kind !== 'medication' || !signed) return undefined;
+  const item = reader.get(at, 'catalog_items', order.catalog_item_id)!;
+  const { inpatientDoseBasis } = medicationSchema.parse(item.definition);
+  const { dose, route, timesPerDay } = directions.parse(signed.directions);
+  return { dose, routeCode: route, timesPerDay, doseUnit: inpatientDoseBasis.unit, frequency: signed.frequency };
+}
+
+export function wardMedicationDeliveries(reader: StoreReader, at: StoreScope, orderId: string) {
+  return reader.list(at, 'ward_tasks', { order_id: orderId }).flatMap(task => reader.list(at, 'ward_deliveries', { task_id: task.id }).map(delivery => {
+    const movement = reader.get(at, 'inventory_movements', delivery.movement_id)!;
+    const lot = reader.get(at, 'inventory_lots', movement.lot_id)!;
+    return { ...delivery, unit: lot.unit };
+  }));
+}
 export function latestDiagnoses(reader: StoreReader, at: StoreScope, encounterId: string) {
   const latest = reader.list(at, 'diagnosis_revisions', { encounter_id: encounterId }).sort((first, second) => second.revision - first.revision)[0];
   return latest ? reader.list(at, 'diagnosis_confirmations', { revision_id: latest.id }).sort((first, second) => first.ordinal - second.ordinal)
@@ -22,8 +38,8 @@ export function wardOrders(reader: StoreReader, at: StoreScope, encounterId: str
     return schedule ? [{ order, schedule }] : [];
   });
 }
-export function activeMedicationIds(reader: StoreReader, at: StoreScope, encounterId: string) {
-  return wardOrders(reader, at, encounterId).filter(({ order }) => order.kind === 'medication' && ['signed', 'verified'].includes(order.status)).map(({ order }) => order.catalog_item_id);
+export function activeMedicationIds(reader: StoreReader, at: StoreScope, encounterId: string, longTermOnly = false) {
+  return wardOrders(reader, at, encounterId).filter(({ order, schedule }) => order.kind === 'medication' && ['signed', 'verified'].includes(order.status) && (!longTermOnly || schedule.duration === 'long')).map(({ order }) => order.catalog_item_id);
 }
 export function validateMedication(ctx: CommandContext, item: EntityRow<'catalog_items'>, dose: number | undefined, routeCode: string | undefined, timesPerDay: number, override: unknown) {
   const { tx, at, targetId } = ctx;
@@ -39,8 +55,10 @@ export function validateMedication(ctx: CommandContext, item: EntityRow<'catalog
   const medicines = tx.list(at, 'catalog_items', { kind: 'medications' });
   const issues = checkPrescription(medicines.map(row => medicationSchema.parse(row.definition)), [line], { rules: rules ? pharmacyRulesSchema.strip().parse(rules) : null,
     allergies: allergies.status === 'confirmed' ? allergies.items.map(entry => entry.groupCode) : [], diagnoses: latestDiagnoses(tx, at, targetId), activeMedications: medicines.filter(row => active.includes(row.id)).map(row => ({ codeSystem: row.code_system, code: row.code })) });
-  if (issues.length) conflict(issues[0]!);
-  quality(ctx, { kind: 'medication', encounterId: targetId, lines: [line], activeMedicationIds: active }, override);
+  const approved = ctx.checkClinicalQuality?.({ kind: 'medication', encounterId: targetId, lines: [line], activeMedicationIds: active }, override);
+  const indicationOverride = approved?.includes('ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION') && drug.safety.classCodes.some(code => ['antibacterial', 'penicillin'].includes(code));
+  const issue = issues.find(code => code !== 'PRESCRIPTION_INDICATION_MISMATCH' || !indicationOverride);
+  if (issue) conflict(issue);
   return { dose, route: routeCode, quantity, timesPerDay };
 }
 

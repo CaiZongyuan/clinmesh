@@ -33,7 +33,7 @@ async function pciJourney(request: Parameters<typeof wardClient>[0]) {
   expect(await read()).toMatchObject({ surgeries: [{ status: 'standby-pci', report: { observations: expect.arrayContaining([expect.objectContaining({ code: 'LAD-FFR', value: 0.74 })]) } }], orders: [{ status: 'signed' }] });
   await act('surgery.convert-to-pci', { requestId, procedureId: item('36.0700'), materials: [{ itemId: item('des-3x18'), quantity: 1 }] });
   await act('surgery.start', { requestId });
-  await expect(act('surgery.record-medication', { requestId, itemId: item('rosuvastatin'), dose: 10, route: 'PO' })).rejects.toThrow('PRESCRIPTION_CLASS_CONFLICT');
+  await expect(act('surgery.record-medication', { requestId, itemId: item('rosuvastatin'), dose: 10, route: 'PO' })).rejects.toThrow(ward.current().enabledModules.includes('mod-cds') ? 'CLINICAL_QUALITY_RED_LINE' : 'PRESCRIPTION_CLASS_CONFLICT');
   const dose = { requestId, itemId: item('sodium-chloride'), dose: 500, route: 'IVGTT' };
   const { medicationOrderId } = await act('surgery.record-medication', dose);
   expect(await read()).toMatchObject({ surgeries: [{ stages: [{}, { administrations: [{ dose: 500, unit: 'mL', route: 'IVGTT', lots: [{ lotNumber: 'CV-A', quantity: 1 }], corrected: false }] }] }] });

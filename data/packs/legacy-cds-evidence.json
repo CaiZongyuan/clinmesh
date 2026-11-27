@@ -1,0 +1,14 @@
+[
+  {
+    "packId": "global-general", "packVersions": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"], "ecg": { "codeSystem": "urn:clinmesh:general:service", "code": "ecg12" },
+    "topicEvidence": { "acute-chest-pain-troponin": [
+      { "codeSystem": "http://loinc.org", "code": "89579-7" }, { "codeSystem": "http://loinc.org", "code": "8480-6" },
+      { "codeSystem": "http://loinc.org", "code": "8867-4" }, { "codeSystem": "urn:clinmesh:clinical", "code": "stSegmentDeviation" }
+    ] }
+  },
+  {
+    "packId": "cn-cardiology", "packVersions": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"], "ecg": { "codeSystem": "urn:clinmesh:cv:service", "code": "ecg" },
+    "diagnosticSystems": ["http://hl7.org/fhir/sid/icd-10", "urn:clinmesh:reference:nhsa-diagnosis"],
+    "topicEvidence": { "hypertension-treatment-principles": [{ "codeSystem": "http://loinc.org", "code": "8480-6" }, { "codeSystem": "http://loinc.org", "code": "8462-4" }] }
+  }
+]

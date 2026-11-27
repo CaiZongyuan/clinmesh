@@ -150,6 +150,11 @@ export const tables = {
   ward_coding_reviews: table({ revision_id: ref('ward_chart_revisions'), reviewed_by: text, coding: frozen, ...times }, 'revision_id'),
   ward_surgery_starts: table({ id: ref('ward_surgery_stages'), preoperative_orders: column(z.array(uuid), 'json'), ...times }),
   ward_surgical_drug_lots: table({ order_id: order, movement_id: ref('inventory_movements'), quantity: positive, reverses_id: optional(ref('ward_surgical_drug_lots')), ...times }, 'movement_id', 'reverses_id'),
+  clinical_risk_assessments: revisions('clinical_risk_assessments', 'encounter_id', { encounter_id: enc, fields: frozen, signed_by: text }),
+  clinical_override_reasons: table({ id: ref('clinical_overrides'), audit_id: ref('audit_events'), reason_code: text, command_name: text }, 'audit_id'),
+  patient_identity_versions: table({ patient_id: id, version, display_name: text, birth_date: optional(column(z.iso.date())), identifiers: column(z.array(z.strictObject({ issuer: z.string().min(1), value: z.string().min(1) })), 'json'), replaced_at: timestamp }, 'patient_id, version'),
+  encounter_state_versions: table({ encounter_id: enc, version, status: text, practitioner_role: text, replaced_at: timestamp }, 'encounter_id, version'),
+  clinical_order_versions: table({ order_id: order, version, status: text, replaced_at: timestamp }, 'order_id, version'),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;
@@ -160,6 +165,7 @@ export const billingEntities = ['charge_sources', 'billing_previews', 'billing_a
 export const pharmacyEntities = ['prescription_signatures', 'prescription_directions', 'prescription_withdrawals', 'inventory_lot_quarantines'] as const satisfies readonly Entity[];
 export const labEntities = ['lab_drafts', 'lab_requests'] as const satisfies readonly Entity[];
 export const wardEntities = ['ward_certificates', 'ward_referrals', 'ward_transfer_tasks', 'ward_order_directions', 'ward_tasks', 'ward_deliveries', 'ward_incurred_orders', 'ward_bed_days', 'ward_specimen_dispatches', 'ward_surgery_plans', 'ward_surgery_preparations', 'ward_surgery_stages', 'ward_surgery_supplies', 'ward_material_corrections', 'ward_surgery_charges', 'ward_chart_revisions', 'ward_coding_reviews', 'ward_surgery_starts', 'ward_surgical_drug_lots'] as const satisfies readonly Entity[];
+export const decisionEntities = ['clinical_risk_assessments', 'clinical_override_reasons', 'patient_identity_versions', 'encounter_state_versions', 'clinical_order_versions'] as const satisfies readonly Entity[];
 
 export const editable = {
   patients: ['display_name', 'birth_date'], encounters: ['active_practitioner_role', 'status'], consultations: ['reply_pending'],

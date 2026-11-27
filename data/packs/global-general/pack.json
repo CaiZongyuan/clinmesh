@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "global-general",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching outpatient clinic", "zh": "综合教学门诊" },
     "description": {
@@ -258,6 +258,7 @@
       {
         "codeSystem": "urn:clinmesh:general:service",
         "code": "ecg12",
+        "modality": "ecg-12-lead",
         "display": { "en": "12-lead ECG", "zh": "12导联心电图" },
         "kind": "examination",
         "unitPriceMinor": 2850,
@@ -341,6 +342,7 @@
     "materials": []
   },
   "knowledge": {
+    "cds": { "diagnosticSystems": ["http://hl7.org/fhir/sid/icd-10"], "ffrAnalytes": [], "pciProcedures": [] },
     "pharmacy": {
       "indicationCodeSystem": "http://hl7.org/fhir/sid/icd-10",
       "classConflicts": [["acei", "arb"], ["acei", "arni"], ["arb", "arni"], ["p2y12", "p2y12"], ["statin", "statin"]],
@@ -352,6 +354,12 @@
     "guidelineTopics": [
       {
         "id": "acute-chest-pain-troponin",
+          "evidence": [
+            { "codeSystem": "http://loinc.org", "code": "89579-7" },
+            { "codeSystem": "http://loinc.org", "code": "8480-6" },
+            { "codeSystem": "http://loinc.org", "code": "8867-4" },
+            { "codeSystem": "urn:clinmesh:clinical", "code": "stSegmentDeviation" }
+          ],
         "source": "https://doi.org/10.1161/CIR.0000000000001029",
         "version": "2021",
         "physicalPage": 3,
@@ -531,6 +539,7 @@
             "service": { "codeSystem": "urn:clinmesh:general:service", "code": "ecg12" },
             "stage": "initial",
             "revision": 1,
+            "stSegmentDeviation": true,
             "summary": {
               "en": "Horizontal ST depression and T-wave inversion in V4–V6.",
               "zh": "V4–V6 水平型 ST 段压低伴 T 波倒置。"

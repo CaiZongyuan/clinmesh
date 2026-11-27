@@ -56,7 +56,7 @@ export function registerDischarge(catalog: OperationCatalog, billing?: WardBilli
   catalog.command(route('discharge.issue', 'admit'), { clinicalOverride: z.unknown().optional() }, receipt, (ctx, { clinicalOverride }) => {
     const admission = mutateAdmission(ctx, ['admitted'], 'doctor');
     const surgeries = dischargeReady(ctx, admission, false);
-    quality(ctx, { kind: 'discharge', encounterId: ctx.targetId, completedPci: surgeries.some(surgery => surgery.stages.some(stage => stage.kind === 'pci' && stage.executionId)), activeMedicationIds: activeMedicationIds(ctx.tx, ctx.at, ctx.targetId) }, clinicalOverride);
+    quality(ctx, { kind: 'discharge', encounterId: ctx.targetId, completedPci: surgeries.some(surgery => surgery.stages.some(stage => stage.kind === 'pci' && stage.executionId)), activeMedicationIds: activeMedicationIds(ctx.tx, ctx.at, ctx.targetId, true) }, clinicalOverride);
     return advance(ctx, admission, 'discharge-pending');
   });
   catalog.command(route('discharge.depart', 'execute-orders'), {}, receipt, ctx => {

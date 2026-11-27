@@ -4,7 +4,7 @@ import { ConfirmActionButton, Field, Input, Select } from '../../../packages/ui-
 import { type Intent, type WorkbenchStationProps } from '../../workbench-api';
 
 export type Directory = z.infer<typeof directorySchema>;
-export type Commands = WorkbenchStationProps & { directory: Directory; busy: boolean; allowed(name: string): boolean; run(intent: Intent): Promise<unknown> };
+export type Commands = WorkbenchStationProps & { drafts?: import('../../encounter-drafts').EncounterDrafts; directory: Directory; busy: boolean; allowed(name: string): boolean; run(intent: Intent): Promise<unknown> };
 export type StageProps = Commands & { ward: WardView };
 export type Option = { value: string; label: string };
 export function Choice({ label, value, options, change }: { label: string; value: string; options: Option[]; change(value: string): void }) {

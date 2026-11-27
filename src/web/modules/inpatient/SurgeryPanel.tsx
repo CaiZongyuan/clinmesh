@@ -8,6 +8,7 @@ import { Choice, Entry, namedOptions, selected, WardAction, type StageProps } fr
 
 type Surgery = WardView['surgeries'][number];
 const PostoperativeOrder = lazy(() => import('./clinical').then(module => ({ default: module.OrderComposer })));
+const ScreenedPostoperative = lazy(() => import('./ScreenedPostoperative'));
 function selector(panel: StageProps, kind: string) { return panel.directory.items.filter(item => item.kind === kind).map(item => ({ value: item.id, label: item.display[panel.language] })); }
 function Request(panel: StageProps) {
   const text = words(panel.language);
@@ -80,7 +81,7 @@ function Procedure(panel: StageProps & { surgery: Surgery }) {
         {action('complete', text('Complete reviewed procedure', '确认手术完成'), { fingerprint: preview?.fingerprint, ...(note && { note }) }, !preview || preview.deviation && !note.trim())}</>}
     </div>}
     {postoperative.length > 0 && <><p>{text('Postoperative order set', '术后成套医嘱')} · {postoperative.map(row => row.display[panel.language]).join(' · ')}</p>
-      {panel.ward.status === 'admitted' && panel.allowed('ward.order.sign') && stage.executionId && (proposed ? <Suspense fallback={null}><PostoperativeOrder key={proposed.id} {...panel} proposed={{ itemId: proposed.id, executionId: stage.executionId }} onSigned={() => setPostopIndex(index => index !== null && index + 1 < postoperative.length ? index + 1 : null)}/></Suspense> : <Button onClick={() => setPostopIndex(0)}>{text('Review postoperative order set', '逐项重整术后医嘱')}</Button>)}</>}
+      {panel.ward.status === 'admitted' && panel.allowed('ward.order.sign') && stage.executionId && (panel.allowed('cds.order-sets') && surgery.postoperativeSetId ? <Suspense fallback={null}><ScreenedPostoperative {...panel} setId={surgery.postoperativeSetId} executionId={stage.executionId}/></Suspense> : proposed ? <Suspense fallback={null}><PostoperativeOrder key={proposed.id} {...panel} proposed={{ itemId: proposed.id, executionId: stage.executionId }} onSigned={() => setPostopIndex(index => index !== null && index + 1 < postoperative.length ? index + 1 : null)}/></Suspense> : <Button onClick={() => setPostopIndex(0)}>{text('Review postoperative order set', '逐项重整术后医嘱')}</Button>)}</>}
   </Card>;
 }
 export default function SurgeryPanel(panel: StageProps) {

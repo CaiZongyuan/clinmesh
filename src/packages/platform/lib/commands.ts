@@ -2,6 +2,7 @@ import { v7 } from 'uuid';
 import { z } from 'zod';
 import { canonicalJson, type StorePort, type StoreReader, type StoreScope, type StoreTx } from '../../store';
 import { CoreError, sha256, type Credential } from './visitor-gate';
+import type { ClinicalQualityIntent } from './clinical-quality';
 
 export const commandEnvelope = z.object({ epoch: z.uuidv7(), idempotencyKey: z.string().trim().min(1).max(160).refine(key => !key.startsWith('patient-reply:')), expectedVersion: z.int().nonnegative() });
 export type CommandEnvelope = z.infer<typeof commandEnvelope>;
@@ -11,7 +12,8 @@ const organization = z.object({ practitionerRoles: z.array(practitionerRole) });
 export type Access = { capabilities?: readonly string[]; visitorOnly?: boolean };
 export type Actor = ReturnType<typeof resolveActor>;
 export type EncounterWrite = { encounterId: string; kind: 'clinical' | 'record' | 'complete' | 'diagnose' } | { encounterId: string; kind: 'accept-investigation'; orderId: string };
-export type CommandContext = { tx: StoreTx; at: StoreScope; actor: Actor; targetId: string; expectedVersion: number; virtualAt: string; recordedAt: string; guardEncounter?(write: EncounterWrite): void; moduleEnabled?(id: string): boolean };
+export type CommandContext = { tx: StoreTx; at: StoreScope; actor: Actor; targetId: string; expectedVersion: number; virtualAt: string; recordedAt: string; guardEncounter?(write: EncounterWrite): void; moduleEnabled?(id: string): boolean; checkClinicalQuality?(intent: ClinicalQualityIntent, clinicalOverride?: unknown): readonly string[] | void };
+export type ClinicalQualityGate = (context: CommandContext, intent: ClinicalQualityIntent, clinicalOverride: unknown, operation: string) => readonly string[] | void;
 export type Route = { name: string; method: 'GET' | 'PUT' | 'POST'; path: string; access: Access; moduleId?: string };
 
 export function resolveActor(reader: StoreReader, credential: Credential, now: string) {

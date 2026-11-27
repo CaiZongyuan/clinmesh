@@ -50,7 +50,7 @@ function interpret(leaf: Leaf, observation: Observation) {
   return { codeSystem: leaf.codeSystem, code: leaf.code, display: leaf.display, unit: leaf.unit, value, interpretation, critical };
 }
 
-function project(service: Service, source: Pick<Result, 'summary' | 'observations' | 'amendmentReason'>): z.infer<typeof findings> | undefined {
+function project(service: Service, source: Pick<Result, 'summary' | 'observations' | 'amendmentReason' | 'stSegmentDeviation'>): z.infer<typeof findings> | undefined {
   const observations = [];
   for (const leaf of service.analytes) {
     const item = source.observations.find(item => sameCoding(item.analyte, leaf));
@@ -58,7 +58,7 @@ function project(service: Service, source: Pick<Result, 'summary' | 'observation
     if (!observation) return undefined;
     observations.push(observation);
   }
-  return { summary: source.summary, observations, ...(source.amendmentReason && { amendmentReason: source.amendmentReason }) };
+  return { summary: source.summary, observations, ...(service.modality === 'ecg-12-lead' && source.stSegmentDeviation !== undefined && { stSegmentDeviation: source.stSegmentDeviation }), ...(source.amendmentReason && { amendmentReason: source.amendmentReason }) };
 }
 
 export function resolveFindings(truth: Pick<Truth, 'results' | 'normalBaselines'>, service: Service, stages: Result['stage'][], revision: number) {

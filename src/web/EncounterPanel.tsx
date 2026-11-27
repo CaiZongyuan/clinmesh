@@ -184,7 +184,7 @@ export function EncounterPanel(props: Props & { drafts?: EncounterDrafts }) {
     { value: 'consultation', label: text('Consultation', '问诊记录'), content: <Consultation {...props}/> },
     { value: 'record', label: text('Clinical record', '结构化病历'), content: <RecordEditor {...props} drafts={drafts}/> },
     { value: 'diagnosis', label: text('Diagnoses', '诊断'), content: <DiagnosisEditor {...props} drafts={drafts}/> },
-    ...props.workspace.tabs.flatMap(tab => { const Panel = props.panels?.[tab.id]; return Panel ? [{ value: tab.id, label: tab.label[props.language], content: <Panel {...props}/> }] : []; }),
+    ...props.workspace.tabs.flatMap(tab => { const Panel = props.panels?.[tab.id]; return Panel ? [{ value: tab.id, label: tab.label[props.language], content: <Panel {...props} drafts={drafts}/> }] : []; }),
   ];
   if (props.encounter.status === 'completed') tabs.push({ value: 'debrief', label: text('Debrief', '复盘'), content: <Debrief {...props}/> });
   const clinical = <div className="encounter-panel"><PatientHeader {...props}/><Tabs label={text('Clinical views', '临床页签')} defaultValue="consultation" items={tabs}/><Complete {...props} drafts={drafts}/></div>;

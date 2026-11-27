@@ -99,12 +99,20 @@ export function recordNoMedication(context: CommandContext, reason: string) {
   return { conclusionId, version };
 }
 
-export async function signPrescription(context: CommandContext, lines: PrescriptionLine[], billing?: PharmacyBillingPort) {
+export async function signPrescription(context: CommandContext, lines: PrescriptionLine[], billing?: PharmacyBillingPort, clinicalOverride?: unknown) {
   const { tx, at, targetId, actor, virtualAt, recordedAt } = context;
   const { pack, version } = editDecision(context);
   if (noMedication(tx, at, targetId)) throw new CoreError(409, 'MEDICATION_DECISION_CONFLICT');
   const view = prescribingView(tx, at, targetId);
-  const [issue] = checkPrescription(view.catalog, lines, view.context);
+  const issues = checkPrescription(view.catalog, lines, view.context);
+  if (issues.includes('PRESCRIPTION_MIXED_CATALOG_SOURCES')) throw new CoreError(409, 'PRESCRIPTION_MIXED_CATALOG_SOURCES');
+  const approved = context.checkClinicalQuality?.({ kind: 'medication', encounterId: targetId, lines }, clinicalOverride);
+  const scopeApproved = approved?.includes('ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION');
+  const unrelatedMismatch = scopeApproved && lines.some(line => {
+    const classes = view.catalog.find(item => sameCode(item, line))?.safety.classCodes ?? [];
+    return !classes.some(code => ['antibacterial', 'penicillin'].includes(code)) && checkPrescription(view.catalog, [line], view.context).includes('PRESCRIPTION_INDICATION_MISMATCH');
+  });
+  const issue = issues.find(code => code !== 'PRESCRIPTION_INDICATION_MISMATCH' || !scopeApproved || unrelatedMismatch);
   if (issue) throw new CoreError(409, issue);
   const items = lines.map(line => {
     const item = view.catalog.find(item => sameCode(item, line))!;

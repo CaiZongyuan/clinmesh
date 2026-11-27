@@ -13,6 +13,8 @@ import { advance, clinician, conflict, mutateAdmission, organization, receipt, r
 
 export { directorySchema } from './lib/views';
 export { completionPreviewSchema } from './lib/surgery';
+export { signedAngiography, completedWardProcedures } from './lib/surgery-facts';
+export { wardMedicationDirections, wardMedicationDeliveries } from './lib/orders';
 export { wardViewSchema, type WardView } from './lib/view-contract';
 export function createInpatientModule(billing?: WardBilling): ClinMeshModule<OperationCatalog> {
   return { id: 'mod-inpatient', kind: 'clinical', version: '1', initializeEpoch: initializeMaterials, midnight: (tx, at, day) => rollDay(tx, at, day, billing),
