@@ -1,7 +1,7 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
 import { receiptSchema, replyEvent } from '../packages/agent-protocol';
-import { clinicianTool, PatientRuntime, resolveAgentProvider, runEvaluationDoctor, type AgentEnvironment, type EvaluationAction } from '../packages/agent-runtime';
+import { clinicianTool, openExecutionEnvironment, PatientRuntime, resolveAgentProvider, runEvaluationDoctor, type AgentEnvironment, type EvaluationAction, type ExecutionEnvironments } from '../packages/agent-runtime';
 import { readCompletedDebrief, encounterViewSchema } from '../packages/clinical-core';
 import { installHospitalDataPack, type Coding } from '../packages/data-pack';
 import { prescribingViewSchema } from '../packages/mod-pharmacy';
@@ -18,7 +18,7 @@ function hits(expected: Coding[], actual: Coding[]) {
   const services = Array.from(new Map(expected.map(item => [codingKey(item), item])).values());
   return { expected: services.length, matched: services.filter(item => submitted.has(codingKey(item))).length, missing: services.filter(item => !submitted.has(codingKey(item))) };
 }
-export async function evaluateEncounter(store: StorePort, catalog: OperationCatalog, modules: ModuleRegistry<OperationCatalog>, environment: AgentEnvironment, launch: EvaluationLaunch, request: Request) {
+export async function evaluateEncounter(store: StorePort, catalog: OperationCatalog, modules: ModuleRegistry<OperationCatalog>, environment: AgentEnvironment, launch: EvaluationLaunch, request: Request, environments: ExecutionEnvironments) {
   const { runId, expiresAt, virtualTime, spec: input } = evaluationLaunch.parse(launch);
   const pack = Object.values(BUILTIN_DATA_PACKS).find(pack => pack.manifest.packId === input.packId);
   if (!pack) throw new CoreError(404, 'PACK_NOT_FOUND');
@@ -42,26 +42,40 @@ export async function evaluateEncounter(store: StorePort, catalog: OperationCata
   });
   const trace: Trace[] = [];
   const signal = request.signal;
+  const actor = await store.read(reader => resolveActor(reader, credential, new Date().toISOString()));
+  const allowed = catalog.entries.filter(entry => permits(actor, entry) && (entry.assistantRead === 'encounter' || /^(workspace\.read|encounter\.(?:start|read|complete)|consultation\.question|diagnosis\.(?:draft|confirm)|record\.(?:draft|sign)|prescription\.(?:read|sign|no-medication)|(?:lab|imaging|pathology)\.(?:read|save-draft|issue|accept|start|report-now|acknowledge))$/.test(entry.name)));
+  const has = (operation: string) => allowed.some(entry => entry.name === operation);
+  let boundEncounter: string | undefined;
+  const executor = await openExecutionEnvironment(input.arm, { roleId: role.id, operations: allowed.map(entry => entry.contract), encounterId: () => boundEncounter,
+    async invoke(name, fields) {
+      if (signal.aborted) throw new CoreError(409, 'EVALUATION_STOPPED');
+      const entry = allowed.find(entry => entry.name === name);
+      if (!entry) throw new CoreError(403, 'ROLE_FORBIDDEN');
+      const args = entry.contract.inputSchema.parse(fields);
+      const { id, ...body } = args;
+      if (name === 'encounter.start' && (id !== caseId || boundEncounter)) throw new CoreError(403, 'EVALUATION_CASE_MISMATCH');
+      return entry.invoke({ store, credential, targetId: typeof id === 'string' ? id : runId, body: async () => body, providerHeaders: name === 'consultation.question' ? patientHeaders : undefined });
+    },
+  }, environments);
+  try {
   async function call(operation: string, targetId: string, expectedVersion = 0, fields: object = {}) {
     if (signal.aborted) throw new CoreError(409, 'EVALUATION_STOPPED');
     const entry = catalog.require(operation);
     const action: Trace = { role: role!.id, operation, targetId, input: fields, elapsedMs: Date.now() - started };
     trace.push(action);
     try {
-      const result = await entry.invoke({ store, credential, targetId, body: async () => ({ epoch: at.epoch, expectedVersion, idempotencyKey: v7(), ...fields }), providerHeaders: operation === 'consultation.question' ? patientHeaders : undefined });
+      const result = await executor.invoke(operation, { ...(entry.contract.pathFields.includes('id') && { id: targetId }), ...(entry.method !== 'GET' && { epoch: at.epoch, expectedVersion, idempotencyKey: v7(), ...fields }) });
       action.output = result;
       return result;
     } catch (error) { action.error = error instanceof CoreError ? error.code : 'INVALID_INPUT'; if (error instanceof CoreError && error.details) action.details = error.details; throw error; }
   }
   const { encounterId } = z.object({ encounterId: z.uuidv7() }).parse(await call('encounter.start', caseId, 0, { language: 'en' }));
+  boundEncounter = encounterId;
   const sessionId = v7();
   await store.withTransaction(tx => tx.insert(at, 'pi_sessions', { id: sessionId, encounter_id: encounterId, agent: 'clinician' }));
   const patient = new PatientRuntime(store, environment);
   const encounter = async () => encounterViewSchema.parse(await call('encounter.read', encounterId));
   const pharmacy = async () => prescribingViewSchema.parse(await call('prescription.read', encounterId));
-  const actor = await store.read(reader => resolveActor(reader, credential, new Date().toISOString()));
-  const allowed = catalog.entries.filter(entry => permits(actor, entry));
-  const has = (operation: string) => allowed.some(entry => entry.name === operation);
   const [visit, studies, prescribing] = await Promise.all([encounter(), evaluationStudies(store, at, encounterId, call, has), has('prescription.read') ? pharmacy() : undefined]);
   let patientFailure: string | null = null;
   async function perform(action: EvaluationAction, delivered: ReadonlySet<string>) {
@@ -110,7 +124,7 @@ export async function evaluateEncounter(store: StorePort, catalog: OperationCata
     try { record.output = await perform(action, delivered); return record.output; }
     catch (error) { record.error = error instanceof CoreError ? error.code : 'INVALID_INPUT'; throw error; }
   }
-  const doctor = await runEvaluationDoctor(store, at, sessionId, clinician, presentation, input.maxTurns, doctorAction, signal, availableTools, nativeReads, (operation, fields, error) => {
+  const doctor = await runEvaluationDoctor(store, at, sessionId, clinician, presentation, input.maxTurns, doctorAction, signal, availableTools, [...nativeReads, ...executor.tools ?? []], (operation, fields, error) => {
     trace.push({ role: role.id, operation, input: { fields }, targetId: encounterId, error, elapsedMs: Date.now() - started });
   });
   const final = await encounter();
@@ -132,9 +146,10 @@ export async function evaluateEncounter(store: StorePort, catalog: OperationCata
       action.hit = !action.error && Boolean(service && truth.results.some(item => codingKey(item.service) === codingKey(service)));
     }
   }
-  return saveEvaluationResult(store, at, { runId, ...at, packId: pack.manifest.packId, packVersion: pack.manifest.version, caseId: input.caseId, encounterId, status: completed ? 'completed' : 'incomplete', clinicianModel: clinician.model, patientModel: patientConfig.model,
+  return await saveEvaluationResult(store, at, { runId, ...at, arm: input.arm, packId: pack.manifest.packId, packVersion: pack.manifest.version, caseId: input.caseId, encounterId, status: completed ? 'completed' : 'incomplete', clinicianModel: clinician.model, patientModel: patientConfig.model,
     durationMs: Date.now() - started, turns: doctor.turns, patientTurns: final.turns.filter(turn => turn.speaker === 'patient' && turn.ordinal > 1).length, maxTurns: input.maxTurns, error: doctor.error ?? patientFailure,
     tokens: { clinician: { input: doctor.inputTokens, output: doctor.outputTokens }, patient: { input: patientCalls.reduce((sum, call) => sum + call.input_tokens, 0), output: patientCalls.reduce((sum, call) => sum + call.output_tokens, 0) } },
     redline: trace.some(action => action.error === 'CLINICAL_QUALITY_RED_LINE' || (['diagnosis.draft', 'diagnosis.confirm', 'prescription.sign'].includes(action.operation) && /^(?:MEDICATION_|PRESCRIPTION_|DIAGNOSIS_NOT_IN_CATALOG|DUPLICATE_DIAGNOSIS|ONE_PRIMARY_DIAGNOSIS_REQUIRED)/.test(action.error ?? ''))), trace,
     hits: truth ? { diagnosis: Boolean(primary && codingKey(primary) === codingKey(truth.primaryDiagnosis)), investigations: hits(truth.results.map(result => result.service), reported), medications: hits(truth.expectedMedications ?? [], medications?.prescriptions.filter(item => item.status !== 'withdrawn').flatMap(item => item.lines) ?? []) } : null });
+  } finally { await executor.close?.(); }
 }

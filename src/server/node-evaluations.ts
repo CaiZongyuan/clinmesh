@@ -1,19 +1,24 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { AgentEnvironment } from '../packages/agent-runtime';
+import type { AgentEnvironment, ExecutionEnvironments } from '../packages/agent-runtime';
 import { createNodeSqliteStore } from '../packages/store';
 import { builtinModules } from './builtin-modules';
 import { evaluationResult, type EvaluationHost } from './evaluation-host';
 import { createWorkspaceApp } from './workspace';
 
 export function nodeEvaluations(directory: string, environment: AgentEnvironment): EvaluationHost {
+  const environments: ExecutionEnvironments = {
+    'host-cli': async gateway => (await import('./node-evaluation-cli')).openCliEnvironment(gateway),
+    'ui-sdk-webmcp': async gateway => (await import('./node-evaluation-webmcp')).openWebMcpEnvironment(gateway),
+    'mirage-vfs': async gateway => (await import('../packages/mod-agent-mirage')).openMirageEnvironment(gateway),
+  };
   const path = (runId: string) => join(directory, `${z.uuidv7().parse(runId)}.sqlite`);
   return {
     async start(launch, request) {
       mkdirSync(directory, { recursive: true });
       const store = createNodeSqliteStore({ dbPath: path(launch.runId) });
-      try { return await createWorkspaceApp(store, {}, builtinModules, environment).runEvaluation(launch, request); }
+      try { return await createWorkspaceApp(store, {}, builtinModules, environment).runEvaluation(launch, request, environments); }
       finally { await store.close(); }
     },
     async read(runId) {

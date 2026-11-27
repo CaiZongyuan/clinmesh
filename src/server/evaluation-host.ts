@@ -1,9 +1,10 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
+import { executionArm } from '../packages/agent-runtime';
 import { authorize, CoreError, resolveActor, sha256, type Credential } from '../packages/platform';
 import type { StorePort, StoreScope } from '../packages/store';
 
-export const evaluationSpec = z.strictObject({ packId: z.string().min(1), caseId: z.string().min(1).max(128), maxTurns: z.int().min(1).max(32), clinicianModel: z.string().regex(/^[\w./:-]{1,160}$/), patientModel: z.string().regex(/^[\w./:-]{1,160}$/) });
+export const evaluationSpec = z.strictObject({ arm: executionArm.default('direct-tools'), packId: z.string().min(1), caseId: z.string().min(1).max(128), maxTurns: z.int().min(1).max(32), clinicianModel: z.string().regex(/^[\w./:-]{1,160}$/), patientModel: z.string().regex(/^[\w./:-]{1,160}$/) });
 export const evaluationLaunch = z.strictObject({ runId: z.uuidv7(), virtualTime: z.iso.datetime(), expiresAt: z.iso.datetime(), spec: evaluationSpec });
 export type EvaluationLaunch = z.infer<typeof evaluationLaunch>;
 export type EvaluationHost = { start(launch: EvaluationLaunch, request: Request): Promise<Response>; read(runId: string): Promise<Response> };

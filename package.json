@@ -3,10 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": { "clinmesh": "./bin/clinmesh.mjs" },
-  "publishConfig": { "directory": "dist/cli-package" },
+  "bin": {
+    "clinmesh": "./bin/clinmesh.mjs"
+  },
+  "publishConfig": {
+    "directory": "dist/cli-package"
+  },
   "packageManager": "pnpm@10.34.9",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "tsx watch src/server/node-server.ts",
     "dev:web": "vite",
@@ -20,7 +26,7 @@
     "lint:boundaries": "tsx scripts/lint-boundaries.ts",
     "lint:theme": "tsx scripts/lint-theme.ts",
     "verify:docs": "tsx scripts/verify-docs.ts",
-    "verify:worker": "wrangler deploy --dry-run --outfile dist/worker.bundle --metafile dist/worker-meta.json && node scripts/verify-worker-size.ts && node scripts/verify-viewer-bundles.ts",
+    "verify:worker": "node scripts/check-worker-size.ts && node scripts/verify-viewer-bundles.ts",
     "test": "vitest run",
     "build": "vite build && vite build --ssr src/server/node-server.ts --outDir dist/server",
     "check": "pnpm typecheck && pnpm lint && pnpm lint:boundaries && pnpm lint:theme && pnpm verify:docs && pnpm test && pnpm build"
@@ -78,5 +84,10 @@
     "vite": "7.3.6",
     "vitest": "4.1.11",
     "wrangler": "4.166.0"
+  },
+  "optionalDependencies": {
+    "@struktoai/mirage-core": "0.1.0",
+    "@struktoai/mirage-pi-durable": "0.1.0",
+    "playwright-core": "1.65.1"
   }
 }

@@ -4,6 +4,8 @@ const rule = (name, from, to) => ({ name, severity: 'error', from, to });
 
 module.exports = {
   forbidden: [
+    rule('worker-excludes-local-environments', { path: '^src/server/worker\\.ts$' },
+      { reachable: true, path: '(src/packages/mod-agent-mirage/|src/server/node-evaluation-|@struktoai[/+]mirage|playwright-core|\\.wasm$)' }),
     rule('entrypoint-boundary-from-app', { pathNot: packages }, { path: internal }),
     rule('entrypoint-boundary-across-packages', { path: `${packages}([^/]+)/` },
       { path: internal, pathNot: `${packages}$1/` }),
