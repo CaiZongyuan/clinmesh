@@ -1,0 +1,8 @@
+{
+  "sha256": "a57dd6642a60a4ed0d825ec6311e54e6f01e72a2e5f12ee7cde0621f10a425f6",
+  "question": { "workspace_id": "0192eaf2-cb03-7000-8000-000000000001", "epoch": "0192eaf2-cb03-7000-8000-000000000002", "id": "0192eaf2-cb03-7000-8000-000000000102", "consultation_id": "0192eaf2-cb03-7000-8000-000000000021", "ordinal": 2, "speaker": "clinician", "channel": "text", "content": "Synthetic question", "virtual_at": "2024-10-01T08:00:00.000Z", "recorded_at": "2025-01-02T16:00:00.000Z" },
+  "tables": [
+    { "name": "patient_reply_runs", "rows": [{ "workspace_id": "0192eaf2-cb03-7000-8000-000000000001", "epoch": "0192eaf2-cb03-7000-8000-000000000002", "id": "0192eaf2-cb03-7000-8000-000000000102", "session_id": "0192eaf2-cb03-7000-8000-000000000070", "attempt": 1, "status": "stopped", "provider": "mock", "model": "scripted-patient", "endpoint_hash": "0000000000000000000000000000000000000000000000000000000000000000", "effort": "off", "error_code": null, "version": 2 }] },
+    { "name": "agent_model_calls", "rows": [{ "workspace_id": "0192eaf2-cb03-7000-8000-000000000001", "epoch": "0192eaf2-cb03-7000-8000-000000000002", "id": "0192eaf2-cb03-7000-8000-000000000103", "session_id": "0192eaf2-cb03-7000-8000-000000000070", "question_id": "0192eaf2-cb03-7000-8000-000000000102", "provider": "mock", "model": "scripted-patient", "status": "interrupted", "input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "duration_ms": 0, "recorded_at": "2025-01-02T16:00:00.000Z", "version": 2 }] }
+  ]
+}

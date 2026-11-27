@@ -47,6 +47,7 @@ export function seedConformance(tx: StoreTx): string[] {
   add('patient_identifiers', { id: fixtureId(19), patient_id, issuer: 'synthetic-issuer', value: 'test-01' });
   add('encounters', { id: encounter_id, patient_id, source_case_id: fixedCase, encounter_class: 'outpatient', status: 'active', active_practitioner_role: practitioner_role, version: 1, ...times });
   add('encounter_triage', { id: fixtureId(101), encounter_id, vitals: { heartRateBpm: 84 }, ...times });
+  add('lab_drafts', { id: fixtureId(102), encounter_id, items: [], version: 1 });
   add('pi_sessions', { id: fixtureId(70), agent: 'patient', encounter_id });
   add('pi_sessions', { id: fixtureId(71), agent: 'clinician', encounter_id: null });
   add('consultations', { id: fixtureId(21), encounter_id, reply_pending: false, version: 1 });
@@ -75,6 +76,7 @@ export function seedConformance(tx: StoreTx): string[] {
   add('bed_occupancies', { id: fixtureId(41), admission_id, bed: 'test-bed', occupied_at: times.virtual_at, released_at: null, version: 1 });
   add('inpatient_transfers', { id: fixtureId(42), admission_id, from_ward: 'ward-a', to_ward: 'ward-b', ...times });
   add('order_executions', { id: fixtureId(43), order_id, practitioner_role, outcome: 'completed', ...times });
+  add('lab_requests', { id: fixtureId(103), order_id, stages: ['inpatient', 'initial'] });
   add('surgery_requests', { id: surgery_request_id, order_id, procedure_item_id: catalog_item_id, status: 'planned', version: 1 });
   add('surgery_executions', { id: fixtureId(45), surgery_request_id, outcome: 'completed', ...times });
   add('material_reservations', { id: fixtureId(46), surgery_request_id, lot_id, quantity: 1, status: 'reserved', version: 1 });

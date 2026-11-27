@@ -122,7 +122,7 @@ async function exercise(fetchApi: Http, reopen?: (workspaceId: string) => Promis
   };
   const bill = await read(opened.encounterId);
   const [registration] = bill.charges;
-  expect(registration).toMatchObject({ catalogVersion: '1.1.0', amountMinor: 1000, outstandingMinor: 1000 });
+  expect(registration).toMatchObject({ catalogVersion: cardio.manifest.version, amountMinor: 1000, outstandingMinor: 1000 });
   const collection = previewSchema.parse(await funds(opened.encounterId, 'payment.preview', { chargeIds: [registration!.id], simulation: 'delayed-approval' }));
   const receipt = await funds(opened.encounterId, 'payment.confirm', { commitToken: collection.commitToken });
   expect(receipt.status).toBe('unknown');

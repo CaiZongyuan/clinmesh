@@ -117,6 +117,8 @@ export const tables = {
   billing_settlements: table({ encounter_id: enc, preview_id: ref('billing_previews'), snapshot: frozen, ...times }, 'encounter_id', 'preview_id'),
   patient_reply_runs: table({ id: ref('consultation_turns'), session_id: ref('pi_sessions'), attempt: positive, status: choice('running', 'done', 'stopped', 'failed'), provider: text, model: text, endpoint_hash: digest, effort: text, error_code: optional(text), version }),
   agent_model_calls: table({ session_id: optional(ref('pi_sessions')), question_id: optional(ref('consultation_turns')), provider: text, model: text, status: text, input_tokens: integer, output_tokens: integer, cache_read: integer, cache_write: integer, duration_ms: integer, recorded_at: timestamp, version }),
+  lab_drafts: table({ encounter_id: enc, items: column(z.array(frozen.schema), 'json'), version }, 'encounter_id'),
+  lab_requests: table({ order_id: order, stages: column(z.array(z.enum(['follow-up', 'repeat', 'inpatient', 'initial'])).min(1), 'json') }, 'order_id'),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;
@@ -124,6 +126,7 @@ export type EntityRow<Name extends Entity> = { [Key in keyof (typeof tables)[Nam
 export type PublicEntity = Exclude<Entity, 'case_truths'>;
 export const entityNames = Object.keys(tables) as Entity[];
 export const billingEntities = ['charge_sources', 'billing_previews', 'billing_attempts', 'billing_recoveries', 'billing_releases', 'billing_settlements'] as const satisfies readonly Entity[];
+export const labEntities = ['lab_drafts', 'lab_requests'] as const satisfies readonly Entity[];
 
 export const editable = {
   patients: ['display_name', 'birth_date'], encounters: ['active_practitioner_role', 'status'], consultations: ['reply_pending'],
@@ -131,6 +134,7 @@ export const editable = {
   visitor_sessions: ['practitioner_role', 'revoked'], capability_tokens: ['revoked'], clinical_orders: ['status'],
   prescriptions: ['status'], inpatient_admissions: ['status', 'ward'], bed_occupancies: ['released_at'],
   surgery_requests: ['status'], material_reservations: ['status'],
+  lab_drafts: ['items'],
   patient_reply_runs: ['attempt', 'status', 'provider', 'model', 'endpoint_hash', 'effort', 'error_code'],
   agent_model_calls: ['status', 'input_tokens', 'output_tokens', 'cache_read', 'cache_write', 'duration_ms'],
 } as const satisfies { [Name in Entity]?: readonly (keyof EntityRow<Name>)[] };

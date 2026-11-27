@@ -59,6 +59,7 @@ const medication = concept.extend({
 const service = concept.extend({
   kind: z.enum(['lab', 'examination', 'imaging', 'pathology', 'nursing', 'registration']),
   unitPriceMinor: money, unit: text, analytes: z.array(analyte),
+  turnaroundMinutes: z.int().min(1).max(10080).optional(), requiresProcedure: z.boolean().optional(),
   specimenContainer: z.strictObject({ specimen: text, container: text }).optional(),
 });
 export const catalog = z.strictObject({
@@ -104,13 +105,16 @@ const asset = text.refine(value => {
   if (value.startsWith('https://')) return z.httpUrl().safeParse(value).success;
   return /^(?:[\w-]+\/)*[\w.-]+\.(?:webp|png|jpe?g)$/i.test(value) && !value.includes('..');
 });
-const result = z.strictObject({
-  service: coding, stage: z.enum(['initial', 'inpatient', 'repeat', 'follow-up']), revision: z.int().positive(),
-  amendmentReason: bilingual.optional(), summary: bilingual,
-  observations: z.array(observation), images: z.array(asset).optional(),
+const authoredFindings = z.strictObject({ service: coding, summary: bilingual,
+  observations: z.array(observation.extend({ unit: text.optional(), interpretation: z.enum(['normal', 'high', 'low', 'abnormal']).optional() })),
+});
+const result = authoredFindings.extend({
+  stage: z.enum(['initial', 'inpatient', 'repeat', 'follow-up']), revision: z.int().positive(),
+  amendmentReason: bilingual.optional(), images: z.array(asset).optional(),
 });
 export const truth = z.strictObject({
   primaryDiagnosis: coding, secondaryDiagnoses: z.array(coding), hiddenHistory: z.array(bilingual), results: z.array(result),
+  normalBaselines: z.array(authoredFindings).optional(),
   reviewPoints: z.array(bilingual).min(1), expectedMedications: z.array(coding).optional(),
   noMedication: z.literal(true).optional(), expectedProcedures: z.array(coding).optional(), expectedMaterials: z.array(coding).optional(),
 });
