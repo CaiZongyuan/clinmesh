@@ -144,6 +144,22 @@ function insertSerumCreatinineObservation(
   })
 }
 
+function findPackAdditionCommitChangedFiles(): string[] | undefined {
+  try {
+    const [commitHash = '', parentsRaw = '', ...subjectParts] = execFileSync(
+      'git',
+      ['log', '--diff-filter=A', '-n', '1', '--pretty=format:%H%x09%P%x09%s', '--', 'apps/server/disease-packs/t2dm-renal-care/manifest.json'],
+      { cwd: REPOSITORY_ROOT, encoding: 'utf8' },
+    ).trim().split('\t')
+    if (!/^[0-9a-f]{40}$/.test(commitHash) || parentsRaw.split(/\s+/).filter(Boolean).length !== 1
+      || !subjectParts.join('\t').includes('新增纯JSON 2型糖尿病肾功能用药专病包')) return undefined
+    return execFileSync('git', ['show', '--name-only', '--pretty=format:', commitHash], { cwd: REPOSITORY_ROOT, encoding: 'utf8' })
+      .split('\n').map(line => line.trim()).filter(Boolean)
+  } catch {
+    return undefined
+  }
+}
+
 describe('DSAP Slice S13: Standalone Pure-JSON T2DM Renal Care Pack Addition (#566)', () => {
   const cleanups: Array<() => Promise<void>> = []
 
@@ -153,7 +169,7 @@ describe('DSAP Slice S13: Standalone Pure-JSON T2DM Renal Care Pack Addition (#5
     }
   })
 
-  it('AC12: proves t2dm-renal-care is pure JSON, loads as an unseen pack slug without platform edits, and verifies Commit 1 git diff when non-shallow history is present', async () => {
+  it('AC12: proves t2dm-renal-care is pure JSON, loads as an unseen pack slug without platform edits', async () => {
     const packDir = resolve(REPOSITORY_ROOT, 'apps/server/disease-packs/t2dm-renal-care')
     const dirEntries = await readdir(packDir, { withFileTypes: true })
     expect(dirEntries.length).toBeGreaterThanOrEqual(8)
@@ -216,47 +232,25 @@ describe('DSAP Slice S13: Standalone Pure-JSON T2DM Renal Care Pack Addition (#5
     expect((verifiedEffective.pack.knowledgeSnapshots ?? []).length).toBeGreaterThanOrEqual(1)
     expect((verifiedEffective.pack.conceptVocabulary?.nodes ?? []).length).toBeGreaterThanOrEqual(1)
     expect(verifiedEffective.pack.examSuite.cases.length).toBeGreaterThanOrEqual(6)
-
-    // When non-shallow PR branch commit history is present, also verify Commit 1 strictly touched only the pack & old topic removal
-    let commitMeta = ''
-    try {
-      commitMeta = execFileSync(
-        'git',
-        ['log', '--diff-filter=A', '-n', '1', '--pretty=format:%H%x09%P%x09%s', '--', 'apps/server/disease-packs/t2dm-renal-care/manifest.json'],
-        { cwd: REPOSITORY_ROOT, encoding: 'utf8' },
-      ).trim()
-    } catch {
-      commitMeta = ''
-    }
-    if (commitMeta.length > 0) {
-      const [commitHash = '', parentsRaw = '', ...subjectParts] = commitMeta.split('\t')
-      const parents = parentsRaw.split(/\s+/).filter(Boolean)
-      const subject = subjectParts.join('\t')
-      if (
-        /^[0-9a-f]{40}$/.test(commitHash)
-        && parents.length === 1
-        && subject.includes('新增纯JSON 2型糖尿病肾功能用药专病包')
-      ) {
-        const changedFiles = execFileSync(
-          'git',
-          ['show', '--name-only', '--pretty=format:', commitHash],
-          { cwd: REPOSITORY_ROOT, encoding: 'utf8' },
-        )
-          .split('\n')
-          .map(line => line.trim())
-          .filter(Boolean)
-
-        expect(changedFiles.length).toBeGreaterThanOrEqual(8)
-        for (const filePath of changedFiles) {
-          const allowed = filePath.startsWith('apps/server/disease-packs/t2dm-renal-care/')
-            || filePath === 'apps/server/src/application/guideline-topic-registry.ts'
-          expect(allowed, `Unexpected file changed in AC12 S13 pack-addition commit: ${filePath}`).toBe(true)
-        }
-        expect(changedFiles.some(f => f.startsWith('packages/contracts/'))).toBe(false)
-        expect(changedFiles.some(f => f.startsWith('packages/core/'))).toBe(false)
-      }
-    }
   })
+
+  // 需要完整 PR 分支历史：CI 默认浅克隆（fetch-depth 1）与合并后的 squash 提交都不满足，此时显式跳过而不是静默通过；
+  // 纯 JSON 与未见包加载的断言由上面的用例在 CI 上执行。
+  const packAdditionChangedFiles = findPackAdditionCommitChangedFiles()
+  it.skipIf(packAdditionChangedFiles === undefined)(
+    'AC12: the pack-addition commit only touches the pack directory and the old topic registry (skipped without the original PR commit in git history)',
+    () => {
+      const changedFiles = packAdditionChangedFiles!
+      expect(changedFiles.length).toBeGreaterThanOrEqual(8)
+      for (const filePath of changedFiles) {
+        const allowed = filePath.startsWith('apps/server/disease-packs/t2dm-renal-care/')
+          || filePath === 'apps/server/src/application/guideline-topic-registry.ts'
+        expect(allowed, `Unexpected file changed in AC12 S13 pack-addition commit: ${filePath}`).toBe(true)
+      }
+      expect(changedFiles.some(f => f.startsWith('packages/contracts/'))).toBe(false)
+      expect(changedFiles.some(f => f.startsWith('packages/core/'))).toBe(false)
+    },
+  )
 
   it('AC3b, AC10, AC13 & AC15: activates T2DM pack without CAD, shows side-by-side multi-pack cards for CAD+T2DM, keeps ortho at 0 packs with general panels, and passes all exams with 0 LLM calls', async () => {
     const prepared = await preparePciPaymentDrgFixture()
