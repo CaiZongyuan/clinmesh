@@ -20,9 +20,8 @@ export default defineConfig(({ isSsrBuild }) => ({
   publicDir: isSsrBuild ? false : prepareTeachingFrames(resolve(root, 'assets/clinical-public')),
   cacheDir: clientCache,
   plugins: [react(), tailwindcss(), !isSsrBuild && browserGraph],
-  ssr: { external: ['playwright-core', '@struktoai/mirage-core', '@struktoai/mirage-core/policy/profile', '@struktoai/mirage-pi-durable'] },
   build: { outDir: resolve(root, isSsrBuild ? 'dist/server' : 'dist/client'), emptyOutDir: true,
-    ...(!isSsrBuild && { rollupOptions: { input: { index: resolve(client, 'index.html'), evaluation: resolve(client, 'evaluation.html') } } }) },
+    rollupOptions: isSsrBuild ? { external: ['playwright-core', /^@struktoai\/mirage-(?:core|pi-durable)(?:\/|$)/] } : { input: { index: resolve(client, 'index.html'), evaluation: resolve(client, 'evaluation.html') } } },
   server: {
     fs: {
       allow: [client, clientCache],
