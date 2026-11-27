@@ -19,6 +19,7 @@
 | [agent-runtime](agent-runtime/README.md) | 按 Workspace、Epoch 和 Agent 角色打开 Pi 会话，执行 Patient Agent，保护请求凭据与问诊出口 |
 | [agent-protocol](agent-protocol/index.ts) | 浏览器和服务端共享的 Provider、问诊状态、回执与 SSE 事件契约 |
 | [mod-billing](mod-billing/README.md) | 通用收费员账本、原路退款、住院首次冻结结算和临床资金放行端口 |
+| [mod-inpatient](mod-inpatient/README.md) | 入院转收、床位与转科、跨日医嘱、护士与药师执行、同台介入、出区和病案归档 |
 | [mod-drg-cn](mod-drg-cn/README.md) | 数据包声明的合成参保方案、年度累计和住院 DRG 支付参考 |
 | [mod-cds](mod-cds/README.md) | 正式事实评分、指南与组套预筛、命令事务内临床质控 |
 | [mod-fhir-r5](mod-fhir-r5/README.md) | FHIR R5 只读资源、白名单搜索与业务版本历史 |

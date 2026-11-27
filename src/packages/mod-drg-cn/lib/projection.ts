@@ -24,20 +24,36 @@ export function projection(reader: StoreReader, at: StoreScope, encounterId: str
   const committed: number[] = [], reserved: number[] = [], planned: number[] = [];
   const plannedCodes = new Set<string>(), performedCodes = new Set<string>();
   for (const order of orders) {
+    if (reader.list(at, 'ward_surgery_charges', { order_id: order.id, purpose: 'report' }).length) continue;
+    const wardOrder = reader.get(at, 'ward_order_directions', order.id);
+    if (wardOrder) {
+      const pending = reader.list(at, 'ward_tasks', { order_id: order.id, status: 'pending' }).length;
+      if (pending) committed.push(price(order.catalog_item_id, pending * z.int().positive().parse(wardOrder.directions.quantity ?? 1)));
+      continue;
+    }
     const surgeries = reader.list(at, 'surgery_requests', { order_id: order.id }).filter(request => request.status !== 'cancelled');
     if (!surgeries.length) {
+      if (reader.list(at, 'ward_surgery_stages', { order_id: order.id }).length) continue;
       if (!posted.has(order.id) && !unpostedOrders.has(order.id)) committed.push(price(order.catalog_item_id));
       continue;
     }
     for (const surgery of surgeries) {
       const item = reader.get(at, 'catalog_items', surgery.procedure_item_id)!;
       const performed = surgery.status === 'completed' || reader.list(at, 'surgery_executions', { surgery_request_id: surgery.id }).some(execution => execution.outcome === 'completed');
-      if (item.code_system === rules.procedureSystem) (performed ? performedCodes : plannedCodes).add(item.code);
-      if (!posted.has(order.id) && !performed) planned.push(price(item.id));
+      const stages = reader.list(at, 'ward_surgery_stages', { request_id: surgery.id }).flatMap(stage => {
+        const performedOrder = reader.get(at, 'clinical_orders', stage.order_id)!;
+        if (performedOrder.status === 'cancelled') return [];
+        if (!stage.completed_execution_id && !posted.has(stage.order_id)) planned.push(price(performedOrder.catalog_item_id));
+        return [{ stage, item: reader.get(at, 'catalog_items', performedOrder.catalog_item_id)! }];
+      });
+      const definitive = stages.find(row => row.stage.stage === 'ad-hoc-pci') ?? stages[0];
+      const principal = definitive?.item ?? item;
+      if (principal.code_system === rules.procedureSystem) ((definitive ? !!definitive.stage.completed_execution_id : performed) ? performedCodes : plannedCodes).add(principal.code);
+      if (!stages.length && !posted.has(order.id) && !performed) planned.push(price(item.id));
       for (const reservation of reader.list(at, 'material_reservations', { surgery_request_id: surgery.id })) {
         const uses = reader.list(at, 'material_uses', { reservation_id: reservation.id });
         if (['cancelled', 'released', 'closed'].includes(reservation.status)) continue;
-        const consumed = sum(uses.map(use => use.quantity));
+        const consumed = sum(uses.map(use => use.quantity - sum(reader.list(at, 'ward_material_corrections', { use_id: use.id }).map(correction => correction.quantity))));
         const remaining = Math.max(0, reservation.quantity - consumed);
         if (remaining) reserved.push(price(reader.get(at, 'inventory_lots', reservation.lot_id)!.catalog_item_id, remaining));
       }

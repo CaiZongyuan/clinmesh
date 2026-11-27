@@ -1,7 +1,7 @@
 import type { Hono } from 'hono';
 import { z } from 'zod';
 import type { StoreReader, StoreScope, StoreTx } from '../../store';
-import { localizedName, type Actor, type ClinicalQualityGate } from './commands';
+import { localizedName, type Actor, type ClinicalQualityGate, type CommandContext, type EncounterWrite } from './commands';
 
 export const gateItem = z.object({ id: z.string(), label: localizedName, passed: z.boolean() });
 export const workbenchTab = z.object({ id: z.string(), label: localizedName, readOperation: z.string().optional() });
@@ -22,10 +22,12 @@ export interface ClinMeshModule<Operations = never> {
   readonly id: string;
   readonly kind: 'core' | 'clinical' | 'extension';
   readonly version: string;
+  availableInEpoch?(reader: StoreReader, at: StoreScope): boolean;
   registerRoutes?(app: Hono): void;
   registerOperations?(catalog: Operations): void;
   initializeEpoch?(tx: StoreTx, at: StoreScope, virtualAt: string, recordedAt: string): void | Promise<void>;
   encounterStarted?(tx: StoreTx, at: StoreScope, encounterId: string, virtualAt: string, recordedAt: string): void;
+  guardEncounter?(context: CommandContext, write: EncounterWrite): void;
   completion?: CompletionCheck;
   clinicalQuality?: ClinicalQualityGate;
   projection?: { base: string; respond(request: Request, reader: StoreReader, actor: Actor): Response };
@@ -60,5 +62,7 @@ export class ModuleRegistry<Operations = never> {
     return { ok: true, runtime, loadedModules: [...this.#modules.keys()] };
   }
 
-  enabled(ids: readonly string[]) { return [...this.#modules.values()].filter(module => module.kind === 'core' || ids.includes(module.id)); }
+  enabled(ids: readonly string[], reader?: StoreReader, at?: StoreScope) {
+    return [...this.#modules.values()].filter(module => (module.kind === 'core' || ids.includes(module.id)) && (!reader || !at || module.availableInEpoch?.(reader, at) !== false));
+  }
 }

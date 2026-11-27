@@ -17,6 +17,7 @@ export function checkPrescription(catalog: readonly Medication[], lines: readonl
   if (!rules) return ['PHARMACY_RULES_UNAVAILABLE'];
   const issues = new Set<string>();
   const sources = new Set<string>();
+  const diagnoses = context.diagnoses.flatMap(diagnosis => [diagnosis, ...rules.indicationAliases?.filter(alias => sameCode(alias.diagnosis, diagnosis)).map(alias => alias.equivalent) ?? []]);
   const active = catalog.filter(item => context.activeMedications.some(coding => sameCode(coding, item)));
   if (!lines.length || lines.length > 8) issues.add('PRESCRIPTION_LINE_COUNT');
   for (const line of lines) {
@@ -36,7 +37,7 @@ export function checkPrescription(catalog: readonly Medication[], lines: readonl
     if (!Number.isSafeInteger(line.timesPerDay) || line.timesPerDay < 1 || line.dose * line.timesPerDay > safety.maxDailyDose) issues.add('PRESCRIPTION_DAILY_DOSE_LIMIT');
     if (!Number.isInteger(line.days) || line.days < 1 || line.days > 30) issues.add('PRESCRIPTION_COURSE_LIMIT');
     if (!Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > 1000 || line.quantity * inpatientDoseBasis.amount > safety.maxDailyDose * line.days) issues.add('PRESCRIPTION_QUANTITY_LIMIT');
-    if (safety.indicationPrefixes.length && !context.diagnoses.some(diagnosis => diagnosis.codeSystem === rules.indicationCodeSystem &&
+    if (safety.indicationPrefixes.length && !diagnoses.some(diagnosis => diagnosis.codeSystem === rules.indicationCodeSystem &&
       safety.indicationPrefixes.some(prefix => diagnosis.code.toUpperCase().startsWith(prefix.toUpperCase())))) issues.add('PRESCRIPTION_INDICATION_MISMATCH');
   }
   return [...(sources.size > 1 ? ['PRESCRIPTION_MIXED_CATALOG_SOURCES'] : []), ...issues];

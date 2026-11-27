@@ -30,6 +30,28 @@ it('advertises only the eleven R5 read surfaces and refuses writes and unknown s
 const projected = z.object({ id: z.string(), resourceType: z.string(), meta: z.object({ versionId: z.string(), lastUpdated: z.iso.datetime() }) }).passthrough();
 const bundle = z.object({ type: z.string(), total: z.int(), entry: z.array(z.object({ resource: projected })).default([]) });
 
+it('returns the same version timestamp to both responsible clinicians while each sees only their encounter', async () => {
+  const host = await cdsWorkspace(pack => {
+    const role = pack.organization.practitionerRoles.find(item => item.id === 'family-clinician')!;
+    pack.organization.practitionerRoles.push({ ...role, id: 'consultant' });
+    pack.cases[1]!.demographics.identifiers = [...pack.cases[0]!.demographics.identifiers];
+  });
+  try {
+    const initial = (await host.start('Avery Reed', 'J18.9')).split('/').at(-1);
+    const id = bundle.parse(await host.get('/fhir/R5/Patient')).entry[0]!.resource.id;
+    const version = `/fhir/R5/Patient/${id}/_history/1`;
+    const registered = await host.get(version);
+    await host.role('consultant');
+    const referral = (await host.start('Jordan Vale', 'I21.4')).split('/').at(-1);
+    expect(await host.get(version)).toEqual(registered);
+    const encounters = async () => bundle.parse(await host.get(`/fhir/R5/Encounter?patient=${id}`)).entry.map(entry => entry.resource.id);
+    expect(await encounters()).toEqual([referral]);
+    await host.role('family-clinician');
+    expect(await encounters()).toEqual([initial]);
+    expect(await host.get(version)).toEqual(registered);
+  } finally { await host.store.close(); }
+});
+
 it('freezes all identifiers at each Patient version and maps local issuers to absolute naming systems', async () => {
   const host = await cdsWorkspace(pack => {
     pack.cases[0]!.demographics.identifiers = [{ issuer: '门诊 登记处', value: 'first' }];

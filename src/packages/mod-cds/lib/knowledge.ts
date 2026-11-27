@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { knowledgeSchema, type HospitalDataPack } from '../../data-pack';
+import { completedWardProcedures } from '../../mod-inpatient';
 import { localizedName, type ReadContext } from '../../platform';
 import { catalogCoding, sameCoding, type ClinicalFacts } from './facts';
-import { activeDrugs, completedPci, drugContraindication, drugDefinitions, incompatible, recentCreatinine, renalRisk } from './quality';
+import { activeDrugs, drugContraindication, drugDefinitions, incompatible, recentCreatinine, renalRisk } from './quality';
 
 const evidence = z.object({ codeSystem: z.string(), code: z.string(), unit: z.string(), value: z.union([z.number(), z.string(), z.boolean()]), observedAt: z.iso.datetime(), source: z.object({ reference: z.string(), versionId: z.string(), label: z.string() }) });
 const evidenceView = { observations: z.array(evidence), missingInputs: z.array(z.string()) };
@@ -23,22 +24,23 @@ export function guidelines(data: ClinicalFacts) {
 
 const state = z.enum(['unavailable', 'excluded', 'skipped', 'needs-review', 'ready']);
 const member = z.object({ kind: z.string(), codeSystem: z.string(), code: z.string(), catalogId: z.uuidv7().nullable(), display: localizedName, status: state, reason: z.string() });
-export const orderSetsSchema = z.array(z.object({ id: z.string(), version: z.string(), name: localizedName, members: z.array(member) }));
+export const orderSetsSchema = z.array(z.object({ id: z.string(), version: z.string(), name: localizedName, members: z.array(member), executions: z.array(z.object({ id: z.uuidv7(), completedAt: z.iso.datetime() })).default([]) }));
 type Template = NonNullable<HospitalDataPack['knowledge']>['orderSetTemplates'][number];
 export function orderSets(context: ReadContext, data: ClinicalFacts) {
   const { reader, actor } = context;
   const active = activeDrugs(reader, actor.at, data);
   const drugs = drugDefinitions(data);
-  const installed = context.availableModules ?? actor.enabledModules;
-  const compatible = (template: Template) => template.scope === data.encounter.encounter_class || (template.scope === 'postop' && data.encounter.encounter_class === 'inpatient' && completedPci(reader, actor.at, data));
+  const available = (id: string) => context.moduleEnabled?.(id) ?? actor.enabledModules.includes(id);
+  const postoperative = data.encounter.encounter_class === 'inpatient' ? completedWardProcedures(reader, actor.at, data.encounter.id) : [];
+  const compatible = (template: Template) => template.scope === data.encounter.encounter_class || (template.scope === 'postop' && postoperative.some(stage => stage.postoperativeSetId === template.id));
   return data.knowledge.orderSetTemplates.filter(compatible).filter(template => !template.triggerDiagnoses.length || template.triggerDiagnoses.some(code => data.diagnoses.some(diagnosis => sameCoding(code, diagnosis)))).map(template => ({
-    id: template.id, version: data.pack.pack_version, name: template.name, members: template.members.map(entry => {
+    id: template.id, version: data.pack.pack_version, name: template.name, executions: postoperative.filter(stage => stage.postoperativeSetId === template.id).map(stage => ({ id: stage.execution.id, completedAt: stage.execution.virtual_at })), members: template.members.map(entry => {
       const item = data.catalog.find(row => row.kind === entry.kind && sameCoding(catalogCoding(row), entry));
       const serviceKind = item?.definition.kind;
       const required = entry.kind === 'medications' ? (data.encounter.encounter_class === 'inpatient' ? 'mod-inpatient' : 'mod-pharmacy') : (entry.kind !== 'services' || serviceKind === 'nursing' || item?.definition.requiresProcedure) ? 'mod-inpatient' : serviceKind === 'imaging' ? 'mod-imaging' : serviceKind === 'pathology' ? 'mod-pathology' : 'mod-lab';
       const value = { ...entry, catalogId: item?.id ?? null, display: localizedName.parse(item?.definition.display ?? { en: entry.code, zh: entry.code }) };
       const result = (status: z.infer<typeof state>, reason: string) => ({ ...value, status, reason });
-      if (!item || item.amount_minor === null || !installed.includes(required)) return result('unavailable', 'catalog-unavailable');
+      if (!item || item.amount_minor === null || !available(required)) return result('unavailable', 'catalog-unavailable');
       if (template.hardContraindications.some(code => data.diagnoses.some(diagnosis => sameCoding(code, diagnosis)))) return result('excluded', 'diagnosis-contraindication');
       const drug = drugs.find(drug => drug.id === item.id);
       if (drug) {

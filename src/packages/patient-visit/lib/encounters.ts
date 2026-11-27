@@ -10,23 +10,25 @@ export function requireEncounter(reader: StoreReader, at: StoreScope, id: string
   return encounter;
 }
 
-export function editEncounter(context: CommandContext, status: 'active' | 'completed' = 'active', beforeUpdate?: () => void) {
+export function editEncounter(context: CommandContext, intent: 'active' | 'record' | 'completed' = 'active', beforeUpdate?: () => void) {
   const { tx, at, actor, targetId, expectedVersion } = context;
   const encounter = requireEncounter(tx, at, targetId);
   if (encounter.status === 'completed') throw new CoreError(409, 'ENCOUNTER_COMPLETED');
+  context.guardEncounter?.({ encounterId: targetId, kind: intent === 'completed' ? 'complete' : intent === 'record' ? 'record' : 'clinical' });
   if (encounter.active_practitioner_role !== actor.role.id) throw new CoreError(403, 'RESPONSIBLE_ROLE_REQUIRED');
   checkVersion(encounter.version, expectedVersion);
   beforeUpdate?.();
-  tx.update(at, 'encounters', targetId, expectedVersion, { status });
+  tx.update(at, 'encounters', targetId, expectedVersion, { status: intent === 'completed' ? 'completed' : 'active' });
   return expectedVersion + 1;
 }
 
-export function startEncounter(context: CommandContext, language?: 'en' | 'zh') {
+export function startEncounter(context: CommandContext, language?: 'en' | 'zh', admission?: { responsibleRole: string }) {
   const { tx, at, targetId, actor, virtualAt, recordedAt } = context;
   checkVersion(0, context.expectedVersion);
   const patientCase = readClinicalCase(tx, at, targetId);
   if (!patientCase) throw new CoreError(404, 'CASE_NOT_FOUND');
-  if (tx.list(at, 'encounters', { source_case_id: targetId, status: 'active' }).length) throw new CoreError(409, 'CASE_ALREADY_ACTIVE');
+  const encounterClass = admission ? 'inpatient' : patientCase.encounterClass;
+  if (tx.list(at, 'encounters', { source_case_id: targetId, encounter_class: encounterClass, status: 'active' }).length) throw new CoreError(409, 'CASE_ALREADY_ACTIVE');
   const { demographics } = patientCase;
   const identifiers = demographics.identifiers.map(identifier => ({ identifier, existing: tx.list(at, 'patient_identifiers', identifier)[0] }));
   const matches = new Set(identifiers.flatMap(({ existing }) => existing ? [existing.patient_id] : []));
@@ -34,12 +36,12 @@ export function startEncounter(context: CommandContext, language?: 'en' | 'zh') 
   const patientId = matches.values().next().value ?? v7();
   if (!matches.size) tx.insert(at, 'patients', { id: patientId, display_name: demographics.name, birth_date: demographics.birthDate, version: 1 });
   tx.addPatientIdentifiers(at, patientId, identifiers.flatMap(({ identifier, existing }) => existing ? [] : [{ id: v7(), ...identifier }]));
-  const role = actor.role.capabilities.includes('assess') ? actor.role : actor.roles.find(candidate => candidate.capabilities.includes('assess'));
+  const role = admission ? actor.roles.find(candidate => candidate.id === admission.responsibleRole) : actor.role.capabilities.includes('assess') ? actor.role : actor.roles.find(candidate => candidate.capabilities.includes('assess'));
   if (!role) throw new CoreError(409, 'RESPONSIBLE_ROLE_UNAVAILABLE');
   const encounterId = v7();
   const consultationId = v7();
   const times = { virtual_at: virtualAt, recorded_at: recordedAt };
-  tx.insert(at, 'encounters', { id: encounterId, patient_id: patientId, source_case_id: targetId, encounter_class: patientCase.encounterClass,
+  tx.insert(at, 'encounters', { id: encounterId, patient_id: patientId, source_case_id: targetId, encounter_class: encounterClass,
     active_practitioner_role: role.id, version: 1, status: 'active', ...times });
   tx.insert(at, 'encounter_triage', { id: v7(), encounter_id: encounterId, vitals: patientCase.triageVitals, ...times });
   tx.insert(at, 'pi_sessions', { id: encounterId, encounter_id: encounterId, agent: 'patient' });
@@ -77,7 +79,7 @@ export function readVisit(reader: StoreReader, at: StoreScope, id: string) {
   const triage = reader.list(at, 'encounter_triage', { encounter_id: id })[0];
   const consultation = reader.list(at, 'consultations', { encounter_id: id })[0]!;
   const turns = reader.list(at, 'consultation_turns', { consultation_id: consultation.id }).sort((first, second) => first.ordinal - second.ordinal);
-  return visitSchema.parse({ ...summary(encounter, patient.name), patient, encounterClass: patientCase.encounterClass,
+  return visitSchema.parse({ ...summary(encounter, patient.name), patient, encounterClass: encounter.encounter_class,
     priorHistory: patientCase.priorHistory, triageVitals: triage?.vitals ?? patientCase.triageVitals, replyPending: consultation.reply_pending,
     turns: turns.map(turn => ({ id: turn.id, ordinal: turn.ordinal, speaker: turn.speaker, channel: turn.channel, content: turn.content, virtualAt: turn.virtual_at })) });
 }

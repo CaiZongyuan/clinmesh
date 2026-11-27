@@ -62,7 +62,7 @@ const service = concept.extend({
   kind: z.enum(['lab', 'examination', 'imaging', 'pathology', 'nursing', 'registration']),
   unitPriceMinor: money, unit: text, analytes: z.array(analyte),
   turnaroundMinutes: z.int().min(1).max(10080).optional(), requiresProcedure: z.boolean().optional(),
-  specimenContainer: z.strictObject({ specimen: text, container: text }).optional(),
+  specimenContainer: z.strictObject({ specimen: text, container: text, capColor: text.optional(), mergeable: z.boolean().optional() }).optional(),
 });
 export const catalog = z.strictObject({
   diagnoses: z.array(concept.extend({ aliases: texts.optional() })), medications: z.array(medication), services: z.array(service),
@@ -73,13 +73,19 @@ export const catalog = z.strictObject({
   materials: z.array(concept.extend({ unitPriceMinor: money, unit: text, diameterMm: positive.optional(), lengthMm: positive.optional() })),
 });
 
-export const pharmacyRules = z.strictObject({ indicationCodeSystem: z.url(), classConflicts: z.array(z.tuple([text, text])) });
+export const pharmacyRules = z.strictObject({ indicationCodeSystem: z.url(), indicationAliases: z.array(z.strictObject({ diagnosis: coding, equivalent: coding })).optional(), classConflicts: z.array(z.tuple([text, text])) });
 const stockLot = z.strictObject({ codeSystem: z.url(), medicationCodes: texts.min(1), lotNumber: text, expiryDate: z.iso.date(), quantity: z.int().positive(), unit: text });
 export const pharmacyKnowledge = pharmacyRules.extend({ openingStock: z.array(stockLot) });
+export const wardKnowledge = z.strictObject({
+  schedules: z.record(text, z.array(timeOfDay).min(1).max(8).refine(slots => new Set(slots).size === slots.length)), bedDay: coding,
+  materialStock: z.array(z.strictObject({ item: coding, lotNumber: text, expiryDate: z.iso.date(), quantity: z.int().positive() })),
+  procedures: z.array(z.strictObject({ item: coding, kind: z.enum(['angiography', 'pci', 'other']), reportService: coding.optional(), ffr: coding.optional(), nursing: coding.optional(), postoperativeSetId: text.optional() })),
+});
 const member = coding.extend({ kind: z.enum(['medications', 'services', 'procedures', 'materials']) });
 export const knowledge = z.strictObject({
   pharmacy: pharmacyKnowledge.optional(),
   cds: z.strictObject({ diagnosticSystems: z.array(z.url()), ffrAnalytes: z.array(coding), pciProcedures: z.array(coding) }).optional(),
+  inpatient: wardKnowledge.optional(),
   guidelineTopics: z.array(z.strictObject({
     id: text, source: z.httpUrl(), version: text, physicalPage: z.int().positive(), verbatim: text, qualifiers: texts,
     population: z.enum(['adult', 'pediatric', 'all']), evidence: z.array(coding).optional(),
@@ -129,6 +135,7 @@ export const studySections = z.discriminatedUnion('kind', [
 const result = authoredFindings.extend({
   stage: z.enum(['initial', 'inpatient', 'repeat', 'follow-up']), revision: z.int().positive(),
   amendmentReason: bilingual.optional(), images: z.array(archivedAsset).optional(), sections: studySections.optional(), priorSurgeryId: text.optional(),
+  completedProcedure: coding.extend({ executionStage: z.enum(['planned', 'ad-hoc-pci']) }).optional(),
 });
 export const truth = z.strictObject({
   primaryDiagnosis: coding, secondaryDiagnoses: z.array(coding), hiddenHistory: z.array(bilingual), results: z.array(result),

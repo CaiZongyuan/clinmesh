@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ageOn, clinicalFactId, clinicalFactSystem, triageMeasures } from '../../clinical-core';
 import { catalogSchema, knowledgeSchema, readClinicalCase, type Coding } from '../../data-pack';
 import { signedFindingsSchema } from '../../mod-lab';
+import { signedAngiography } from '../../mod-inpatient';
 import { requireEncounter } from '../../patient-visit';
 import { CoreError, type ReadContext } from '../../platform';
 import type { EntityRow, StoreReader, StoreScope } from '../../store';
@@ -25,7 +26,7 @@ const measures = { serumCreatinine: ['2160-0', '14682-9'], hemoglobin: ['718-7']
   troponin: ['89579-7', '67151-1', '6598-7', '10839-9', '49563-0'], egfr: ['98979-8', '33914-3', '62238-1'] };
 type Measurement = Coding & { unit: string; value: string | number | boolean; observedAt: string; source: ClinicalScoreSourceReference; interpretation?: string };
 const evidenceCoding = z.strictObject({ codeSystem: z.url(), code: z.string().min(1) });
-export const legacyEcgSchema = z.array(z.strictObject({ packId: z.string(), packVersion: z.string(), ecg: evidenceCoding, topicEvidence: z.record(z.string(), z.array(evidenceCoding)) }));
+export const legacyEcgSchema = z.array(z.strictObject({ packId: z.string(), packVersions: z.array(z.string()).nonempty(), ecg: evidenceCoding, diagnosticSystems: z.array(z.url()).optional(), topicEvidence: z.record(z.string(), z.array(evidenceCoding)) }));
 export type LegacyEcg = z.infer<typeof legacyEcgSchema>;
 const sourced = <Value>(value: Value, source: ClinicalScoreSourceReference) => ({ value, source });
 const reference = (label: string, reference: string, version: number | string) => ({ label, reference, versionId: String(version) });
@@ -52,7 +53,8 @@ export function clinicalFacts(reader: StoreReader, at: StoreScope, encounterId: 
   const bedside = bedsideFields.parse(assessment?.fields ?? {});
   const confirmed = reader.list(at, 'diagnosis_revisions', { encounter_id: encounterId }).sort((first, second) => second.revision - first.revision)[0];
   const diagnoses = confirmed ? reader.list(at, 'diagnosis_confirmations', { revision_id: confirmed.id }).map(item => ({ codeSystem: item.code_system, code: item.code })) : [];
-  const diagnosticSystems = knowledge.cds?.diagnosticSystems ?? ['http://hl7.org/fhir/sid/icd-10'];
+  const historical = legacy.find(entry => entry.packId === pack.pack_id && entry.packVersions.includes(pack.pack_version));
+  const diagnosticSystems = knowledge.cds?.diagnosticSystems ?? historical?.diagnosticSystems ?? ['http://hl7.org/fhir/sid/icd-10'];
   const historyRef = reference('Prior History', `ClinicalCase/${caseView.id}/prior-history`, pack.pack_version);
   const codes = diagnoses.filter(item => diagnosticSystems.includes(item.codeSystem)).map(item => item.code.toUpperCase());
   const catalog = reader.list(at, 'catalog_items');
@@ -64,8 +66,10 @@ export function clinicalFacts(reader: StoreReader, at: StoreScope, encounterId: 
     const revisions = reader.list(at, 'diagnostic_reports', { order_id: order.id }).filter(row => Date.parse(row.virtual_at) <= Date.parse(now)).sort((first, second) => first.revision - second.revision);
     const latest = revisions.at(-1);
     if (!latest || !service) return [];
-    const data = signedFindingsSchema.safeParse(latest.findings);
-    return data.success ? [{ orderId: order.id, service, first: revisions[0]!, latest, findings: data.data, source: reference(service.display.en, `DiagnosticReport/${order.id}`, latest.revision) }] : [];
+    const functional = signedFindingsSchema.safeParse(latest.findings).data;
+    const coronary = functional ? undefined : signedAngiography(reader, at, latest);
+    const findings = functional ?? (coronary && coronary.status !== 'unavailable' ? { observations: coronary.observations, stSegmentDeviation: undefined } : undefined);
+    return findings ? [{ orderId: order.id, service, first: revisions[0]!, latest, findings, source: reference(service.display.en, `DiagnosticReport/${order.id}`, latest.revision) }] : [];
   }).sort((first, second) => byTime(first.first, second.first));
   const observed: Measurement[] = [
     ...caseView.priorHistory.observations.filter(item => Date.parse(item.observedAt) <= Date.parse(now)).map(item => ({ ...item.analyte, value: item.value, unit: item.unit, observedAt: item.observedAt, source: historyRef })),
@@ -100,7 +104,6 @@ export function clinicalFacts(reader: StoreReader, at: StoreScope, encounterId: 
   facts.admissionSerumCreatinine = firstCurrent('serumCreatinine') ?? null;
   facts.baselineHemoglobin = firstCurrent('hemoglobin') ?? null;
   facts.baselineWbc = firstCurrent('wbc') ?? null;
-  const historical = legacy.find(entry => entry.packId === pack.pack_id && entry.packVersion === pack.pack_version);
   const firstEcg = reports.find(report => report.service.modality === 'ecg-12-lead' || (!report.service.modality && historical && sameCoding(historical.ecg, report.service)));
   if (firstEcg?.findings.stSegmentDeviation !== undefined) facts.stSegmentDeviation = sourced(firstEcg.findings.stSegmentDeviation, firstEcg.source);
   if (facts.stSegmentDeviation?.source) observed.push({ codeSystem: clinicalFactSystem, code: 'stSegmentDeviation', value: facts.stSegmentDeviation.value, unit: '1', observedAt: firstEcg?.findings.stSegmentDeviation !== undefined ? firstEcg.latest.virtual_at : assessment!.virtual_at, source: facts.stSegmentDeviation.source });

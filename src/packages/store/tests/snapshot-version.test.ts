@@ -17,7 +17,7 @@ it.each([baseline, baselineV2, billingBaseline, patientBaseline])('imports $form
   try {
     await store.importLogicalSnapshot(previous);
     const upgraded = await store.exportLogicalSnapshot(previous.workspaceId);
-    expect(upgraded.format).toBe('clinmesh.snapshot.v8');
+    expect(upgraded.format).toBe('clinmesh.snapshot.v9');
     expect(upgraded.tables.slice(0, previous.tables.length)).toEqual(previous.tables);
     expect(upgraded.tables.slice(previous.tables.length).filter(table => table.name !== 'inventory_lot_quarantines').every(table => !table.rows.length)).toBe(true);
     const quarantines = upgraded.tables.find(table => table.name === 'inventory_lot_quarantines')!.rows;
@@ -50,14 +50,18 @@ const completePatient = { ...completeBilling, format: 'clinmesh.snapshot.v4', sh
 ] };
 const completeLab = { ...completePatient, format: 'clinmesh.snapshot.v5', sha256: labDelta.sha256, tables: [...completePatient.tables, ...labDelta.tables] };
 
-it('preserves the published pharmacy snapshot, including its two Pi sessions and immutable prescription chain', async () => {
+function publishedPharmacy() {
   const tables = new Map<string, z.core.util.JSONType[]>(completeLab.tables.map(table => [table.name, table.rows]));
   for (const { name, rows } of pharmacyDelta.tables) {
     const revised = new Set(rows.map(row => row.id));
     const retained = (tables.get(name) ?? []).filter(row => !revised.has(z.object({ id: z.string() }).parse(row).id));
     tables.set(name, [...retained, ...rows]);
   }
-  const previous = { ...completeLab, sha256: pharmacyDelta.sha256, format: 'clinmesh.snapshot.v6', tables: Array.from(tables, ([name, rows]) => ({ name, rows })) };
+  return { ...completeLab, sha256: pharmacyDelta.sha256, format: 'clinmesh.snapshot.v6', tables: Array.from(tables, ([name, rows]) => ({ name, rows })) };
+}
+const pharmacy = publishedPharmacy();
+const publishedStudies = { ...pharmacy, sha256: 'aeb858bcecb306ee0a74b86b47bc578d45cf84ce328cb4d9bb1244650baf4201', format: 'clinmesh.snapshot.v7', tables: [...pharmacy.tables, { name: 'study_requests', rows: [{ workspace_id: '0192eaf2-cb03-7000-8000-000000000001', epoch: '0192eaf2-cb03-7000-8000-000000000002', id: '0192eaf2-cb03-7000-8000-000000000104', order_id: '0192eaf2-cb03-7000-8000-000000000030', stages: ['initial'], prior_surgery_id: 'teaching-specimen' }] }] };
+it.each([pharmacy, publishedStudies])('preserves all published $format facts, including both Pi sessions', async previous => {
   const store = createNodeSqliteStore({ dbPath: ':memory:' });
   try {
     await store.importLogicalSnapshot(previous);
@@ -74,11 +78,11 @@ it.each([completeBilling, completePatient, completeLab])('restores all nonempty 
     await store.importLogicalSnapshot(previous);
     const current = await store.exportLogicalSnapshot(previous.workspaceId);
     expect(current.tables.slice(0, previous.tables.length)).toEqual(previous.tables);
-    const missing = [...(previous.format === 'clinmesh.snapshot.v3' ? ['patient_reply_runs', 'agent_model_calls'] : []), ...(previous.format !== 'clinmesh.snapshot.v5' ? ['lab_drafts', 'lab_requests'] : []), 'prescription_signatures', 'prescription_directions', 'prescription_withdrawals', 'inventory_lot_quarantines'];
-    expect(current.tables.slice(previous.tables.length).map(table => table.name)).toEqual([...missing, 'study_requests', 'clinical_risk_assessments', 'clinical_override_reasons', 'patient_identity_versions', 'encounter_state_versions', 'clinical_order_versions']);
+    const missing = [...(previous.format === 'clinmesh.snapshot.v3' ? ['patient_reply_runs', 'agent_model_calls'] : []), ...(previous.format !== 'clinmesh.snapshot.v5' ? ['lab_drafts', 'lab_requests'] : []), 'prescription_signatures', 'prescription_directions', 'prescription_withdrawals', 'inventory_lot_quarantines', 'study_requests'];
+    expect(current.tables.slice(previous.tables.length, previous.tables.length + missing.length).map(table => table.name)).toEqual(missing);
     expect(current.tables.slice(previous.tables.length).filter(table => table.name !== 'inventory_lot_quarantines').every(table => !table.rows.length)).toBe(true);
     expect(current.tables.find(table => table.name === 'inventory_lot_quarantines')?.rows).toMatchObject([{ source_sha256: previous.sha256, source_version: previous.format, quantity_at_migration: -3 }]);
     expect(current.pi).toEqual(previous.pi);
-    expect(current.format).toBe('clinmesh.snapshot.v8');
+    expect(current.format).toBe('clinmesh.snapshot.v9');
   } finally { await store.close(); }
 });

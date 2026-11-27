@@ -134,7 +134,7 @@ async function exercise(fetchApi: Http, reopen?: (workspaceId: string) => Promis
   expect(await read(opened.encounterId)).toMatchObject({ netMinor: 800, cashMinor: 800, balanceMinor: 0 });
   const preadmission = await funds(ward.encounterId, 'inpatient.deposit.preview', { amountMinor: 99 });
   await funds(ward.encounterId, 'inpatient.deposit.confirm', { commitToken: preadmission.commitToken });
-  expect(await read(ward.encounterId)).toMatchObject({ admissionStatus: null, cashMinor: 99, settlement: null });
+  expect(await read(ward.encounterId)).toMatchObject({ admissionStatus: 'registered', cashMinor: 99, settlement: null });
   const logout = await nextCommand('/api/auth/logout', 3, {});
   expect(logout.headers.get('set-cookie')).toMatch(/Max-Age=0/i);
   expect((await fetchApi('/api/his/unknown', { headers })).status).toBe(401);

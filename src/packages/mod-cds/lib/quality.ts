@@ -1,6 +1,7 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
 import { medicationSchema } from '../../data-pack';
+import { completedWardProcedures } from '../../mod-inpatient';
 import { CoreError, type ClinicalQualityGate, type ClinicalQualityIntent } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
 import { catalogCoding, clinicalFacts, sameCoding, type ClinicalFacts, type LegacyEcg } from './facts';
@@ -44,7 +45,9 @@ export function recentCreatinine(data: ClinicalFacts) {
 const antibacterial = (drug: Medication) => drug.safety.classCodes.some(code => ['antibacterial', 'penicillin'].includes(code));
 
 export function completedPci(reader: StoreReader, at: StoreScope, data: ClinicalFacts) {
+  if (completedWardProcedures(reader, at, data.encounter.id).some(stage => stage.kind === 'pci')) return true;
   return data.orders.some(order => reader.list(at, 'surgery_requests', { order_id: order.id }).some(request => {
+    if (reader.list(at, 'ward_surgery_stages', { request_id: request.id }).length) return false;
     const procedure = data.byId.get(request.procedure_item_id);
     return procedure && data.knowledge.cds?.pciProcedures.some(code => sameCoding(code, catalogCoding(procedure))) && reader.list(at, 'surgery_executions', { surgery_request_id: request.id }).some(event => event.outcome === 'completed');
   }));
@@ -68,7 +71,7 @@ export function qualityIssues(reader: StoreReader, at: StoreScope, data: Clinica
       const viral = (code: string) => /^(J00|J06|B34)/.test(code);
       if (antibacterial(drug) && data.codes.some(viral) && !data.codes.some(code => !viral(code) && drug.safety.indicationPrefixes.some(prefix => code.startsWith(prefix)))) alerts.add('ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION');
     }
-  } else if (intent.kind === 'complete') {
+  } else if (intent.kind === 'complete' && data.encounter.encounter_class === 'outpatient') {
     if ((data.bedside.acuteChestPain || data.codes.some(code => /^(R07|I20\.0|I21|I22|I24)/.test(code))) && (!data.firstEcg || !data.biomarker)) alerts.add('CHEST_PAIN_WORKUP_INCOMPLETE');
   } else if (intent.kind === 'pci') {
     const report = data.reports.filter(report => report.service.modality === 'coronary-angiography').at(-1);

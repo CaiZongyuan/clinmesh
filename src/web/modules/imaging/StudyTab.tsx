@@ -4,6 +4,7 @@ import { studyViewSchema, type StudyKind, type StudyView } from '../../../packag
 import { Badge, Card, ConfirmActionButton, Dialog, Field, Select } from '../../../packages/ui-kit';
 import { api, errorMessage, scopeKey, words, type Intent, type WorkbenchPanelProps } from '../../workbench-api';
 import { ReportReview } from './ReportReview';
+import { consumeStagedMembers, useOrderSetDraft } from '../../encounter-drafts';
 
 type Props = WorkbenchPanelProps & { kind: StudyKind };
 export const RadiologyTab = (props: WorkbenchPanelProps) => <StudyTab {...props} kind="imaging"/>;
@@ -20,7 +21,7 @@ function StudyTab(props: Props) {
   return <StudyWorkspace key={`${workspace.epoch}:${encounter.id}:${workspace.roleId}`} {...props} data={query.data}/>;
 }
 
-function StudyWorkspace({ workspace, encounter, language, kind, submit, data }: Props & { data: StudyView }) {
+function StudyWorkspace({ workspace, encounter, language, kind, submit, data, drafts }: Props & { data: StudyView }) {
   const text = words(language);
   const client = useQueryClient();
   const mutation = useMutation({ mutationFn: (intent: Intent) => submit(intent), onSettled: () => client.invalidateQueries({ queryKey: scopeKey(workspace, encounter.id) }) });
@@ -30,12 +31,17 @@ function StudyWorkspace({ workspace, encounter, language, kind, submit, data }: 
   const allowed = (action: string) => active && operations.has(`${kind}.${action}`);
   const send = (action: string, targetId: string, version: number, fields?: Intent['fields']) => mutation.mutate({ name: `${kind}.${action}`, targetId, version, fields });
   const [surgery, setSurgery] = useState('');
-  const surgeries = encounter.priorHistory.surgeries ?? [];
+  const staged = useOrderSetDraft(drafts);
+  const stagedIds = new Set(staged?.members.map(member => member.catalogId));
+  const draft = data.services.filter(service => stagedIds.has(service.quote.serviceId));
+  const surgeries = [...encounter.priorHistory.surgeries ?? [], ...data.completedSurgeries];
   const surgeryLabel = (id: string) => surgeries.find(item => item.id === id)?.description[language];
   const statuses = { issued: text('Issued', '已开立'), accepted: text('Accepted', '已受理'), 'in-progress': text('In progress', '执行中'), reported: text('Reported', '已签发'), acknowledged: text('Acknowledged', '已阅'), cancelled: text('Cancelled', '已取消'), 'generation-failed': text('No authored result', '缺少预置结果') };
   return <div className="clinical-panel">{mutation.isError && <p role="alert">{errorMessage(mutation.error, language)}</p>}
     <Card><h3>{text('Request a study', '开立检查申请')}</h3>{kind === 'pathology' && (surgeries.length ? <Field label={text('Related prior surgery', '关联既往手术')}><Select value={surgery || null} onValueChange={value => setSurgery(value ?? '')} options={surgeries.map(item => ({ value: item.id, label: `${item.performedOn} · ${item.description[language]}` }))}/></Field> : <p>{text('No prior surgery is documented for this case.', '本病例没有可关联的既往手术。')}</p>)}
-      <ul>{data.services.map(({ display, quote }) => { const name = display[language];
+      {draft.length > 0 && <><h4>{text('Staged requests', '组套待开申请')}</h4><ul>{draft.map(({ display, quote }) => <li key={quote.serviceId} className="diagnosis-row"><span>{display[language]} · {quote.unitPriceMinor / 10 ** quote.currencyExponent} {quote.currencyCode}</span>
+        {responsible && allowed('issue') && <ConfirmActionButton disabled={mutation.isPending || (kind === 'pathology' && !surgery)} confirmation={`${text('Issue the reviewed draft', '签发已核对草稿')} · ${display[language]}?`} onClick={() => mutation.mutate({ name: `${kind}.issue`, targetId: encounter.id, version: encounter.version, fields: { item: quote, ...(kind === 'pathology' && { priorSurgeryId: surgery }) } }, { onSuccess: () => consumeStagedMembers(drafts, member => member.catalogId === quote.serviceId) })}>{text('Issue staged request', '签发组套申请')} · {display[language]}</ConfirmActionButton>}</li>)}</ul></>}
+      <ul>{data.services.filter(service => !stagedIds.has(service.quote.serviceId)).map(({ display, quote }) => { const name = display[language];
         const price = new Intl.NumberFormat(language, { style: 'currency', currency: quote.currencyCode, minimumFractionDigits: quote.currencyExponent, maximumFractionDigits: quote.currencyExponent }).format(quote.unitPriceMinor / 10 ** quote.currencyExponent);
         return <li key={quote.serviceId} className="diagnosis-row"><span>{name}<small>{price}</small></span>{responsible && allowed('issue') && <ConfirmActionButton disabled={mutation.isPending || (kind === 'pathology' && !surgery)} confirmation={`${text('Issue', '开立')} · ${name} · ${price}?`} onClick={() => send('issue', encounter.id, encounter.version, { item: quote, ...(kind === 'pathology' && { priorSurgeryId: surgery }) })}>{text('Issue', '开立')} · {name}</ConfirmActionButton>}</li>;
       })}</ul></Card>

@@ -29,9 +29,12 @@ function Assessment({ data, props }: { data: Scores; props: WorkbenchPanelProps 
   </Dialog>;
 }
 
-function OrderSet({ template, props }: { template: Template; props: WorkbenchPanelProps }) {
+type DraftContext = Omit<WorkbenchPanelProps, 'encounter'> & { encounter: Pick<WorkbenchPanelProps['encounter'], 'id' | 'status' | 'responsibleRole'> };
+export function OrderSet({ template, props, executionId }: { template: Template; props: DraftContext; executionId?: string }) {
   const text = words(props.language);
   const client = useQueryClient();
+  const [chosenExecution, setExecution] = useState('');
+  const reviewedExecution = executionId ?? (template.executions.length === 1 ? template.executions[0]!.id : template.executions.find(item => item.id === chosenExecution)?.id);
   const [selected, setSelected] = useState<string[]>(() => template.members.flatMap(member => member.status === 'ready' && member.catalogId ? [member.catalogId] : []));
   const stage = useMutation({ mutationFn: async () => {
     const members = template.members.flatMap(member => member.catalogId && selected.includes(member.catalogId) && ['ready', 'needs-review'].includes(member.status) ? [{ ...member, catalogId: member.catalogId }] : []);
@@ -42,17 +45,20 @@ function OrderSet({ template, props }: { template: Template; props: WorkbenchPan
       const replaced = previous?.templateId === template.id ? previous.members.map(item => item.catalogId) : [];
       const ids = new Set(lab.draft.items.filter(item => !replaced.includes(item.serviceId)).map(item => item.serviceId));
       for (const member of members) if (lab.services.some(service => service.id === member.catalogId)) ids.add(member.catalogId);
-      await props.submit({ name: 'lab.save-draft', targetId: props.encounter.id, version: lab.draft.version, fields: { serviceIds: [...ids] } });
-      await client.invalidateQueries({ queryKey: scopeKey(props.workspace, props.encounter.id, 'lab') });
+      if (ids.size !== lab.draft.items.length || lab.draft.items.some(item => !ids.has(item.serviceId))) {
+        await props.submit({ name: 'lab.save-draft', targetId: props.encounter.id, version: lab.draft.version, fields: { serviceIds: [...ids] } });
+        await client.invalidateQueries({ queryKey: scopeKey(props.workspace, props.encounter.id, 'lab') });
+      }
     }
-    props.drafts?.setState({ orderSet: { templateId: template.id, members } });
+    props.drafts?.setState({ orderSet: { templateId: template.id, executionId: reviewedExecution, members } });
   } });
   return <Dialog title={template.name[props.language]} triggers={[template.name[props.language]]} close={text('Close order set', '关闭组套')}>
+    {!executionId && template.executions.length > 1 && <Field label={text('Completed procedure', '已完成的关联术式')}><Select value={reviewedExecution ?? null} onValueChange={value => setExecution(value ?? '')} options={template.executions.map(item => ({ value: item.id, label: `${item.completedAt} · ${item.id.slice(-6)}` }))}/></Field>}
     <p>{text('Catalog version', '目录版本')} {template.version}</p>{template.members.map(member => <div key={`${member.kind}/${member.codeSystem}/${member.code}`}>
       <Checkbox label={member.display[props.language]} disabled={!member.catalogId || !['ready', 'needs-review'].includes(member.status)} checked={Boolean(member.catalogId && selected.includes(member.catalogId))} onCheckedChange={checked => { if (member.catalogId) setSelected(current => checked ? [...current, member.catalogId!] : current.filter(id => id !== member.catalogId)); }}/>
       <Badge>{member.status}</Badge> {member.reason}</div>)}
     {stage.isSuccess && <p role="status">{text('Draft ready for review in the order editor.', '草稿已灌入，请到开单页核对。')}</p>}{stage.isError && <p role="alert">{errorMessage(stage.error, props.language)}</p>}
-    <Button disabled={stage.isPending || props.encounter.status !== 'active' || props.workspace.roleId !== props.encounter.responsibleRole} onClick={() => stage.mutate()}>{text('Fill draft', '灌入草稿')}</Button>
+    <Button disabled={stage.isPending || template.executions.length > 0 && !reviewedExecution || props.encounter.status !== 'active' || props.workspace.roleId !== props.encounter.responsibleRole} onClick={() => stage.mutate()}>{text('Fill draft', '灌入草稿')}</Button>
   </Dialog>;
 }
 

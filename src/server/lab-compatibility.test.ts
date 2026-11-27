@@ -11,15 +11,26 @@ import { createWorkspaceApp } from './workspace';
 
 it('opens the v2 cardiology snapshot with ECG and TTE available and rejects invasive angiography from the lab draft', async () => {
   const pack = structuredClone(cardiology);
+  Reflect.deleteProperty(pack.knowledge, 'inpatient');
+  pack.organization.departments = pack.organization.departments.filter(item => item.id !== 'recovery');
+  pack.organization.wards = pack.organization.wards.filter(item => item.departmentId !== 'recovery');
+  pack.organization.beds = pack.organization.beds.filter(item => item.wardId !== 'recovery-ward');
+  pack.organization.practitioners = pack.organization.practitioners.filter(item => item.departmentId !== 'recovery');
+  pack.organization.practitionerRoles = pack.organization.practitionerRoles.filter(item => !['records-coder', 'recovery-nurse', 'recovery-physician'].includes(item.id));
+  pack.organization.capabilities = pack.organization.capabilities.filter(item => item !== 'code-chart');
   Reflect.deleteProperty(pack.knowledge, 'pharmacy');
   Reflect.deleteProperty(pack.knowledge, 'cds');
   for (const topic of pack.knowledge.guidelineTopics) Reflect.deleteProperty(topic, 'evidence');
   Reflect.deleteProperty(pack.catalog.medications.find(item => item.code === 'dapagliflozin')!.safety, 'contraindicatedEgfrBelow');
   pack.manifest.version = '1.0.0';
-  pack.catalog.services = pack.catalog.services.filter(service => service.kind !== 'registration');
+  pack.catalog.services = pack.catalog.services.filter(service => !['registration', 'nursing'].includes(service.kind) && service.code !== 'potassium');
+  for (const patient of pack.cases) patient.caseTruth.results = patient.caseTruth.results.filter(result => result.service.code !== 'potassium');
   const rules = pack.knowledge.regionalRules['mod-drg-cn'];
   for (const key of ['diagnosisSystem', 'procedureSystem', 'tiers', 'catalogCoverage', 'plans']) Reflect.deleteProperty(rules, key);
-  for (const service of pack.catalog.services) { Reflect.deleteProperty(service, 'requiresProcedure'); Reflect.deleteProperty(service, 'modality'); }
+  for (const service of pack.catalog.services) {
+    Reflect.deleteProperty(service, 'requiresProcedure'); Reflect.deleteProperty(service, 'modality');
+    if (service.specimenContainer) { Reflect.deleteProperty(service.specimenContainer, 'capColor'); Reflect.deleteProperty(service.specimenContainer, 'mergeable'); }
+  }
   for (const patient of pack.cases) for (const result of patient.caseTruth.results) {
     Reflect.deleteProperty(result, 'stSegmentDeviation');
     for (const observation of result.observations) { Reflect.deleteProperty(observation, 'unit'); Reflect.deleteProperty(observation, 'interpretation'); }
@@ -33,12 +44,13 @@ it('opens the v2 cardiology snapshot with ECG and TTE available and rejects inva
   const expiresAt = '2099-01-01T00:00:00Z';
   try {
     const { at, caseId, cagId } = await source.withTransaction(tx => {
-      const at = installHospitalDataPack(tx, { workspaceId, expectedEpoch: null, virtualTime: '2028-01-01T00:00:00Z' }, { ...pack, knowledge: { ...pack.knowledge, pharmacy: cardiology.knowledge.pharmacy } });
+      const at = installHospitalDataPack(tx, { workspaceId, expectedEpoch: null, virtualTime: '2028-01-01T00:00:00Z' }, { ...pack, manifest: { ...pack.manifest, enabledModules: pack.manifest.enabledModules.filter(id => id !== 'mod-inpatient') }, knowledge: { ...pack.knowledge, pharmacy: cardiology.knowledge.pharmacy } });
       tx.insert(at, 'visitor_sessions', { id, practitioner_role: 'cardiologist', revoked: false, expires_at: expiresAt, version: 1 });
       return { at, caseId: tx.list(at, 'clinical_cases')[0]!.id, cagId: tx.list(at, 'catalog_items', { kind: 'services', code: 'cag' })[0]!.id };
     });
     const exported = await source.exportLogicalSnapshot(workspaceId);
-    exported.tables.find(table => table.name === 'data_pack_installations')!.rows[0]!.knowledge = pack.knowledge;
+    exported.tables.find(table => table.name === 'data_pack_installations')!.rows[0]!.knowledge = z.json().parse(pack.knowledge);
+    exported.tables.find(table => table.name === 'data_pack_installations')!.rows[0]!.manifest = z.json().parse(pack.manifest);
     const v2 = { format: 'clinmesh.snapshot.v2', workspaceId, tables: exported.tables.slice(0, exported.tables.findIndex(table => table.name === 'charge_sources')), pi: exported.pi };
     await restored.importLogicalSnapshot({ ...v2, sha256: digest(v2) });
     const app = createWorkspaceApp(restored, { localOpen: true }, builtinModules);

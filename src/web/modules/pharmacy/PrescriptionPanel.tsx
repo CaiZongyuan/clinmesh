@@ -6,6 +6,7 @@ import { Badge, Button, Card, ConfirmActionButton, DetailDrawer, Field, Input, S
 import type { WorkbenchPanelProps } from '../../EncounterPanel';
 import { api, ApiError, errorMessage, scopeKey, words, type Intent, type Language } from '../../workbench-api';
 import { OverrideBar } from '../cds/OverrideBar';
+import { consumeStagedMembers } from '../../encounter-drafts';
 
 const drugKey = ({ code, codeSystem }: { code: string; codeSystem: string }) => JSON.stringify([codeSystem, code]);
 type View = z.infer<typeof prescribingViewSchema>;
@@ -64,7 +65,7 @@ function Prescribing({ view, language, encounter, workspace, submit, drafts }: W
   const matches = view.catalog.filter(item => item.source === source && [item.code, item.display.en, item.display.zh].some(value => value.toLowerCase().includes(search.trim().toLowerCase())));
   const issues = checkPrescription(view.catalog, lines, view.context);
   const blocking = issues.filter(issue => issue !== 'PRESCRIPTION_INDICATION_MISMATCH' || !workspace.enabledModules.includes('mod-cds'));
-  const apply = (intent: Intent) => writes.mutate(intent, { onSuccess: () => { drafts?.setState({ orderSet: undefined }); setDraftLines([]); setReason(''); setNoMedication(false); } });
+  const apply = (intent: Intent) => writes.mutate(intent, { onSuccess: () => { consumeStagedMembers(drafts, member => member.kind === 'medications' && lines.some(line => drugKey(line) === drugKey(member))); setDraftLines([]); setReason(''); setNoMedication(false); } });
   const commit = (name: string, fields: Intent['fields']) => apply({ name, targetId: encounter.id, version: encounter.version, fields });
   const rejected = writes.variables;
   const alert = rejected?.name === 'prescription.sign' && rejected.targetId === encounter.id && rejected.version === encounter.version && rejected.fields?.lines === lines && writes.error instanceof ApiError && writes.error.message === 'CLINICAL_QUALITY_ALERT' ? writes.error : undefined;

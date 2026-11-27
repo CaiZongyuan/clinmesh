@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "cn-cardiology",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching cardiovascular centre", "zh": "心血管介入教学中心" },
     "description": {
@@ -97,10 +97,12 @@
       "schedule-procedure",
       "settle",
       "review-payer",
+      "code-chart",
       "workspace-admin"
     ],
     "departments": [
       { "id": "cardiology", "name": { "en": "Cardiology", "zh": "心内科" } },
+      { "id": "recovery", "name": { "en": "Cardiac recovery", "zh": "心脏康复科" } },
       { "id": "cath-lab", "name": { "en": "Catheterization laboratory", "zh": "导管室" } }
     ],
     "wards": [
@@ -108,13 +110,18 @@
         "id": "heart-ward",
         "name": { "en": "Cardiac ward", "zh": "心内一病区" },
         "departmentId": "cardiology"
-      }
+      },
+      { "id": "recovery-ward", "name": { "en": "Recovery ward", "zh": "康复病区" }, "departmentId": "recovery" }
     ],
     "beds": [
+      { "id": "recovery-01", "name": { "en": "Recovery bed 01", "zh": "康复01床" }, "wardId": "recovery-ward" },
       { "id": "heart-01", "name": { "en": "Bed 01", "zh": "01床" }, "wardId": "heart-ward" },
       { "id": "heart-02", "name": { "en": "Bed 02", "zh": "02床" }, "wardId": "heart-ward" }
     ],
     "practitionerRoles": [
+      { "id": "records-coder", "name": { "en": "Medical records coder", "zh": "病案编码员" }, "capabilities": ["code-chart"] },
+      { "id": "recovery-nurse", "name": { "en": "Recovery nurse", "zh": "康复病区护士" }, "capabilities": ["execute-orders"] },
+      { "id": "recovery-physician", "name": { "en": "Recovery physician", "zh": "康复医师" }, "capabilities": ["assess", "sign", "review-reports", "admit"] },
       {
         "id": "registration-desk",
         "name": { "en": "Registration desk", "zh": "挂号分诊岗" },
@@ -147,6 +154,8 @@
       }
     ],
     "practitioners": [
+      { "id": "recovery-md", "name": { "en": "Dr An", "zh": "安医师" }, "departmentId": "recovery", "roleId": "recovery-physician" },
+      { "id": "recovery-rn", "name": { "en": "Nurse Wu", "zh": "吴护士" }, "departmentId": "recovery", "roleId": "recovery-nurse" },
       {
         "id": "cv-staff-01",
         "name": { "en": "Dr Lin", "zh": "林医师" },
@@ -669,7 +678,7 @@
         "kind": "lab",
         "unitPriceMinor": 800,
         "unit": "次",
-        "specimenContainer": { "specimen": "serum", "container": "serum separator" },
+        "specimenContainer": { "specimen": "serum", "container": "serum separator", "capColor": "gold", "mergeable": true },
         "analytes": [
           {
             "codeSystem": "http://loinc.org",
@@ -688,7 +697,7 @@
         "kind": "lab",
         "unitPriceMinor": 8500,
         "unit": "次",
-        "specimenContainer": { "specimen": "plasma", "container": "lithium-heparin tube" },
+        "specimenContainer": { "specimen": "plasma", "container": "lithium-heparin tube", "capColor": "green", "mergeable": true },
         "analytes": [
           {
             "codeSystem": "http://loinc.org",
@@ -785,7 +794,10 @@
           }
         ]
       },
-      { "codeSystem": "urn:clinmesh:cv:service", "code": "registration", "display": { "en": "Visit registration", "zh": "就诊登记" }, "kind": "registration", "unitPriceMinor": 1000, "unit": "次", "analytes": [] }
+      { "codeSystem": "urn:clinmesh:cv:service", "code": "registration", "display": { "en": "Visit registration", "zh": "就诊登记" }, "kind": "registration", "unitPriceMinor": 1000, "unit": "次", "analytes": [] },
+      { "codeSystem": "urn:clinmesh:cv:service", "code": "bed-day", "display": { "en": "Ward bed day", "zh": "住院床日" }, "kind": "nursing", "unitPriceMinor": 5000, "unit": "日", "analytes": [] },
+      { "codeSystem": "urn:clinmesh:cv:service", "code": "cath-nursing", "display": { "en": "Catheterization nursing", "zh": "介入专科护理" }, "kind": "nursing", "unitPriceMinor": 6000, "unit": "次", "analytes": [] },
+      { "codeSystem": "urn:clinmesh:cv:service", "code": "potassium", "display": { "en": "Serum potassium", "zh": "血清钾" }, "kind": "lab", "unitPriceMinor": 500, "unit": "次", "specimenContainer": { "specimen": "serum", "container": "serum separator", "capColor": "gold", "mergeable": true }, "analytes": [{ "codeSystem": "http://loinc.org", "code": "2823-3", "display": { "en": "Potassium", "zh": "钾" }, "unit": "mmol/L", "referenceRange": { "low": 3.5, "high": 5.1 } }] }
     ],
     "procedures": [
       {
@@ -861,7 +873,22 @@
       "ffrAnalytes": [{ "codeSystem": "urn:clinmesh:cv:measurement", "code": "LAD-FFR" }],
       "pciProcedures": [{ "codeSystem": "urn:clinmesh:classification:icd-9-cm-3-clinical", "code": "36.0700" }]
     },
+    "inpatient": {
+      "schedules": { "QD": ["08:00"], "BID": ["08:00", "20:00"], "TID": ["08:00", "14:00", "20:00"], "QN": ["22:00"] },
+      "bedDay": { "codeSystem": "urn:clinmesh:cv:service", "code": "bed-day" },
+      "materialStock": [
+        { "item": { "codeSystem": "urn:clinmesh:cv:material", "code": "wire-014" }, "lotNumber": "CV-WIRE", "expiryDate": "2033-06-30", "quantity": 25 },
+        { "item": { "codeSystem": "urn:clinmesh:cv:material", "code": "guide-6f" }, "lotNumber": "CV-GUIDE", "expiryDate": "2033-06-30", "quantity": 25 },
+        { "item": { "codeSystem": "urn:clinmesh:cv:material", "code": "balloon-2.5x15" }, "lotNumber": "CV-BALLOON", "expiryDate": "2033-06-30", "quantity": 25 },
+        { "item": { "codeSystem": "urn:clinmesh:cv:material", "code": "des-3x18" }, "lotNumber": "CV-DES", "expiryDate": "2033-06-30", "quantity": 25 }
+      ],
+      "procedures": [
+        { "item": { "codeSystem": "urn:clinmesh:classification:icd-9-cm-3-clinical", "code": "88.5500" }, "kind": "angiography", "reportService": { "codeSystem": "urn:clinmesh:cv:service", "code": "cag" }, "ffr": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LAD-FFR" }, "nursing": { "codeSystem": "urn:clinmesh:cv:service", "code": "cath-nursing" } },
+        { "item": { "codeSystem": "urn:clinmesh:classification:icd-9-cm-3-clinical", "code": "36.0700" }, "kind": "pci", "nursing": { "codeSystem": "urn:clinmesh:cv:service", "code": "cath-nursing" }, "postoperativeSetId": "post-pci-review" }
+      ]
+    },
     "pharmacy": {
+      "indicationAliases": [{ "diagnosis": { "codeSystem": "urn:clinmesh:reference:nhsa-diagnosis", "code": "I25.103" }, "equivalent": { "codeSystem": "http://hl7.org/fhir/sid/icd-10", "code": "I25.1" } }],
       "indicationCodeSystem": "http://hl7.org/fhir/sid/icd-10",
       "classConflicts": [["acei", "arb"], ["acei", "arni"], ["arb", "arni"], ["p2y12", "p2y12"], ["statin", "statin"]],
       "openingStock": [{ "codeSystem": "urn:clinmesh:cv:drug", "medicationCodes": ["aspirin", "clopidogrel", "ticagrelor", "atorvastatin", "rosuvastatin", "ezetimibe", "perindopril", "valsartan", "sacubitril-valsartan", "metoprolol", "nitroglycerin", "heparin", "enoxaparin", "sodium-chloride", "furosemide", "spironolactone", "dapagliflozin", "oseltamivir", "amoxicillin", "acetaminophen", "metformin", "amlodipine"], "lotNumber": "CV-A", "expiryDate": "2033-06-30", "quantity": 100, "unit": "unit" }]
@@ -1056,6 +1083,7 @@
               { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 175, "unit": "µmol/L" }
             ]
           },
+          { "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "potassium" }, "stage": "inpatient", "revision": 1, "summary": { "en": "Serum potassium 4.5 mmol/L.", "zh": "血清钾 4.5 mmol/L。" }, "observations": [{ "analyte": { "codeSystem": "http://loinc.org", "code": "2823-3" }, "value": 4.5, "unit": "mmol/L" }] },
           {
             "service": { "codeSystem": "urn:clinmesh:cv:service", "code": "tte" },
             "stage": "initial",

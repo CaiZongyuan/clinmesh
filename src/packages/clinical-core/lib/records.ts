@@ -55,7 +55,7 @@ export function retiredRecordFields(template: readonly { id: string }[], saved: 
 
 export function saveRecord(context: CommandContext, fields: Record<string, string>, expectedDraftVersion: number) {
   const { tx, at, targetId } = context;
-  const version = editEncounter(context);
+  const version = editEncounter(context, 'record');
   const { template: visible } = patientPresentation(tx, at, targetId);
   if (Object.keys(fields).some(id => !visible.some(field => field.id === id))) throw new CoreError(400, 'FIELD_NOT_IN_TEMPLATE');
   const draft = tx.list(at, 'clinical_record_drafts', { encounter_id: targetId })[0];
@@ -70,7 +70,7 @@ export function saveRecord(context: CommandContext, fields: Record<string, strin
 
 export function signRecord(context: CommandContext, expectedDraftVersion?: number, review?: z.infer<typeof retiredReview>) {
   const { tx, at, targetId, actor } = context;
-  const version = editEncounter(context);
+  const version = editEncounter(context, 'record');
   const state = recordState(tx, at, targetId);
   if (expectedDraftVersion !== undefined) checkVersion(state.draftVersion, expectedDraftVersion);
   const { template, retiredIds } = patientPresentation(tx, at, targetId);
@@ -107,6 +107,14 @@ export function diagnosisState(reader: StoreReader, at: StoreScope, encounterId:
     diagnoses: reader.list(at, 'diagnosis_confirmations', { revision_id: row.id }).sort(byOrdinal).map(member) })) };
 }
 
+export function reviewedDiagnosisDraft({ diagnoses, diagnosisRevisions }: ReturnType<typeof diagnosisState>) {
+  const confirmed = diagnosisRevisions.at(-1)?.diagnoses ?? [];
+  return confirmed.length === diagnoses.length && confirmed.every((item, index) => {
+    const draft = diagnoses[index];
+    return draft && item.code === draft.code && item.codeSystem === draft.codeSystem && item.primary === draft.primary;
+  });
+}
+
 export function saveDiagnoses(context: CommandContext, diagnoses: Diagnosis[]) {
   const { tx, at, targetId } = context;
   const version = editEncounter(context);
@@ -125,6 +133,7 @@ export function saveDiagnoses(context: CommandContext, diagnoses: Diagnosis[]) {
 
 export function confirmDiagnoses(context: CommandContext) {
   const { tx, at, targetId } = context;
+  context.guardEncounter?.({ encounterId: targetId, kind: 'diagnose' });
   const version = editEncounter(context);
   const { diagnoses, diagnosisRevisions } = diagnosisState(tx, at, targetId);
   if (diagnoses.filter(item => item.primary).length !== 1) throw new CoreError(409, 'ONE_PRIMARY_DIAGNOSIS_REQUIRED');

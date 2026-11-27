@@ -1,32 +1,45 @@
 {
   "manifest": {
-    "packId": "diagnostic-teaching", "version": "1.0.0", "schemaVersion": 1,
+    "packId": "diagnostic-teaching", "version": "1.1.0", "schemaVersion": 1,
     "name": { "en": "Diagnostic teaching clinic", "zh": "影像病理教学门诊" },
     "description": { "en": "Synthetic radiology and surgical pathology consultations", "zh": "合成放射检查与术后病理会诊" },
     "defaultLocale": "en-US", "supportedLocales": ["en-US", "zh-CN"], "timezone": "UTC",
     "currency": { "code": "USD", "symbol": "$", "minorUnitExponent": 2 },
-    "enabledModules": ["mod-imaging", "mod-pathology", "mod-billing"],
+    "enabledModules": ["mod-imaging", "mod-pathology", "mod-billing", "mod-inpatient"],
     "policies": { "outpatientInvestigationBillingPolicy": "postpaid", "requireSignedNoteBeforeOrder": false, "requireDiagnosisBeforeOrder": false, "requireRenderedReportFrame": true, "completionGates": ["imaging-acknowledgement", "pathology-acknowledgement"], "shiftSchedule": [] },
     "clinicalRecordTemplate": [{ "id": "assessment", "title": { "en": "Assessment and plan", "zh": "评估与计划" }, "required": true }]
   },
   "organization": {
-    "capabilities": ["register", "assess", "sign", "review-reports", "settle", "workspace-admin"],
-    "departments": [{ "id": "clinic", "name": { "en": "Teaching clinic", "zh": "教学门诊" } }], "wards": [], "beds": [],
+    "capabilities": ["register", "assess", "sign", "review-reports", "admit", "schedule-procedure", "execute-orders", "code-chart", "settle", "workspace-admin"],
+    "departments": [{ "id": "clinic", "name": { "en": "Teaching clinic", "zh": "教学门诊" } }],
+    "wards": [{ "id": "surgical-ward", "departmentId": "clinic", "name": { "en": "Surgical ward", "zh": "外科病区" } }],
+    "beds": [{ "id": "surgical-01", "wardId": "surgical-ward", "name": { "en": "Surgical bed 1", "zh": "外科一床" } }],
     "practitionerRoles": [
-      { "id": "clinician", "name": { "en": "Consulting clinician", "zh": "会诊医生" }, "capabilities": ["register", "assess", "sign", "review-reports"] },
+      { "id": "clinician", "name": { "en": "Consulting clinician", "zh": "会诊医生" }, "capabilities": ["register", "assess", "sign", "review-reports", "admit", "schedule-procedure"] },
+      { "id": "surgical-nurse", "name": { "en": "Surgical nurse", "zh": "外科护士" }, "capabilities": ["execute-orders"] },
+      { "id": "record-coder", "name": { "en": "Medical records coder", "zh": "病案编码员" }, "capabilities": ["code-chart"] },
       { "id": "cashier", "name": { "en": "Cashier", "zh": "收费员" }, "capabilities": ["settle"] },
       { "id": "coordinator", "name": { "en": "Clinic administrator", "zh": "门诊管理员" }, "capabilities": ["workspace-admin"] }
-    ], "practitioners": []
+    ], "practitioners": [
+      { "id": "teaching-surgeon", "roleId": "clinician", "departmentId": "clinic", "name": { "en": "Dr Ellis", "zh": "艾医师" } },
+      { "id": "teaching-nurse", "roleId": "surgical-nurse", "departmentId": "clinic", "name": { "en": "Nurse Song", "zh": "宋护士" } }
+    ]
   },
   "catalog": {
     "diagnoses": [{ "codeSystem": "urn:clinmesh:teaching:diagnoses", "code": "FOLLOWUP", "display": { "en": "Postoperative follow-up", "zh": "术后随访" } }],
-    "medications": [], "procedures": [], "materials": [],
+    "medications": [], "materials": [],
+    "procedures": [
+      { "codeSystem": "urn:clinmesh:teaching:procedure", "code": "NODULE-EXCISION", "display": { "en": "Chest wall nodule excision", "zh": "胸壁结节切除术" }, "unitPriceMinor": 18000, "unit": "procedure", "defaultAnesthesia": "local", "defaultLocation": "clinic", "defaultPreopOrderPolicy": "continue-active", "preopServices": [] },
+      { "codeSystem": "urn:clinmesh:teaching:procedure", "code": "NODULE-BIOPSY", "display": { "en": "Chest wall nodule biopsy", "zh": "胸壁结节活检" }, "unitPriceMinor": 10000, "unit": "procedure", "defaultAnesthesia": "local", "defaultLocation": "clinic", "defaultPreopOrderPolicy": "continue-active", "preopServices": [] }
+    ],
     "services": [
+      { "kind": "nursing", "codeSystem": "urn:clinmesh:teaching:service", "code": "BED-DAY", "display": { "en": "Surgical bed day", "zh": "外科床日" }, "unitPriceMinor": 3500, "unit": "day", "analytes": [] },
       { "kind": "imaging", "codeSystem": "urn:clinmesh:teaching:study", "code": "CT", "display": { "en": "Noncontrast chest CT", "zh": "胸部 CT 平扫" }, "unitPriceMinor": 7500, "unit": "study", "turnaroundMinutes": 20, "analytes": [] },
       { "kind": "imaging", "codeSystem": "urn:clinmesh:teaching:study", "code": "XR", "display": { "en": "Chest radiograph", "zh": "胸部平片" }, "unitPriceMinor": 3000, "unit": "study", "analytes": [] },
       { "kind": "pathology", "codeSystem": "urn:clinmesh:teaching:study", "code": "CONSULT", "display": { "en": "Surgical pathology consultation", "zh": "手术标本病理会诊" }, "unitPriceMinor": 5000, "unit": "consultation", "analytes": [] }
     ]
   },
+  "knowledge": { "guidelineTopics": [], "orderSetTemplates": [], "inpatient": { "schedules": { "QD": ["08:00"] }, "bedDay": { "codeSystem": "urn:clinmesh:teaching:service", "code": "BED-DAY" }, "materialStock": [], "procedures": [] } },
   "cases": [{
     "caseId": "teaching-01", "version": "1", "encounterClass": "outpatient", "tags": ["synthetic"],
     "demographics": { "name": "Ellis Rowan", "sex": "other", "birthDate": "1972-04-15", "identifiers": [{ "issuer": "Teaching Clinic", "value": "SIM-01" }] },
@@ -49,6 +62,8 @@
           "sections": { "kind": "imaging", "findings": { "en": "Both lung fields are clear. No pleural effusion.", "zh": "双侧肺野清晰，未见胸腔积液。" }, "impression": { "en": "No acute chest finding.", "zh": "胸部未见急性异常。" } } },
         { "service": { "codeSystem": "urn:clinmesh:teaching:study", "code": "CONSULT" }, "stage": "initial", "revision": 1, "priorSurgeryId": "excision-01", "summary": { "en": "Benign adipose tissue", "zh": "良性脂肪组织" }, "observations": [],
           "sections": { "kind": "pathology", "microscopy": { "en": "Lobules of mature adipocytes with thin fibrous septa.", "zh": "成熟脂肪细胞呈小叶状排列，间隔纤细。" }, "diagnosis": { "en": "Lipoma of the chest wall.", "zh": "胸壁脂肪瘤。" } }, "images": ["phantom-c.png"] },
+        { "service": { "codeSystem": "urn:clinmesh:teaching:study", "code": "CONSULT" }, "stage": "inpatient", "revision": 1, "completedProcedure": { "executionStage": "planned", "codeSystem": "urn:clinmesh:teaching:procedure", "code": "NODULE-EXCISION" }, "summary": { "en": "Current chest wall excision specimen", "zh": "本次胸壁结节切除标本" }, "observations": [],
+          "sections": { "kind": "pathology", "microscopy": { "en": "The current specimen contains mature adipocytes surrounded by a thin capsule.", "zh": "本次切除标本可见成熟脂肪细胞，周围有薄层包膜。" }, "diagnosis": { "en": "Benign encapsulated lipoma in this excision.", "zh": "本次切除标本为有包膜的良性脂肪瘤。" } } },
         { "service": { "codeSystem": "urn:clinmesh:teaching:study", "code": "CONSULT" }, "stage": "initial", "revision": 2, "priorSurgeryId": "excision-01", "summary": { "en": "Margin reviewed", "zh": "补充切缘评估" }, "observations": [],
           "amendmentReason": { "en": "Added the assessment of the excision margin.", "zh": "补充切除标本的切缘评估。" }, "sections": { "kind": "pathology", "microscopy": { "en": "Mature adipose lobules end inside the inked margin.", "zh": "成熟脂肪小叶位于墨染切缘内侧。" }, "diagnosis": { "en": "Lipoma, margin clear.", "zh": "脂肪瘤，切缘阴性。" } } }
       ]

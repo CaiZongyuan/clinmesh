@@ -144,6 +144,17 @@ export function account(reader: StoreReader, at: StoreScope, encounterId: string
     incurredSources: incurred, unpostedSources: unposted, version: sumMinor([admission?.version ?? 0, settlement ? 1 : 0, ...payments.map(payment => payment.version), ...charges.map(line => line.version)]) });
 }
 
+export function reverseMaterialUse(tx: StoreTx, at: StoreScope, useId: string, quantity: number, reason: string, virtualAt: string, recordedAt: string) {
+  if (facility(tx, at).policy === 'free') return;
+  const { item, encounterId } = materialSource(tx, at, useId) ?? conflict('MATERIAL_USE_REQUIRED');
+  const charge = tx.get(at, 'charge_items', useId) ?? conflict('MATERIAL_USE_REQUIRED');
+  if (tx.list(at, 'billing_settlements', { encounter_id: encounterId }).length) conflict('BILLING_LOCKED');
+  const credit = amount.parse(Number(BigInt(item.amount_minor!) * BigInt(z.int().positive().parse(quantity))));
+  const remaining = sumMinor([charge.amount_minor, ...tx.list(at, 'charge_adjustments', { charge_id: useId }).map(row => row.amount_minor)]);
+  if (credit > remaining) conflict('MATERIAL_CREDIT_CONFLICT');
+  tx.insert(at, 'charge_adjustments', { id: v7(), charge_id: useId, amount_minor: -credit, currency_code: charge.currency_code, currency_exponent: charge.currency_exponent, reason, virtual_at: virtualAt, recorded_at: recordedAt });
+}
+
 export function freezeCharge(tx: StoreTx, at: StoreScope, row: FrozenCharge) {
   const { installation, manifest, policy } = facility(tx, at);
   if (policy === 'free') return null;

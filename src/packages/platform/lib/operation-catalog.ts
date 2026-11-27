@@ -1,20 +1,26 @@
 import { z } from 'zod';
 import type { StorePort, StoreReader } from '../../store';
-import { authorize, commandEnvelope, executeCommand, resolveActor, type Actor, type ClinicalQualityGate, type CommandContext, type Route } from './commands';
+import { authorize, commandEnvelope, executeCommand, resolveActor, type Actor, type ClinicalQualityGate, type CommandContext, type EncounterWrite, type Route } from './commands';
 import { CoreError, type Credential } from './visitor-gate';
 
-export type ReadContext = { reader: StoreReader; actor: Actor; targetId: string; availableModules?: readonly string[]; params?: Readonly<Record<string, string>> };
+export type ReadContext = { reader: StoreReader; actor: Actor; targetId: string; params?: Readonly<Record<string, string>>; moduleEnabled?(id: string): boolean };
 type Call = { store: StorePort; credential: Credential; targetId: string; params?: ReadContext['params']; body(): Promise<unknown>; providerHeaders?: Headers };
 type Result = z.core.util.JSONType;
 type Definition = Route & { assistantRead?: 'encounter'; input: z.ZodType; output: z.ZodType; invoke(call: Call): Promise<Result> };
 
 export class OperationCatalog {
   readonly #entries: Definition[] = [];
-  constructor(private readonly moduleId?: string, private readonly clinicalQuality?: ClinicalQualityGate, private readonly installedModules?: readonly string[]) {}
+  clinicalQuality?: ClinicalQualityGate;
+  guardEncounter?: (context: CommandContext, write: EncounterWrite) => void;
+  moduleAvailable?: (id: string, reader: StoreReader, actor: Actor) => boolean;
+  constructor(private readonly moduleId?: string) {}
   get entries(): readonly Definition[] { return this.#entries; }
 
   contribute(moduleId: string | undefined, register: (catalog: OperationCatalog) => void) {
-    const contribution = new OperationCatalog(moduleId, this.clinicalQuality, this.installedModules);
+    const contribution = new OperationCatalog(moduleId);
+    contribution.clinicalQuality = this.clinicalQuality;
+    contribution.guardEncounter = this.guardEncounter;
+    contribution.moduleAvailable = this.moduleAvailable;
     register(contribution);
     for (const entry of contribution.entries) this.add(entry);
   }
@@ -26,10 +32,12 @@ export class OperationCatalog {
 
   query<Output extends Result>(route: Omit<Route, 'method'> & { assistantRead?: 'encounter' }, output: z.ZodType<Output>, read: (context: ReadContext) => Output) {
     route = { ...route, moduleId: this.moduleId ?? route.moduleId };
+    const available = this.moduleAvailable;
     this.add({ ...route, method: 'GET', input: z.strictObject({}), output, invoke: ({ store, credential, targetId, params }) => store.read(reader => {
       const actor = resolveActor(reader, credential, new Date().toISOString());
       authorize(actor, route);
-      return output.parse(read({ reader, actor, targetId, params, availableModules: this.installedModules?.filter(id => actor.enabledModules.includes(id)) }));
+      if (route.moduleId && available?.(route.moduleId, reader, actor) === false) throw new CoreError(404, 'MODULE_DISABLED');
+      return output.parse(read({ reader, actor, targetId, params, moduleEnabled: id => available?.(id, reader, actor) ?? false }));
     }) });
   }
 
@@ -39,6 +47,8 @@ export class OperationCatalog {
     route = { ...route, moduleId: this.moduleId ?? route.moduleId };
     const input = commandEnvelope.extend(fields).strict();
     const gate = this.clinicalQuality;
+    const guardEncounter = this.guardEncounter;
+    const available = this.moduleAvailable;
     this.add({ ...route, input, output: disclosure ? z.union([disclosure.firstOutput, output]) : output, async invoke({ store, credential, targetId, body, providerHeaders }) {
       const actor = await store.read(reader => resolveActor(reader, credential, new Date().toISOString()));
       authorize(actor, route);
@@ -48,6 +58,9 @@ export class OperationCatalog {
       let firstResponse: Result | undefined;
       const execution = await executeCommand(store, credential, route, targetId, parsed as z.infer<typeof commandEnvelope>, async context => {
         if (gate) context.checkClinicalQuality = (intent, override) => gate(context, intent, override, route.name);
+        if (guardEncounter) context.guardEncounter = write => guardEncounter(context, write);
+        context.moduleEnabled = id => available?.(id, context.tx, context.actor) ?? false;
+        if (route.moduleId && available?.(route.moduleId, context.tx, context.actor) === false) throw new CoreError(404, 'MODULE_DISABLED');
         const receipt = output.parse(await apply(context, args, prepared?.value as Prepared, providerHeaders));
         if (disclosure && prepared) firstResponse = disclosure.firstOutput.parse({ ...z.record(z.string(), z.json()).parse(receipt), ...prepared.firstResponse });
         return receipt;

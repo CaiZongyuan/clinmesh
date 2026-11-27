@@ -14,7 +14,7 @@ it('imports signed v7 radiology and pathology reports with their prior versions,
   try {
     await store.importLogicalSnapshot(previous);
     const migrated = await store.exportLogicalSnapshot(previous.workspaceId);
-    expect(migrated.format).toBe('clinmesh.snapshot.v8');
+    expect(migrated.format).toBe('clinmesh.snapshot.v9');
     expect(migrated.tables.slice(0, previous.tables.length)).toEqual(previous.tables);
     expect(previous.tables.at(-1)).toMatchObject({ name: 'study_requests', rows: [expect.any(Object), expect.objectContaining({ prior_surgery_id: 'excision-01' })] });
     const { ticket, encounterId } = await store.read(reader => {

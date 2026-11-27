@@ -4,4 +4,4 @@
 
 从 `/fhir/R5/Patient` 开始，使用资源逻辑 ID 访问 `/<type>/<id>`、`/<type>/<id>/_history` 或 `/<type>/<id>/_history/<version>`。也支持类型历史与全局历史。`_id` 精确匹配，`patient` 和 `encounter` 可使用裸 ID 或相对资源引用。未知搜索参数返回 `400 OperationOutcome`，写入返回 `405 OperationOutcome` 及 `Allow: GET`。
 
-查询直接投影规范化 Store 事实。正式诊断、签署病历、签发报告和床旁评估使用其业务修订。可更新实体自 SQLite schema v7 起保存历史状态，升级前仅可查询实际留存版本。报告引用精确观察版本，草稿和私有病例资料不进入投影。
+查询直接投影规范化 Store 事实。正式诊断、签署病历、签发报告和床旁评估使用其业务修订。可更新实体自 SQLite schema v8 起保存历史状态，升级前仅可查询实际留存版本。报告引用精确观察版本，草稿和私有病例资料不进入投影。

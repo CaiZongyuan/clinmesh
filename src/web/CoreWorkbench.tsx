@@ -12,6 +12,7 @@ import { useModelSettings } from './model-preferences';
 import { createEpochDrafts, type EncounterDrafts } from './encounter-drafts';
 import { builtinStations } from './builtin-panels';
 import { OverrideBar } from './modules/cds/OverrideBar';
+import { rememberWardSelection } from './ward-selection';
 import { api, ApiError, currentSession, errorMessage, scopeKey, sessionKey, words, workspaceKey, write, type Intent, type Language, type Session } from './workbench-api';
 
 const useView = create<{ queue: boolean }>(() => ({ queue: true }));
@@ -26,10 +27,10 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels, dra
   const [resetPack, setResetPack] = useState(workspace.manifest.packId);
   const style = useThemeFont();
   const stations = Object.entries(builtinStations).filter(([name]) => workspace.operations.some(operation => operation.name === name));
-  const clinicAvailable = !stations.length || workspace.operations.some(operation => operation.name === 'encounter.start' || operation.name === 'record.sign');
+  const clinicAvailable = !stations.length || workspace.operations.some(operation => ['encounter.start', 'record.sign', 'workspace.reset', 'billing.account'].includes(operation.name));
   const stationOptions = [...(clinicAvailable ? [{ value: 'clinic', label: text('Clinical workbench', '临床工作台') }] : []), ...stations.map(([value, station]) => ({ value, label: station.name[language] }))];
   const [preference, setPreference] = useState({ role: '', value: '' });
-  const selected = stationOptions.find(option => preference.role === workspace.roleId && option.value === preference.value) ?? stationOptions[0]!;
+  const selected = stationOptions.find(option => (preference.role === workspace.roleId || preference.value === 'ward.directory') && option.value === preference.value) ?? stationOptions[0]!;
   const Station = stations.find(([name]) => name === selected.value)?.[1].component;
   const listKey = scopeKey(workspace, 'encounters');
   const encounters = useQuery({ queryKey: listKey, enabled: !Station, queryFn: ({ signal }) => api('/api/his/encounters', z.array(summarySchema), { signal }) });
@@ -92,10 +93,10 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels, dra
     <ModelSettings language={language}/><Dialog title={text('Workspace settings', '工作台设置')} triggers={[workspace.manifest.name[language]]} close={text('Close settings', '关闭设置')}>{preferences}</Dialog></div>
   </>} queue={!Station && <section className="workbench-queue"><h2>{text('Fixed cases', '固定病例')}</h2>{workspace.cases.map(item => <div key={item.id}>
     <strong>{item.demographics.name}</strong><span>{item.encounterClass === 'outpatient' ? text('Outpatient', '门诊') : text('Inpatient', '住院')}</span>
-    <Button disabled={change.isPending || !allowed('encounter.start')} onClick={() => change.mutate({ name: 'encounter.start', targetId: item.id, version: 0, fields: { language } })}>{text('Start', '开诊')} · {item.demographics.name}</Button>
+    {item.encounterClass === 'inpatient' && allowed('ward.directory') ? <Button onClick={() => { rememberWardSelection(workspace, { caseId: item.id }); setPreference({ role: workspace.roleId, value: 'ward.directory' }); }}>{text('Open ward', '住院登记')} · {item.demographics.name}</Button> : <Button disabled={change.isPending || !allowed('encounter.start')} onClick={() => change.mutate({ name: 'encounter.start', targetId: item.id, version: 0, fields: { language } })}>{text('Start', '开诊')} · {item.demographics.name}</Button>}
   </div>)}<h2>{text('Encounters', '已开就诊')}</h2>{encounters.data?.map(item => <Button key={item.id} aria-current={item.id === encounterId ? 'true' : undefined} onClick={() => selectEncounter(item.id)}>{item.name} · {item.id.slice(-6)} · {item.status === 'active' ? text('Active', '进行中') : text('Completed', '已完诊')}</Button>)}</section>}>
     {change.isError && <div role="alert"><p>{errorMessage(change.error, language)}</p>{change.error.message.startsWith('LLM_') && <Button onClick={() => useModelSettings.setState({ open: true })}>{text('Configure connection', '配置连接')}</Button>}</div>}
-    {change.isError && change.error instanceof ApiError && change.error.message === 'CLINICAL_QUALITY_ALERT' && change.variables.name !== 'prescription.sign' && change.context?.workspace.epoch === workspace.epoch && change.context?.workspace.roleId === workspace.roleId && change.context?.encounterId === encounterId && <OverrideBar key={`${workspace.epoch}:${encounterId}:${change.submittedAt}`} intent={change.variables} codes={String(change.error.details?.ruleCodes).split(',')} language={language} cancel={change.reset} submit={intent => change.mutate(intent)}><p>{detail.data?.patient.name} · {encounterId} · {change.variables.name}</p></OverrideBar>}
+    {change.isError && change.error instanceof ApiError && change.error.message === 'CLINICAL_QUALITY_ALERT' && change.variables.name !== 'prescription.sign' && !change.variables.name.startsWith('ward.') && change.context?.workspace.epoch === workspace.epoch && change.context?.workspace.roleId === workspace.roleId && change.context?.encounterId === encounterId && <OverrideBar key={`${workspace.epoch}:${encounterId}:${change.submittedAt}`} intent={change.variables} codes={String(change.error.details?.ruleCodes).split(',')} language={language} cancel={change.reset} submit={intent => change.mutate(intent)}><p>{detail.data?.patient.name} · {encounterId} · {change.variables.name}</p></OverrideBar>}
     {encounters.isError && <p role="alert">{errorMessage(encounters.error, language)}</p>}
     {Station ? <Station workspace={workspace} language={language} submit={intent => change.mutateAsync(intent)}/> : detail.isError ? <p role="alert">{errorMessage(detail.error, language)}</p> : detail.data ? <EncounterPanel key={detail.data.id} encounter={detail.data} workspace={workspace} language={language} busy={change.isPending} submit={intent => change.mutateAsync(intent)} panels={panels} drafts={draftsFor(detail.data.id)}/> :
     <section className="workbench-empty"><Badge tone="info">{workspace.manifest.name[language]}</Badge><h1>{text('Outpatient workbench', '门诊工作台')}</h1><p>{text('Start a fixed case from the queue to open its encounter.', '从病例队列选择固定病例开诊。')}</p></section>}

@@ -2,8 +2,9 @@ import { z } from 'zod';
 import { clinicalFactId, clinicalFactSystem, triageMeasures } from '../../clinical-core';
 import { studyReportSectionsSchema } from '../../diagnostic-studies';
 import { signedFindingsSchema } from '../../mod-lab';
+import { completedWardProcedures, signedAngiography } from '../../mod-inpatient';
 import type { Actor } from '../../platform';
-import type { StoreReader } from '../../store';
+import type { EntityRow, StoreReader, StoreScope } from '../../store';
 
 export const types = ['Patient', 'Encounter', 'Condition', 'Observation', 'ServiceRequest', 'DiagnosticReport', 'MedicationRequest', 'MedicationDispense', 'Procedure', 'Composition', 'AuditEvent'] as const;
 export type ResourceType = typeof types[number];
@@ -35,8 +36,8 @@ export function projectResources(reader: StoreReader, actor: Actor, type: Resour
       if (!ids.has(patient.id) && !actor.role.capabilities.includes('workspace-admin')) continue;
       const versions = reader.list(at, 'patient_identity_versions', { patient_id: patient.id }).sort((first, second) => first.version - second.version);
       const identifiers = reader.list(at, 'patient_identifiers', { patient_id: patient.id });
-      const started = visits.find(visit => visit.patient_id === patient.id)?.recorded_at ?? reader.getWorkspace(at.workspaceId)!.recorded_at;
-      let updated = started;
+      const timestamp = Number.parseInt(patient.id.slice(0, 8) + patient.id.slice(9, 13), 16);
+      let updated = new Date(timestamp).toISOString();
       for (const item of [...versions, { ...patient, identifiers, replaced_at: null }]) {
         const identity = item.identifiers.map(identifier => ({ system: identifierSystem(identifier.issuer, packId), value: identifier.value }));
         emit(patient.id, item.version, updated, { name: [{ text: item.display_name }], ...(item.birth_date && { birthDate: item.birth_date }), ...(identity.length && { identifier: identity }) }, undefined, patient.id, item.replaced_at === null);
@@ -98,19 +99,22 @@ export function projectResources(reader: StoreReader, actor: Actor, type: Resour
       }
     }
     const orders = reader.list(at, 'clinical_orders', { encounter_id: encounter });
+    if (type === 'Procedure') for (const stage of completedWardProcedures(reader, at, encounter)) {
+      emit(stage.execution.id, 1, stage.execution.recorded_at, { ...context, status: 'completed', code: catalog.get(stage.catalogId), occurrenceDateTime: stage.execution.virtual_at, basedOn: [ref('ServiceRequest', stage.orderId)] }, encounter);
+    }
     for (const order of orders) {
       const concept = catalog.get(order.catalog_item_id)!;
       if ((type === 'DiagnosticReport' || type === 'Observation') && order.kind !== 'medication') {
         const reports = reader.list(at, 'diagnostic_reports', { order_id: order.id });
         const last = Math.max(0, ...reports.map(item => item.revision));
         for (const report of reports) {
-          const result = reportResult(order.kind, report.findings);
+          const result = reportResult(reader, at, order.kind, report);
           if (!result) continue;
           const observations = result.observations.map(item => ({ id: clinicalFactId(order.id, item.codeSystem, item.code), item }));
-          const status = report.revision === 1 ? 'final' : 'corrected';
+          const status = 'status' in result && result.status === 'partial' ? 'partial' : 'status' in result && result.status === 'unavailable' ? 'unknown' : report.revision === 1 ? 'final' : 'corrected';
           const current = report.revision === last;
           if (type === 'DiagnosticReport') emit(order.id, report.revision, report.recorded_at, { ...context, status, code: concept, issued: report.virtual_at, performer: [actorRef(report.signed_by)], basedOn: [ref('ServiceRequest', order.id)], ...(observations.length && { result: observations.map(({ id }) => ref('Observation', `${id}/_history/${report.revision}`)) }), conclusion: result.summary.en }, encounter, undefined, current);
-          else for (const { id, item } of observations) emit(id, report.revision, report.recorded_at, { ...context, status, code: code(item.codeSystem, item.code), effectiveDateTime: report.virtual_at, ...(typeof item.value === 'number' ? { valueQuantity: { value: item.value, unit: item.unit } } : { valueString: item.value }), basedOn: [ref('ServiceRequest', order.id)] }, encounter, undefined, current);
+          else for (const { id, item } of observations) emit(id, report.revision, report.recorded_at, { ...context, status: status === 'partial' ? 'preliminary' : status, code: code(item.codeSystem, item.code), effectiveDateTime: report.virtual_at, ...(typeof item.value === 'number' ? { valueQuantity: { value: item.value, unit: item.unit } } : { valueString: item.value }), basedOn: [ref('ServiceRequest', order.id)] }, encounter, undefined, current);
         }
       } else if ((type === 'MedicationRequest' && order.kind === 'medication') || (type === 'ServiceRequest' && order.kind !== 'medication')) {
         const direction = type === 'MedicationRequest' ? reader.list(at, 'prescription_directions', { order_id: order.id })[0]?.directions : undefined;
@@ -127,6 +131,7 @@ export function projectResources(reader: StoreReader, actor: Actor, type: Resour
         }
       } else if (type === 'Procedure') {
         for (const request of reader.list(at, 'surgery_requests', { order_id: order.id })) for (const execution of reader.list(at, 'surgery_executions', { surgery_request_id: request.id })) {
+          if (reader.list(at, 'ward_surgery_stages', { request_id: request.id }).length) continue;
           emit(execution.id, 1, execution.recorded_at, { ...context, status: procedureStatus(execution.outcome), code: catalog.get(request.procedure_item_id), occurrenceDateTime: execution.virtual_at, basedOn: [ref('ServiceRequest', order.id)] }, encounter);
         }
       }
@@ -136,7 +141,12 @@ export function projectResources(reader: StoreReader, actor: Actor, type: Resour
 }
 
 function procedureStatus(outcome: string) { return outcome === 'completed' ? 'completed' : ['cancelled', 'not-done'].includes(outcome) ? 'not-done' : outcome === 'started' ? 'in-progress' : 'unknown'; }
-function reportResult(kind: string, findings: Record<string, unknown>) {
+function reportResult(reader: StoreReader, at: StoreScope, kind: string, report: EntityRow<'diagnostic_reports'>) {
+  const { findings } = report;
+  if (kind === 'examination') {
+    const angiography = signedAngiography(reader, at, report);
+    if (angiography) return { ...angiography, summary: angiography.summary ?? { en: 'Measurements unavailable' } };
+  }
   if (kind === 'imaging' || kind === 'pathology') {
     const sections = studyReportSectionsSchema.safeParse(findings.sections).data;
     if (sections?.kind === 'summary') return { observations: [], summary: sections.summary };
@@ -147,7 +157,7 @@ function reportResult(kind: string, findings: Record<string, unknown>) {
 }
 function auditOutcome(value: string) {
   const codes: Record<string, string> = { applied: '0', accepted: '0', reported: '0', completed: '0', 'generation-failed': '8', failed: '8', rejected: '8' };
-  const outcome = Object.hasOwn(codes, value) ? { system: `${terminology}/audit-event-outcome`, code: codes[value] } : { system: `${local}:audit-outcome`, code: value };
+  const outcome = Object.hasOwn(codes, value) ? { system: `${terminology}/audit-event-outcome`, code: codes[value] } : { system: `${local}:audit-outcome`, code: 'recorded' };
   return { outcome: { code: outcome, detail: [{ text: value }] } };
 }
 function xml(text: string) { return Array.from(text).filter(char => char >= ' ' || ['\t', '\r', '\n'].includes(char)).join('').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }

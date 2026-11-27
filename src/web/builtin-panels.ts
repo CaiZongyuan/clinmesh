@@ -11,4 +11,5 @@ export const builtinPanels = {
 };
 export const builtinStations = {
   'pharmacy.queue': { name: { en: 'Dispensing queue', zh: '待发药队列' }, component: lazy(() => import('./modules/pharmacy/DispenseDesk').then(module => ({ default: module.DispenseDesk }))) },
+  'ward.directory': { name: { en: 'Inpatient ward', zh: '住院工作台' }, component: lazy(() => import('./modules/inpatient/WardStation')) },
 };
