@@ -4,7 +4,7 @@
 
 ## 影像病理教学门诊
 
-`diagnostic-teaching` 内含一例合成术后随访病例。胸部 CT 的两帧和脂肪组织的一帧均为数学图形绘制的教学示意。胸片与病理更正版本使用纯文本。三张 PNG 位于 `assets/clinical-public/clinical-frames/`，按数据包中已签发报告的引用供浏览器加载。
+`diagnostic-teaching` 内含一例合成术后随访病例。胸部 CT 的两帧和脂肪组织的一帧均为数学图形绘制的教学示意。胸片与病理更正版本使用纯文本。Vite 开发服务启动和前端构建时，`scripts/prepare-teaching-frames.ts` 通过 Node 标准库离线生成三张 PNG 到 `assets/clinical-public/clinical-frames/`，再按数据包中已签发报告的引用供浏览器加载。
 
 ## 综合门诊
 

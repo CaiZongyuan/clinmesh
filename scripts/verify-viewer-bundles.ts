@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { z } from 'zod';
 
 const paths = z.array(z.string());
@@ -22,11 +23,16 @@ for (const chunk of chunks.filter(chunk => initial.has(chunk.file))) assert.ok(!
 const meta = z.object({ outputs: z.record(z.string(), z.object({ inputs: z.record(z.string(), z.object({ bytesInOutput: z.number() })) })) }).parse(JSON.parse(readFileSync('dist/worker-meta.json', 'utf8')));
 const workerInputs = Object.values(meta.outputs).flatMap(output => Object.entries(output.inputs).flatMap(([path, contribution]) => contribution.bytesInOutput > 0 ? [path.replaceAll('\\', '/')] : []));
 assert.ok(workerInputs.some(path => path.endsWith('src/server/worker.ts')));
-assert.ok(!workerInputs.some(path => path.includes('src/web/') || path.includes('assets/clinical-public/')));
+const generator = 'scripts/prepare-teaching-frames.ts';
+assert.ok(!workerInputs.some(path => path.includes('src/web/') || path.includes('assets/clinical-public/') || path.endsWith(generator)));
+assert.ok(!chunks.some(chunk => chunk.modules.some(path => path.endsWith(generator))));
 const worker = readFileSync('dist/worker.bundle');
-for (const name of readdirSync('assets/clinical-public/clinical-frames')) {
-  const image = readFileSync(`assets/clinical-public/clinical-frames/${name}`);
-  assert.deepEqual(readFileSync(`dist/client/clinical-frames/${name}`), image);
+const frameRoot = 'assets/clinical-public/clinical-frames';
+for (const entry of readdirSync(frameRoot, { recursive: true, withFileTypes: true })) {
+  if (!entry.isFile()) continue;
+  const source = join(entry.parentPath, entry.name);
+  const image = readFileSync(source);
+  assert.deepEqual(readFileSync(join('dist/client/clinical-frames', relative(frameRoot, source))), image);
   assert.ok(!worker.includes(image) && !worker.includes(image.toString('base64')));
   for (const file of initial) assert.ok(!readFileSync(`dist/client/${file}`).includes(image.toString('base64')));
 }

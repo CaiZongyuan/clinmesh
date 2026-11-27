@@ -1,6 +1,6 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
-import { caseTruthSchema, manifestSchema } from '../../data-pack';
+import { caseTruthSchema, frameReferencesSchema, manifestSchema } from '../../data-pack';
 import { editEncounter, requireEncounter } from '../../patient-visit';
 import { CoreError, type ClinMeshModule, type CommandContext, type OperationCatalog } from '../../platform';
 import type { EntityRow, StoreReader, StoreScope } from '../../store';
@@ -33,10 +33,11 @@ export function createStudyModule(definition: Definition, billing?: DiagnosticBi
       const matches = results.data.results.filter(result => result.service.codeSystem === service.codeSystem && result.service.code === service.code && (result.priorSurgeryId ?? null) === request.prior_surgery_id);
       const stage = request.stages.find(stage => matches.some(item => item.stage === stage));
       const result = matches.find(item => item.stage === stage && item.revision === revision);
-      if (result?.sections?.kind !== kind) return undefined;
+      if (!result || (result.sections ? result.sections.kind !== kind : kind !== 'imaging')) return undefined;
+      const sections = result.sections ?? { kind: 'summary' as const, summary: result.summary };
       const policy = manifestSchema.shape.policies.parse(reader.list(at, 'data_pack_installations')[0]!.manifest.policies);
-      const frames = result.images ?? [];
-      return { sections: result.sections, frames, requireFirstFrame: frames.length > 0 && !!policy.requireRenderedReportFrame, ...(result.amendmentReason && { amendmentReason: result.amendmentReason }) };
+      const frames = frameReferencesSchema.safeParse(result.images ?? []).data ?? [];
+      return { sections, frames, requireFirstFrame: frames.length > 0 && !!policy.requireRenderedReportFrame, ...(result.amendmentReason && { amendmentReason: result.amendmentReason }) };
     },
   });
   const services = (reader: StoreReader, at: StoreScope) => pricedServices(reader, at).filter(item => item.definition.kind === kind);

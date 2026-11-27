@@ -3,22 +3,27 @@ import { z } from 'zod';
 import { workspaceSchema, encounterViewSchema } from '../../src/packages/clinical-core';
 import { installHospitalDataPack, type HospitalDataPack } from '../../src/packages/data-pack';
 import { studyViewSchema, type StudyKind } from '../../src/packages/diagnostic-studies';
-import { createNodeSqliteStore } from '../../src/packages/store';
+import { createNodeSqliteStore, type StorePort, type StoreScope } from '../../src/packages/store';
 import { builtinModules } from '../../src/server/builtin-modules';
 import { createWorkspaceApp } from '../../src/server/workspace';
 
-export async function studyWorkspace(pack: HospitalDataPack, environment = {}) {
+export async function studyWorkspace(pack: HospitalDataPack, environment = {}, patientName?: string) {
   const store = createNodeSqliteStore({ dbPath: ':memory:' });
   const workspaceId = v7();
   const id = v7();
   const expiresAt = '2099-01-01T00:00:00Z';
   const at = await store.withTransaction(tx => {
     const at = installHospitalDataPack(tx, { workspaceId, expectedEpoch: null, virtualTime: '2028-01-01T00:00:00Z' }, pack);
-    tx.insert(at, 'visitor_sessions', { id, practitioner_role: 'clinician', revoked: false, version: 1, expires_at: expiresAt });
+    const clinician = pack.organization.practitionerRoles.find(role => role.capabilities.includes('assess'))!;
+    tx.insert(at, 'visitor_sessions', { id, practitioner_role: clinician.id, revoked: false, version: 1, expires_at: expiresAt });
     return at;
   });
+  return openStudyWorkspace(store, at, id, environment, patientName);
+}
+
+export async function openStudyWorkspace(store: StorePort, at: StoreScope, id: string, environment = {}, patientName?: string) {
   const app = createWorkspaceApp(store, { localOpen: true }, builtinModules, environment);
-  const credential = { ticket: { workspaceId, id, expiresAt, kind: 'visitor' as const } };
+  const credential = { ticket: { workspaceId: at.workspaceId, id, expiresAt: '2099-01-01T00:00:00Z', kind: 'visitor' as const } };
   const request = (path: string, init?: RequestInit) => app.request(path, init, { credential, entering: false });
   const read = async (path: string) => (await request(path)).json() as Promise<unknown>;
   const workspace = async () => workspaceSchema.parse(await read('/api/workspace'));
@@ -29,7 +34,9 @@ export async function studyWorkspace(pack: HospitalDataPack, environment = {}) {
     return data;
   };
   const startCase = async (id: string) => z.uuidv7().parse((await write(`/api/his/cases/${id}/start-encounter`, 0)).encounterId);
-  const encounterId = await startCase((await workspace()).cases[0]!.id);
+  const { cases } = await workspace();
+  const patient = patientName ? cases.find(item => item.demographics.name === patientName)! : cases[0]!;
+  const encounterId = await startCase(patient.id);
   const base = `/api/his/encounters/${encounterId}`;
   const encounter = async () => encounterViewSchema.parse(await read(base));
   const study = (kind: StudyKind) => {

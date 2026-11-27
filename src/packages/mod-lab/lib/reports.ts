@@ -3,7 +3,8 @@ import { caseTruthSchema } from '../../data-pack';
 import { createReportLifecycle, serviceFor } from '../../diagnostic-workflow';
 import { resolveFindings } from './results';
 
-const truthSchema = caseTruthSchema.extend({ tags: z.array(z.string()).optional() });
+const labResult = caseTruthSchema.shape.results.element.omit({ images: true, sections: true, priorSurgeryId: true }).strip();
+const truthSchema = caseTruthSchema.pick({ normalBaselines: true }).extend({ results: z.array(labResult) }).strip();
 export const { orders: labOrders, moveOrder, publishDue, reportsReviewed, reviewReport } = createReportLifecycle({
   name: 'lab', notFound: 'LAB_ORDER_NOT_FOUND',
   owns: (reader, at, order) => (order.kind === 'lab' || order.kind === 'examination') && reader.list(at, 'lab_requests', { order_id: order.id }).length > 0,

@@ -13,6 +13,7 @@
 /previews/
 .prototypes/
 node_modules/
+assets/clinical-public/clinical-frames/phantom-[abc].png
 .wrangler/
 coverage/
 dist/

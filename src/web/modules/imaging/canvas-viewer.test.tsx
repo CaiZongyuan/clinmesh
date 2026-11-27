@@ -23,7 +23,7 @@ it('bounds frame indices, zoom, pan and display filters and resets all transform
   expect(changeViewport(view, { type: 'reset' })).toEqual(initialViewport);
 });
 
-function review() {
+function review(summaryOnly = false) {
   const images: HTMLImageElement[] = [];
   vi.stubGlobal('Image', function () {
     const image = document.createElement('img');
@@ -42,11 +42,21 @@ function review() {
   const session = { workspaceId: v7(), epoch: v7(), roleId: 'reviewer', sessionVersion: 1 };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><ReportReview kind="imaging" session={session} encounterId={v7()} language="en" canView busy={false} acknowledge={acknowledge} report={{
-    id: reportId, version: 1, previousId: null, signedAt: earlier, acknowledged: null, frameCount: 2, requireFirstFrame: true,
-    sections: { kind: 'imaging', findings: { en: 'Linear density', zh: '线状密度影' }, impression: { en: 'Scar', zh: '瘢痕' } },
+    id: reportId, version: 1, previousId: null, signedAt: earlier, acknowledged: null, frameCount: summaryOnly ? 0 : 2, requireFirstFrame: !summaryOnly,
+    sections: summaryOnly ? { kind: 'summary', summary: { en: 'Focal right lower lobe consolidation.', zh: '右肺下叶局灶性实变。' } }
+      : { kind: 'imaging', findings: { en: 'Linear density', zh: '线状密度影' }, impression: { en: 'Scar', zh: '瘢痕' } },
   }}/></QueryClientProvider>);
   return { images, drawImage, acknowledge, request };
 }
+
+it('displays the authored legacy summary and acknowledges its text without opening the viewer', async () => {
+  const { request, acknowledge } = review(true);
+  expect(screen.getByText('Focal right lower lobe consolidation.')).toBeDefined();
+  expect(screen.queryByRole('button', { name: /Open image viewer/ })).toBeNull();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Acknowledge this report version' }));
+  expect(acknowledge).toHaveBeenCalledWith('text');
+  expect(request).not.toHaveBeenCalled();
+});
 
 it('loads frames only after opening, unlocks after an actual draw and keeps formal review behind human confirmation', async () => {
   const agent = createClinMeshUiAgent();

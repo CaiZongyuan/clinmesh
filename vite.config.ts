@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import { writeFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
+import { prepareTeachingFrames } from './scripts/prepare-teaching-frames';
 
 const root = import.meta.dirname;
 const client = resolve(root, 'src/web');
@@ -16,7 +17,7 @@ const browserGraph: Plugin = { name: 'browser-chunk-graph', apply: 'build', writ
 
 export default defineConfig(({ isSsrBuild }) => ({
   root: isSsrBuild ? root : client,
-  publicDir: isSsrBuild ? false : resolve(root, 'assets/clinical-public'),
+  publicDir: isSsrBuild ? false : prepareTeachingFrames(resolve(root, 'assets/clinical-public')),
   cacheDir: clientCache,
   plugins: [react(), tailwindcss(), !isSsrBuild && browserGraph],
   build: { outDir: resolve(root, isSsrBuild ? 'dist/server' : 'dist/client'), emptyOutDir: true },

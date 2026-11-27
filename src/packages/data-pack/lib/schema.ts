@@ -107,13 +107,16 @@ export const persona = z.strictObject({
   symptoms: z.array(bilingual).min(1), medicationMemory: bilingual, boundaries: z.array(bilingual).min(1),
 });
 
-export const asset = text.max(2048).refine(value => {
-  if (value.startsWith('https://')) {
-    const url = URL.parse(value);
-    return !!url && url.protocol === 'https:' && !url.username && !url.password;
-  }
+const archivedAsset = text.refine(value => {
+  if (value.startsWith('https://')) return z.httpUrl().safeParse(value).success;
   return /^(?:[\w-]+\/)*[\w.-]+\.(?:webp|png|jpe?g)$/i.test(value) && !value.includes('..');
 });
+const frameReference = archivedAsset.max(2048).refine(value => {
+  if (!value.startsWith('https://')) return true;
+  const url = URL.parse(value);
+  return !!url && url.protocol === 'https:' && !url.username && !url.password;
+});
+export const frameReferences = z.array(frameReference).max(128);
 const authoredFindings = z.strictObject({ service: coding, summary: bilingual,
   observations: z.array(observation.extend({ unit: text.optional(), interpretation: z.enum(['normal', 'high', 'low', 'abnormal']).optional() })),
 });
@@ -123,7 +126,7 @@ export const studySections = z.discriminatedUnion('kind', [
 ]);
 const result = authoredFindings.extend({
   stage: z.enum(['initial', 'inpatient', 'repeat', 'follow-up']), revision: z.int().positive(),
-  amendmentReason: bilingual.optional(), images: z.array(asset).max(128).optional(), sections: studySections.optional(), priorSurgeryId: text.optional(),
+  amendmentReason: bilingual.optional(), images: z.array(archivedAsset).optional(), sections: studySections.optional(), priorSurgeryId: text.optional(),
 });
 export const truth = z.strictObject({
   primaryDiagnosis: coding, secondaryDiagnoses: z.array(coding), hiddenHistory: z.array(bilingual), results: z.array(result),
@@ -132,7 +135,8 @@ export const truth = z.strictObject({
   noMedication: z.literal(true).optional(), expectedProcedures: z.array(coding).optional(), expectedMaterials: z.array(coding).optional(),
 });
 const clinicalCase = z.strictObject({
-  caseId: text, version: text, encounterClass, tags: texts, demographics, priorHistory, triageVitals, patientPersona: persona, caseTruth: truth,
+  caseId: text, version: text, encounterClass, tags: texts, demographics, priorHistory, triageVitals, patientPersona: persona,
+  caseTruth: truth.extend({ results: z.array(result.extend({ images: frameReferences.optional() })) }),
 });
 export const packSchema = z.strictObject({ manifest, organization, catalog, knowledge: knowledge.optional(), cases: z.array(clinicalCase).min(1) });
 export type HospitalDataPack = z.infer<typeof packSchema>;

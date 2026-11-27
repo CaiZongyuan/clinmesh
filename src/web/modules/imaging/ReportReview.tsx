@@ -22,9 +22,9 @@ export function ReportReview({ session, encounterId, kind, report, language, can
   const accessError = query.error instanceof ApiError && query.error.status < 500;
   const mode = renderMode ?? (query.isError && !accessError ? 'frames-unavailable' : !report.requireFirstFrame ? 'text' : undefined);
   const sections = report.sections;
-  const items = sections.kind === 'imaging'
-    ? [[text('Radiographic findings', '放射所见'), sections.findings[language]], [text('Impression', '诊断印象'), sections.impression[language]]]
-    : [[text('Microscopy', '镜下所见'), sections.microscopy[language]], [text('Pathologic diagnosis', '病理诊断'), sections.diagnosis[language]]];
+  const items = sections.kind === 'summary' ? [[text('Report summary', '报告摘要'), sections.summary[language]]]
+    : sections.kind === 'imaging' ? [[text('Radiographic findings', '放射所见'), sections.findings[language]], [text('Impression', '诊断印象'), sections.impression[language]]]
+      : [[text('Microscopy', '镜下所见'), sections.microscopy[language]], [text('Pathologic diagnosis', '病理诊断'), sections.diagnosis[language]]];
   const confirmLabel = mode === 'frames-unavailable' ? text('Acknowledge text report with images unavailable', '图像不可用，确认已阅文字报告') : text('Acknowledge this report version', '确认已阅本版报告');
   return <section className="clinical-panel"><p>{report.signedAt} · {report.acknowledged ? `${text('Acknowledged by', '已阅岗位')} ${report.acknowledged.role} · ${report.acknowledged.at}` : text('Awaiting acknowledgement', '待确认已阅')}</p>
     <dl>{items.map(([label, content]) => <div key={label}><dt><strong>{label}</strong></dt><dd>{content}</dd></div>)}</dl>
