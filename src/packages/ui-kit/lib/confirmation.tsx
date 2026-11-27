@@ -11,10 +11,12 @@ interface ConfirmationProps {
   cancel: string;
   confirmation: string;
   onConfirm: () => void | Promise<void>;
+  onDeny?: () => void;
+  requested?: boolean;
 }
 
-export function InlineConfirmBar({ trigger, confirm, cancel, confirmation, onConfirm }: ConfirmationProps) {
-  const [phase, setPhase] = useState<'idle' | 'review' | 'submitting'>('idle');
+export function InlineConfirmBar({ trigger, confirm, cancel, confirmation, onConfirm, onDeny, requested = false }: ConfirmationProps) {
+  const [phase, setPhase] = useState<'idle' | 'review' | 'submitting'>(requested ? 'review' : 'idle');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const actions = useRef<HTMLDivElement>(null);
   function close() {
@@ -27,10 +29,10 @@ export function InlineConfirmBar({ trigger, confirm, cancel, confirmation, onCon
     catch (error) { setPhase('review'); throw error; }
   }
   return <div className="cm-confirm-bar">
-    <Button ref={triggerRef} aria-expanded={phase !== 'idle'} onClick={() => { if (phase === 'idle') setPhase('review'); }}>{trigger}</Button>
+    {!requested && <Button ref={triggerRef} aria-expanded={phase !== 'idle'} onClick={() => { if (phase === 'idle') setPhase('review'); }}>{trigger}</Button>}
     {phase !== 'idle' && <div ref={actions} className="cm-actions" role="group" aria-label={confirmation}>
       <span>{confirmation}</span>
-      <Button disabled={phase === 'submitting'} onClick={close}>{cancel}</Button>
+      <Button disabled={phase === 'submitting'} onClick={() => { close(); onDeny?.(); }}>{cancel}</Button>
       <ConfirmActionButton confirmation={confirmation} onClick={submit}>{confirm}</ConfirmActionButton>
     </div>}
   </div>;

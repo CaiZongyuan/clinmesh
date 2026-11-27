@@ -59,7 +59,7 @@ function Prescribing({ view, language, encounter, workspace, submit }: Workbench
   const matches = view.catalog.filter(item => item.source === source && [item.code, item.display.en, item.display.zh].some(value => value.toLowerCase().includes(search.trim().toLowerCase())));
   const issues = checkPrescription(view.catalog, lines, view.context);
   const commit = (name: string, fields: Intent['fields']) => writes.mutate({ name, targetId: encounter.id, version: encounter.version, fields }, { onSuccess: () => { setLines([]); setReason(''); setNoMedication(false); } });
-  return <section className="clinical-panel"><h2>{text('Prescribing', '用药结论')}</h2>
+  return <section className="clinical-panel" data-assistant-field="prescription:draft" data-assistant-list><h2>{text('Prescribing', '用药结论')}</h2>
     {view.context.allergies.length > 0 && <Badge tone="destructive">{text('Confirmed allergies', '已确认过敏')} · {view.context.allergies.join(', ')}</Badge>}
     {view.noMedication && <Card><strong>{text('No medication recorded', '已确认无需用药')}</strong><p>{view.noMedication.reason}</p></Card>}
     {canPrescribe && <><Switch label={text('No medication needed', '无需用药')} disabled={liveRx || Boolean(lines.length)} checked={noMedication} onCheckedChange={setNoMedication}/>

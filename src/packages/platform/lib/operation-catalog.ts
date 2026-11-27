@@ -6,7 +6,7 @@ import { CoreError, type Credential } from './visitor-gate';
 export type ReadContext = { reader: StoreReader; actor: Actor; targetId: string };
 type Call = { store: StorePort; credential: Credential; targetId: string; body(): Promise<unknown>; providerHeaders?: Headers };
 type Result = z.core.util.JSONType;
-type Definition = Route & { input: z.ZodType; output: z.ZodType; invoke(call: Call): Promise<Result> };
+type Definition = Route & { assistantRead?: 'encounter'; input: z.ZodType; output: z.ZodType; invoke(call: Call): Promise<Result> };
 
 export class OperationCatalog {
   readonly #entries: Definition[] = [];
@@ -24,7 +24,7 @@ export class OperationCatalog {
     this.#entries.push(entry);
   }
 
-  query<Output extends Result>(route: Omit<Route, 'method'>, output: z.ZodType<Output>, read: (context: ReadContext) => Output) {
+  query<Output extends Result>(route: Omit<Route, 'method'> & { assistantRead?: 'encounter' }, output: z.ZodType<Output>, read: (context: ReadContext) => Output) {
     route = { ...route, moduleId: this.moduleId ?? route.moduleId };
     this.add({ ...route, method: 'GET', input: z.strictObject({}), output, invoke: ({ store, credential, targetId }) => store.read(reader => {
       const actor = resolveActor(reader, credential, new Date().toISOString());

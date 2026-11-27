@@ -12,7 +12,7 @@ export function resolveAgentProvider(headers: Headers, environment: AgentEnviron
   const header = (name: string) => headers.get(`X-ClinMesh-LLM-${name}`);
   const effort = reasoningEffort.safeParse(header('Reasoning') || environment[role === 'patient' ? 'CLINMESH_LLM_PATIENT_EFFORT' : 'CLINMESH_LLM_CLINICIAN_EFFORT'] || 'off');
   if (!effort.success) throw new CoreError(400, 'LLM_CONFIGURATION_INVALID');
-  if (header('Mock') === '1') return { provider: 'mock' as const, model: 'scripted-patient', baseUrl: '', apiKey: '', effort: effort.data };
+  if (header('Mock') === '1') return { provider: 'mock' as const, model: `scripted-${role}`, baseUrl: '', apiKey: '', effort: effort.data };
   const parsed = providerName.safeParse(header('Provider') || environment.CLINMESH_LLM_PROVIDER || 'openai');
   if (!parsed.success) throw new CoreError(400, 'LLM_CONFIGURATION_INVALID');
   const provider = parsed.data;

@@ -43,3 +43,10 @@ body {
 .record-fields { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
 [role="alert"] { color: var(--ui-destructive); }
 @media (width < 800px) { .desktop-queue, .current-patient { display: none; } .topbar-controls { min-width: 0; } .topbar-controls button { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
+.assistant-layout { display: grid; gap: .75rem; align-items: start; grid-template-columns: minmax(0,1fr) auto; }
+.assistant-layout[data-expanded="true"] { grid-template-columns: minmax(0,1fr) minmax(16rem,32%); }
+.assistant-rail { display: grid; position: sticky; top: .5rem; gap: .5rem; max-height: 90vh; overflow: auto; }
+.assistant-rail .cm-agent-panel { display: grid; gap: .65rem; }
+.assistant-history { max-height: 40vh; overflow: auto; }
+.assistant-history pre, .assistant-markdown { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 860px) { .assistant-layout, .assistant-layout[data-expanded="true"] { grid-template-columns: minmax(0,1fr); } .assistant-rail { position: static; grid-row: 1; } }

@@ -6,6 +6,7 @@ import { Badge, Button, Card, ConfirmActionButton, DetailDrawer, Dialog, Field, 
 import { api, errorMessage, scopeKey, words, type WorkbenchPanelProps, type Language } from './workbench-api';
 import { createEncounterDrafts, type EncounterDrafts } from './encounter-drafts';
 import { PatientReply } from './PatientReply';
+import { ClinicianPanel } from './ClinicianPanel';
 
 export type { WorkbenchPanelProps } from './workbench-api';
 export type WorkbenchPanels = Readonly<Record<string, ComponentType<WorkbenchPanelProps>>>;
@@ -36,7 +37,7 @@ function Consultation(props: Props) {
     <strong>{turn.speaker === 'patient' ? text('Patient', '患者') : text('Clinician', '医生')}</strong><small> · {turn.virtualAt.slice(11, 16)} UTC · {turn.channel}</small><p>{turn.content}</p>
   </li>)}</ol>
     {encounter.status === 'active' && <><Field label={text('Question for the patient', '向患者提问')}><Textarea value={message} disabled={!canAsk} onValueChange={setMessage}/></Field>
-      <Button disabled={props.busy || !canAsk || !message.trim()} onClick={() => run(command(props, 'consultation.question', { content: message, channel: 'text' }), () => setMessage(''))}>{text('Send question', '发送问题')}</Button>
+      <ConfirmActionButton confirmation={text('Send this question to the patient?', '将此问题发送给患者？')} disabled={props.busy || !canAsk || !message.trim()} onClick={() => run(command(props, 'consultation.question', { content: message, channel: 'text' }), () => setMessage(''))}>{text('Send question', '发送问题')}</ConfirmActionButton>
       {encounter.replyPending && <p role="status">{text('Awaiting the patient reply. Record and diagnosis drafts remain available.', '正在等候患者回复，可继续编辑病历和诊断草稿。')}</p>}
       <PatientReply {...props} editable={allowed(props, 'consultation.question')}/></>}
   </div>;
@@ -69,7 +70,7 @@ function RecordEditor(props: Editor) {
   function signReviewed(decision: 'include' | 'discard') {
     run(command(props, 'record.sign', { expectedDraftVersion: encounter.draftVersion, retiredReview: { decision, localFields: retiredEdits } }).then(result => acknowledge(retiredEdits, result)));
   }
-  return <div className="clinical-panel"><div className="record-fields">{encounter.template.map(field => <Field key={field.id} label={field.title[language]}>
+  return <div className="clinical-panel"><div className="record-fields">{encounter.template.map(field => <Field key={field.id} data-assistant-field={`record:${field.id}`} label={field.title[language]}>
     <Textarea required={field.required} readOnly={!editable} value={fields[field.id] ?? ''} onValueChange={value => drafts.setState({ note: { fields: { ...note?.fields, [field.id]: value }, version: note?.version ?? encounter.draftVersion } })}/>
   </Field>)}</div>
     {conflict && editable && !props.busy && <DraftConflict language={language} keep={() => drafts.setState({ note: { ...note, version: encounter.draftVersion } })} discard={() => drafts.setState({ note: undefined })}>
@@ -117,7 +118,7 @@ function DiagnosisEditor(props: Editor) {
     if (!item || selected.length >= 8) return;
     edit([...selected, { codeSystem: item.codeSystem, code: item.code, primary: !selected.length }]); setCandidate('');
   };
-  return <div className="clinical-panel">
+  return <div className="clinical-panel" data-assistant-field="diagnosis:draft" data-assistant-list>
     {encounter.status === 'active' && <div className="cm-actions"><Field label={text('Diagnosis catalog', '诊断目录')}><Select value={candidate || null} disabled={!editable} options={available.map(item => ({ value: codingKey(item), label: `${item.code} · ${item.display[language]}` }))} onValueChange={value => setCandidate(value ?? '')}/></Field>
       <Button disabled={!editable || !candidate || selected.length >= 8} onClick={add}>{text('Add diagnosis', '添加诊断')}</Button></div>}
     <ul>{selected.map(item => <li key={codingKey(item)} className="diagnosis-row"><span>{label(item)}<small>{item.codeSystem}</small></span>
@@ -184,5 +185,6 @@ export function EncounterPanel(props: Props & { drafts?: EncounterDrafts }) {
     ...props.workspace.tabs.flatMap(tab => { const Panel = props.panels?.[tab.id]; return Panel ? [{ value: tab.id, label: tab.label[props.language], content: <Panel {...props}/> }] : []; }),
   ];
   if (props.encounter.status === 'completed') tabs.push({ value: 'debrief', label: text('Debrief', '复盘'), content: <Debrief {...props}/> });
-  return <div className="encounter-panel"><PatientHeader {...props}/><Tabs label={text('Clinical views', '临床页签')} defaultValue="consultation" items={tabs}/><Complete {...props} drafts={drafts}/></div>;
+  const clinical = <div className="encounter-panel"><PatientHeader {...props}/><Tabs label={text('Clinical views', '临床页签')} defaultValue="consultation" items={tabs}/><Complete {...props} drafts={drafts}/></div>;
+  return allowed(props, 'record.draft') ? <ClinicianPanel key={`${props.workspace.epoch}/${props.encounter.id}/${props.workspace.roleId}`} {...props} edited={drafts.getState().manuallyEdited}>{clinical}</ClinicianPanel> : clinical;
 }

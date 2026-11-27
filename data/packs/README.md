@@ -6,6 +6,8 @@
 
 四例双语教学病例依照 [#588 的门诊黄金矩阵](https://github.com/CaiZongyuan/clinmesh/issues/588) 编写。病史和检查数值为合成教学内容。胸痛指南引文取自 2021 AHA/ACC 等学会指南物理第 3 页（刊页 e370），Top 10 Take-Home Messages 第 2 项。核验原件 SHA-256 为 `3d889cee60fa1eb173ccf63cac9ab8359c8ceccfa02dc48d162cc44f1ce3a4d0`。[指南原文](https://doi.org/10.1161/CIR.0000000000001029)
 
+`global-general` 1.4.0 中 `g01` 版本 2 的血常规白细胞 15.4 × 10⁹/L 为本项目编写的固定合成教学结果。分析物使用 LOINC 6690-2。医院快照保留其原始安装版本与病例依据。
+
 ## 心血管与 PCI
 
 历史底稿固定于 `main` 提交 `6dadcd7139fe5f35403756c7d315b75a963e0b5c` 的 `apps/server/src/application/scenario-data/`。可用 `git show <sha>:<path>` 查阅。以下院内子集保留原病例的判断依据与约束。

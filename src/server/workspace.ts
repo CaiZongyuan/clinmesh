@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { PatientRuntime, registerPatientOperations, type AgentEnvironment } from '../packages/agent-runtime';
+import { ClinicianAssistant, PatientRuntime, registerPatientOperations, type AgentEnvironment, type AssistantSocket } from '../packages/agent-runtime';
 import { v7 } from 'uuid';
 import { z } from 'zod';
 import { installHospitalDataPack, readHospitalDataPack } from '../packages/data-pack';
@@ -8,6 +8,7 @@ import { listEncounters, startEncounter, summarySchema } from '../packages/patie
 import { administer, authorize, checkVersion, CoreError, createVisitorGate, ModuleRegistry, OperationCatalog, permits, registerPlatformOperations, resolveActor, sessionSchema, sessionView, type ClinMeshModule, type Credential, type GateSettings } from '../packages/platform';
 import { StoreVersionConflictError, type StorePort } from '../packages/store';
 import { BUILTIN_DATA_PACKS } from './builtin-data-packs';
+import { evaluateEncounter } from './evaluation';
 
 export function handleError(error: Error) {
   if (error instanceof CoreError) return Response.json(error.code.startsWith('LLM_') ? { code: error.code, settings: '#model-settings' } : { code: error.code, details: error.details }, { status: error.status });
@@ -16,8 +17,10 @@ export function handleError(error: Error) {
   return Response.json({ code: 'INTERNAL_ERROR' }, { status: 500 });
 }
 
-export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment = {}, background?: (task: Promise<void>) => void) {
-  const app = new Hono<{ Bindings: { credential: Credential; entering: boolean } }>();
+type SocketConnection = { receive(data: unknown): void; close(): void };
+export type UpgradeAssistant = (request: Request, connect: (socket: AssistantSocket) => SocketConnection) => Response | Promise<Response>;
+export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment = {}, background?: (task: Promise<void>) => void, upgrade?: UpgradeAssistant) {
+  const app = new Hono<{ Bindings: { credential: Credential; entering: boolean; upgrade?: UpgradeAssistant } }>();
   const registry = new ModuleRegistry(modules);
   app.onError(handleError);
   app.post('/api/auth/visitor/enter', async context => {
@@ -36,6 +39,18 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     return context.json(result);
   });
   const catalog = new OperationCatalog();
+  const assistant = new ClinicianAssistant(store, catalog, environment);
+  app.post('/api/eval/runs', async context => context.json(await evaluateEncounter(store, catalog, registry, environment, context.env.credential, await context.req.json(), context.req.raw), 201));
+  app.post('/api/assistant/sessions', async context => context.json(await assistant.sessions(context.env.credential, await context.req.json())));
+  app.post('/api/assistant/availability', async context => context.json(await assistant.availability(context.env.credential, await context.req.json(), context.req.raw.headers)));
+  app.post('/api/assistant/turn', async context => context.json(await assistant.turn(context.env.credential, await context.req.json(), context.req.raw.headers)));
+  app.post('/api/assistant/stop', async context => context.json(await assistant.stop(context.env.credential, await context.req.json())));
+  app.get('/api/assistant/bridge', async context => {
+    const open = context.env.upgrade ?? upgrade;
+    if (!open || context.req.header('upgrade')?.toLowerCase() !== 'websocket') return context.json({ code: 'WEBSOCKET_REQUIRED' }, 426);
+    const connect = await assistant.socket(context.env.credential, { ...context.req.query(), thread: Number(context.req.query('thread')) });
+    return open(context.req.raw, connect);
+  });
   const patients = new PatientRuntime(store, environment, background);
   registerPatientOperations(catalog, environment);
   app.post('/api/agents/providers/test', async context => context.json(await patients.testProvider(context.env.credential, context.req.raw.headers, await context.req.json())));

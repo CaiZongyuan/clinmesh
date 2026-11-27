@@ -16,7 +16,7 @@ export function createLabModule({ billing, legacyProcedures = [] }: { billing?: 
     clockAdvanced: publishDue,
     completion: (reader, at, encounterId) => [{ id: 'report-acknowledgement', label: { en: 'Latest investigation reports acknowledged', zh: '最新检验检查报告已阅' }, passed: reportsReviewed(reader, at, encounterId) }],
     registerOperations(catalog) {
-      catalog.query({ name: 'lab.read', path: base, access: {} }, labViewSchema, ({ reader, actor, targetId }) => {
+      catalog.query({ name: 'lab.read', path: base, access: {}, assistantRead: 'encounter' }, labViewSchema, ({ reader, actor, targetId }) => {
         const at = actor.at;
         requireEncounter(reader, at, targetId);
         return { services: clinicalServices(reader, at, legacy).map(({ definition, kind, quote: { serviceId, ...price } }) => ({ id: serviceId, ...price, kind, display: definition.display, codeSystem: definition.codeSystem, code: definition.code })),

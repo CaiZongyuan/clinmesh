@@ -1,6 +1,6 @@
 import './lib/styles.css';
 
-export { createClinMeshUiAgent } from './lib/agent';
+export { createClinMeshUiAgent, mountClinMeshWebMCP } from './lib/agent';
 export { createApprovalPrompt, UiAgentApprovalDialog } from './lib/approval';
 export { ConfirmActionButton, InlineConfirmBar } from './lib/confirmation';
 export { Button } from '@ui-sdk/react/button';
