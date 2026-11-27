@@ -26,6 +26,6 @@ export default defineConfig(({ isSsrBuild }) => ({
       allow: [client, clientCache],
       deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/*.{test,spec}.*', '**/tests/**'],
     },
-    proxy: { '/api': `http://${process.env.CLINMESH_HOST ?? '127.0.0.1'}:${process.env.CLINMESH_PORT ?? '51868'}` },
+    proxy: { '/api': { target: `http://${process.env.CLINMESH_HOST ?? '127.0.0.1'}:${process.env.CLINMESH_PORT ?? '51868'}`, ws: true } },
   },
 }));

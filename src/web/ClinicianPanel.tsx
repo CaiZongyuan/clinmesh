@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { assistantObservations, assistantView, observationKey, type AssistantFrame } from '../packages/agent-protocol';
 import { AgentPanelShell, Badge, Button, Field, InlineConfirmBar, Input, Select, Switch, Textarea } from '../packages/ui-kit';
 import { openAssistantChannel, createAmbientQueue } from './assistant-channel';
+import { AssistantPushToTalk } from './modules/voice/VoiceControls';
 import { createAssistantSurface } from './assistant-surface';
 import { modelHeaders, useModelSettings } from './model-preferences';
 import { api, ApiError, errorMessage, jsonBody, scopeKey, words, type WorkbenchPanelProps } from './workbench-api';
@@ -118,9 +119,9 @@ export function ClinicianPanel({ encounter, workspace, language, children, edite
   const error = submit.error ?? manage.error ?? stop.error ?? availability.error ?? session.error;
   const sessionLabel = text('Clinician Assistant', '医生助手');
   return <section className="assistant-layout" data-expanded={open}><div className="cm-agent-region" ref={root}>{children}</div>
-    <aside className="assistant-rail" data-agent-hidden><Button aria-expanded={open} onClick={() => { setOpen(!open); setStarted(true); surface.state.setState({ unread: 0 }); }}>{sessionLabel} · {busy ? text('Working', '处理中') : text('Ready', '就绪')}{state.unread > 0 && ` · ${state.unread}`}</Button>
+    <aside className="assistant-rail"><Button data-agent-hidden aria-expanded={open} onClick={() => { setOpen(!open); setStarted(true); surface.state.setState({ unread: 0 }); }}>{sessionLabel} · {busy ? text('Working', '处理中') : text('Ready', '就绪')}{state.unread > 0 && ` · ${state.unread}`}</Button>
       {open && <AgentPanelShell title={sessionLabel} status={<Badge>{ready ? text('Connected', '已连接') : text('Connecting', '连接中')}</Badge>}>
-        {session.data && <><Field label={text('Assistant conversation', '助手会话')}><Select value={String(thread)} disabled={busy} options={session.data.threads.map(item => ({ value: String(item.id), label: item.title }))} onValueChange={id => { if (id) manage.mutate({ action: 'list', thread: Number(id) }); }}/></Field>
+        <div className="assistant-private" data-agent-hidden>{session.data && <><Field label={text('Assistant conversation', '助手会话')}><Select value={String(thread)} disabled={busy} options={session.data.threads.map(item => ({ value: String(item.id), label: item.title }))} onValueChange={id => { if (id) manage.mutate({ action: 'list', thread: Number(id) }); }}/></Field>
           <Field label={text('Conversation title', '会话名称')}><Input value={title} onValueChange={setTitle} maxLength={100}/></Field><div className="cm-actions">
           {(['new', 'rename', 'fork', 'delete'] as const).map((action, index) => <Button key={action} disabled={busy || (action === 'rename' && !title.trim())} onClick={() => manage.mutate({ action, ...(title.trim() && { title: title.trim() }) })}>{[text('New', '新建'), text('Rename', '重命名'), text('Fork', '分叉'), text('Delete', '删除')][index]}</Button>)}</div></>}
         <Switch label={text('Ambient Mode', '环境辅助模式')} checked={ambient} disabled={!ready || availability.isPending} onCheckedChange={checked => { if (checked) availability.mutate(); else setAmbient(false); }}/>
@@ -130,9 +131,10 @@ export function ClinicianPanel({ encounter, workspace, language, children, edite
           {retry && <Button disabled={!enabled} onClick={() => submit.mutate(retry)}>{text('Retry assistant', '重试助手')}</Button>}</div>
         {session.data?.review && <section role="status"><strong>{text('Check the interrupted interface action', '核对中断的界面动作')}</strong><p>{session.data.review.committed.length ? text('Committed commands', '已提交命令') : text('Check the current draft and clinical facts.', '请核对当前草稿及正式临床记录。')}</p>
           {session.data.review.committed.map((receipt, index) => <p key={index}>{receipt.operation} · {JSON.stringify(receipt.result)}</p>)}<Button disabled={busy} onClick={() => manage.mutate({ action: 'reviewed', reviewId: session.data?.review?.id })}>{text('I reviewed the outcome', '我已核对结果')}</Button></section>}
-        {error && <p role="alert">{errorMessage(error, language)} {error.message.startsWith('LLM_') && <Button onClick={() => useModelSettings.setState({ open: true })}>{text('Model settings', '模型设置')}</Button>}</p>}
+        {error && <p role="alert">{errorMessage(error, language)} {error.message.startsWith('LLM_') && <Button onClick={() => useModelSettings.setState({ open: true })}>{text('Model settings', '模型设置')}</Button>}</p>}</div>
+        <AssistantPushToTalk key={thread} language={language} onText={utterance => setMessage(current => [current.trimEnd(), utterance].filter(Boolean).join(' ').slice(0, 12000))}/>
       </AgentPanelShell>}
-      {state.approval && <InlineConfirmBar key={state.approval.id} requested trigger="" confirmation={state.approval.message} confirm={text('Allow once', '放行一次')} cancel={text('Deny request', '拒绝请求')} onConfirm={() => state.approval?.answer(true)} onDeny={() => state.approval?.answer(false)}/>}
+      <div className="assistant-private" data-agent-hidden>{state.approval && <InlineConfirmBar key={state.approval.id} requested trigger="" confirmation={state.approval.message} confirm={text('Allow once', '放行一次')} cancel={text('Deny request', '拒绝请求')} onConfirm={() => state.approval?.answer(true)} onDeny={() => state.approval?.answer(false)}/>}
       {state.suggestions.map(item => <section key={item.field}><Badge tone="info">{text('Assistant suggestion', '助手建议')} · {item.label}</Badge><p>{item.args.map(String).join(' ')}</p><Button onClick={() => { void surface.accept(item); }}>{text('Accept suggestion', '采纳建议')}</Button><Button onClick={() => surface.remove(item.field)}>{text('Dismiss', '忽略')}</Button></section>)}
-    </aside></section>;
+      </div></aside></section>;
 }
