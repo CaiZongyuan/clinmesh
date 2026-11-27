@@ -93,7 +93,7 @@ const RUNTIME_KNOWLEDGE_OR_VOCAB_OP_RE =
 
 /**
  * Count online runtime tools / HIS operations capable of writing knowledge claims or concept vocabulary.
- * AC33 requires this count to remain strictly 0.
+ * Governance requires this count to remain strictly 0.
  */
 export function countOnlineKnowledgeAndVocabularyWriteTools(
   operations: readonly HisOperationDefinition[] = listHisOperations(),
@@ -153,7 +153,7 @@ export interface ValidateDraftedClaimResult {
 }
 
 /**
- * Perform AC33 structural checks on a drafted claim candidate:
+ * Perform offline structural checks on a drafted claim candidate:
  * 1. Anchor presence & source identity/sha256/version verification
  * 2. Page/locator + quoteFragment whitespace-normalized match
  * 3. Reject any ungrounded detail or optional condition absent from the cited passage
@@ -285,7 +285,7 @@ export function validateDraftedKnowledgeClaim(input: {
 }
 
 /**
- * Create a deterministic, zero-network ControlledClaimDraftStream for offline claim generation (AC33).
+ * Create a deterministic, zero-network ControlledClaimDraftStream for offline claim generation.
  */
 export function createDeterministicClaimDraftStream(
   source:
@@ -396,7 +396,7 @@ function deepFreeze<T>(value: T): T {
 }
 
 /**
- * Run the AC33 offline knowledge claim pipeline:
+ * Run the offline knowledge claim pipeline:
  * controlled draft stream -> structural verification -> FSM transition (strictly capped at
  * `auto-verified` without a verified ClinicalReviewerRecord) -> immutable KnowledgeSnapshot.
  */
@@ -432,7 +432,7 @@ export function runOfflineKnowledgeClaimPipeline(input: {
   if (runtimeWriteToolsCount !== 0) {
     throw new KnowledgePipelineError(
       'PIPELINE_INVALID_INPUT',
-      `在线运行时检测到 ${runtimeWriteToolsCount} 个写知识库或写词表工具，违反 AC33 治理约束`,
+      `在线运行时检测到 ${runtimeWriteToolsCount} 个写知识库或写词表工具，违反离线知识治理约束`,
     )
   }
 
@@ -519,7 +519,7 @@ export function runOfflineKnowledgeClaimPipeline(input: {
   }))
 }
 
-// ── Shared Pack Rule / Trigger Impact Analysis Helpers (AC34 & AC35) ──
+// ── Shared Pack Rule / Trigger Impact Analysis Helpers ──
 
 function collectCodesFromTriggerNode(
   node: DiseasePackTriggerNode,
@@ -702,7 +702,7 @@ function evaluatePackRuleAndExamImpact(input: {
   }
 }
 
-// ── AC34 Guideline Source Diff Report & Expert Adjudication Queue ──
+// ── Guideline Source Diff Report & Expert Adjudication Queue ──
 
 function passageKey(passage: PipelineGuidelinePassage, pageCounts: ReadonlyMap<number, number>): string {
   return (pageCounts.get(passage.page) ?? 0) > 1
@@ -748,7 +748,7 @@ function buildEffectiveVocabulary(pack: DiseasePack, override?: ConceptVocabular
 }
 
 /**
- * Compare synthetic v1 vs v2 guideline documents against an EffectiveDiseasePack and KnowledgeSnapshot (AC34).
+ * Compare synthetic v1 vs v2 guideline documents against an EffectiveDiseasePack and KnowledgeSnapshot.
  * Produces impacted topics, claims, rules, exam cases, and populates `expertAdjudicationQueue` for conflicts
  * while keeping existing claims in `snapshot` 100% untouched before explicit clinician adjudication.
  */
@@ -904,7 +904,7 @@ export function buildGuidelineSourceDiffReport(input: {
 }
 
 /**
- * Resolve one pending conflict in `expertAdjudicationQueue` using a license-verified clinician reviewer (AC34).
+ * Resolve one pending conflict in `expertAdjudicationQueue` using a license-verified clinician reviewer.
  */
 export function adjudicateGuidelineClaimConflict(input: {
   report: GuidelineSourceDiffReport
@@ -1024,11 +1024,11 @@ export function adjudicateGuidelineClaimConflict(input: {
   })
 }
 
-// ── AC35 Concept Mapping Impact Report ──
+// ── Concept Mapping Impact Report ──
 
 /**
  * Analyze downstream impact of concept mapping relation/status downgrades (e.g. `exact` -> `close` or `deprecated`)
- * across historical ledger facts, pack rules, knowledge claims, and exam suite cases (AC35).
+ * across historical ledger facts, pack rules, knowledge claims, and exam suite cases.
  */
 export function buildConceptMappingImpactReport(input: {
   beforeVocabulary: ConceptVocabulary

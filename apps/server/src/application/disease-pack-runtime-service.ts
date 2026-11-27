@@ -1019,7 +1019,7 @@ export class DiseasePackRuntimeService {
 
   /**
    * Evaluate readiness gates across all active disease packs for an inpatient guideline advice task
-   * (e.g. PCI pre-op creatinine red line + smoking-status secondary annotation per AC20).
+   * (e.g. PCI pre-op creatinine red line + smoking-status secondary annotation).
    */
   evaluateGuidelineAdviceTaskReadiness(
     inpatient: InpatientService,

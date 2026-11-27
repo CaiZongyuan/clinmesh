@@ -473,7 +473,7 @@ function projectCandidateToPromptCard(
 }
 
 /**
- * Pure deterministic cross-time phenotype matcher (AC30).
+ * Pure deterministic cross-time phenotype matcher.
  * Executes zero LLM calls and contains zero hardcoded disease pack IDs or
  * disease-specific conditional branches; all matching rules come from the
  * caller-supplied `knowledgeBase` and `vocabulary`.

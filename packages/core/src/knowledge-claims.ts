@@ -321,7 +321,7 @@ function evaluateClaim(
 
 /**
  * Evaluate the active knowledge snapshot at `asOf` (or latest snapshot when `asOf` is omitted)
- * against a patient's ClinicalFactLedger and source passage verifier (AC8).
+ * against a patient's ClinicalFactLedger and source passage verifier.
  */
 export function evaluateKnowledgeSnapshotForPatient(
   input: EvaluateKnowledgeSnapshotInput,

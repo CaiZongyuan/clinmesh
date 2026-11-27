@@ -686,7 +686,7 @@ function normalizeDateToken(rawDate: string | undefined): string | undefined {
 }
 
 /**
- * Evaluate AC9 eligibility of a SKOS concept mapping.
+ * Evaluate runtime eligibility of a SKOS concept mapping.
  * Only `approved` + `exact` mappings within `effectiveDate` participate in scoring or red-line gates.
  */
 export function evaluateConceptMappingEligibility(

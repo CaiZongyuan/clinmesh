@@ -30,7 +30,7 @@ const boundedVersion = z.string().trim().min(1).max(64)
 const boundedTitle = z.string().trim().min(1).max(500)
 const boundedText = z.string().trim().min(1).max(4000)
 
-// ── Synthetic / Pipeline Source Document Schemas (AC33 & AC34) ──
+// ── Synthetic / Pipeline Source Document Schemas ──
 
 export const pipelineGuidelinePassageSchema = z.object({
   conceptCodes: z.array(boundedCode).max(32).optional(),
@@ -74,7 +74,7 @@ export const pipelineSourceDocumentSchema = z.object({
 }).strict()
 export type PipelineSourceDocument = z.infer<typeof pipelineSourceDocumentSchema>
 
-// ── AC33 Offline Knowledge Claim Pipeline Schemas ──
+// ── Offline Knowledge Claim Pipeline Schemas ──
 
 export const draftedOptionalConditionDetailsSchema = z.object({
   populationNote: z.string().trim().min(1).max(500).optional(),
@@ -148,7 +148,7 @@ export const offlineKnowledgePipelineResultSchema = z.object({
 }).strict()
 export type OfflineKnowledgePipelineResult = z.infer<typeof offlineKnowledgePipelineResultSchema>
 
-// ── AC34 Guideline Diff Report & Expert Adjudication Queue Schemas ──
+// ── Guideline Diff Report & Expert Adjudication Queue Schemas ──
 
 export const guidelineDiffImpactItemSchema = z.object({
   affectedClaimIds: z.array(boundedId),
@@ -243,7 +243,7 @@ export const adjudicateConflictResultSchema = z.object({
 }).strict()
 export type AdjudicateConflictResult = z.infer<typeof adjudicateConflictResultSchema>
 
-// ── AC35 Concept Mapping Impact Report Schemas ──
+// ── Concept Mapping Impact Report Schemas ──
 
 export const mappingChangeImpactFactSchema = z.object({
   category: z.string().min(1),
@@ -303,7 +303,7 @@ export const conceptMappingImpactRequestSchema = z.object({
 }).strict()
 export type ConceptMappingImpactRequest = z.infer<typeof conceptMappingImpactRequestSchema>
 
-// ── AC36 Synonym-Expanded Guideline Search Schemas ──
+// ── Synonym-Expanded Guideline Search Schemas ──
 
 export const guidelineSearchExpandedTermSchema = z.object({
   conceptCode: boundedId,

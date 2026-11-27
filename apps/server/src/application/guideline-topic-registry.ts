@@ -79,7 +79,7 @@ function buildTopic(spec: Omit<GuidelineTopicDefinition, 'fingerprint'>): Guidel
 }
 
 /**
- * Baseline non-migrated topics have all been migrated to pure-JSON disease packs (S13: t2dm-renal-care).
+ * Baseline guideline topics are loaded dynamically from pure-JSON disease packs.
  */
 const BASELINE_TOPICS_LIST: readonly GuidelineTopicDefinition[] = []
 

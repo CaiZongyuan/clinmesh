@@ -123,6 +123,8 @@ clinmesh inpatient complete-service --input @execution.json --idempotency-key <k
 clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 ```
 
+`inpatient bedside-questionnaire get` 返回的 `packMissing` 按已启用专病包汇总当前阶段还缺的床旁项（包 ID、包名、缺项数与缺项代码、中文名）；首份已签 12 导联心电图已有 ST 结论时 `st-segment-deviation` 不计缺项，与住院提示卡的缺项口径一致。开立前调用 `inpatient clinical-prompts get --admission-id <admission-id> --timing order-sign --catalog-item-id <item-id>` 可预检医嘱适应症，资料未齐返回不拦截的 `pendingIndications`、不满足条件返回带结构化 `indicationBasis`（`needZh`/`foundZh`/`judgementZh`）与 `ruleId` 的 `indication-alert` 卡片；`inpatient disease-packs authorize-tool` 在任务就绪处于缺次要项档时附带 `readinessAnnotations`。
+
 `catalog-search` 的 `kind` 为 `medication` 或 `laboratory`，`source` 为 `hospital` 或 `reference`；两来源分别分页，`pageSize` 最大 50。候选返回 `available`、`incomplete` 或 `inactive`，`missingFields` 列明缺项（可选只读合成 `packageInsert` 说明书摘要带 `disclaimer: "合成教学参考，非真实上市产品法定说明书"`，仅用于参考，不计入缺项，也不进入医嘱或归档快照）。只用 `available` 返回的 `catalogItemId/catalogVersion` 开立；Reference ID、同名产品或不唯一映射不能替代院内身份。查询失败时保留失败原因并重新查询，空结果不表示加载成功前可自行补造项目。
 
 每个文件使用受信读取结果的 `admissionId`。诊断确认传 `encounterVersion`、`expectedRevision` 与恰好一个 primary 的 `entries`；每项必须显式选择 `admissionCondition`（`1`有、`2`临床未确定、`3`情况不明、`4`无），输入顺序保存在正式确认中，不根据备注或日期推断病情；签发传当前 `encounterVersion`、`duration` 和受控 `selection`。药品选择含目录 ID/版本、医生本次填写的 `doseText`、`routeCode`、`frequencyCode`、每次 `doseQuantity`；数量以目录 `unit` 计，质量单位按明确的 `doseBasis` 换算为整数制剂数量，并受 `maxDoseQuantity` 约束。`doses` 是常用建议，未填写本次剂量由医嘱表单提示。单位或含量不明确时先补资料；合成本院适应症、组合、过敏、剂量、途径和频次不满足时不得换 ID 绕过。

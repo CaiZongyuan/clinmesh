@@ -22,7 +22,7 @@ export const postoperativeOrderSetTemplateIds = [
   'general-surgery-postop-standard',
 ] as const
 /**
- * 专病包动态注册组套模板；合同层保留开放 slug，不枚举具体病种模板 ID（#553 AC4）。
+ * 专病包动态注册组套模板；合同层保留开放 slug，不枚举具体病种模板 ID。
  */
 export const orderSetTemplateIdSchema = z.string().regex(/^[a-z0-9-]{1,64}$/)
 export type OrderSetTemplateId = z.infer<typeof orderSetTemplateIdSchema>

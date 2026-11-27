@@ -1076,7 +1076,7 @@ export function collectDeclaredTaskItemCodes(
 }
 
 /**
- * Narrow ClinicalFactLedger to ONLY the facts required by a specific task (AC32),
+ * Narrow ClinicalFactLedger to ONLY the facts required by a specific task,
  * recalculating summary counts over the scoped subset.
  */
 export function filterLedgerForTaskView(

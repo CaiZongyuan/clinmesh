@@ -83,9 +83,9 @@ function assertClinicianReviewerAuthorized(
 }
 
 /**
- * Offline developer/admin-only tooling service for AC33 claim drafting,
- * AC34 guideline diff & expert adjudication, AC35 mapping impact reporting,
- * and AC36 synonym-expanded guideline search. Never exposed to online Agent runtime.
+ * Offline developer/admin-only tooling service for claim drafting,
+ * guideline diff & expert adjudication, mapping impact reporting,
+ * and synonym-expanded guideline search. Never exposed to online Agent runtime.
  */
 export class KnowledgePipelineService {
   readonly #commands: CommandExecutor

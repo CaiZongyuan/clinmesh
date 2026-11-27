@@ -2607,7 +2607,7 @@ const operationCliMetadataList = [
     requirements: { expectedVersions: false, idempotency: 'required' },
     risk: 'write',
     roles: ['administrator'],
-    summary: '执行纯机器回归与 7 类公共陷阱激活门禁（AC10）；全部达标且既有激活包零回归时启用专病包，否则返回 409 DSAP_EXAM_GATE_FAILED 阻断启用',
+    summary: '执行纯机器回归与 7 类公共陷阱激活门禁；全部达标且既有激活包零回归时启用专病包，否则返回 409 DSAP_EXAM_GATE_FAILED 阻断启用',
     version: 1,
   },
   {
@@ -3338,22 +3338,22 @@ export const excludedHisRoutes = [
   {
     method: 'POST',
     path: '/api/his/v1/offline/knowledge-claims/draft-pipeline',
-    reason: '仅用于离线知识治理与受控模型流制卡流水线，不暴露为临床 CLI 命令或在线 Agent 写知识工具（#560 AC33）',
+    reason: '仅用于离线知识治理与受控模型流制卡流水线，不暴露为临床 CLI 命令或在线 Agent 写知识工具',
   },
   {
     method: 'POST',
     path: '/api/his/v1/offline/guidelines/diff-report',
-    reason: '仅用于离线指南版本差异比对治理接口，不暴露为临床 CLI 命令或在线 Agent 写知识工具（#560 AC34）',
+    reason: '仅用于离线指南版本差异比对治理接口，不暴露为临床 CLI 命令或在线 Agent 写知识工具',
   },
   {
     method: 'POST',
     path: '/api/his/v1/offline/guidelines/adjudicate-conflict',
-    reason: '仅用于离线专家仲裁队列接口，不暴露为临床 CLI 命令或在线 Agent 写知识工具（#560 AC34）',
+    reason: '仅用于离线专家仲裁队列接口，不暴露为临床 CLI 命令或在线 Agent 写知识工具',
   },
   {
     method: 'POST',
     path: '/api/his/v1/offline/concept-mappings/impact-report',
-    reason: '仅用于离线概念映射降级影响评估治理接口，不暴露为临床 CLI 命令或在线 Agent 写知识工具（#560 AC35）',
+    reason: '仅用于离线概念映射降级影响评估治理接口，不暴露为临床 CLI 命令或在线 Agent 写知识工具',
   },
   {
     method: 'POST',
@@ -3363,7 +3363,7 @@ export const excludedHisRoutes = [
   {
     method: 'POST',
     path: '/api/his/v1/evaluation/agent-output-score',
-    reason: '仅用于离线与仿真基准 Agent 输出双轨评测接口，不暴露为临床 CLI 命令或在线 Agent Grant（#565 AC40）',
+    reason: '仅用于离线与仿真基准 Agent 输出双轨评测接口，不暴露为临床 CLI 命令或在线 Agent Grant',
   },
 ] as const satisfies readonly ExcludedHisRoute[]
 

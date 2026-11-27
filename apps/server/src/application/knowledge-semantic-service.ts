@@ -95,7 +95,7 @@ function resolveAsOfDate(rawAsOf: string | undefined, fallbackVirtualTime: strin
   throw new KnowledgeSemanticError('INVALID_INPUT', `无效的词表评估日期 asOf: ${rawAsOf}`, 400)
 }
 
-/** Read-only service for 3-layer concept vocabulary resolution and AC8/AC9 knowledge evaluation. */
+/** Read-only service for 3-layer concept vocabulary resolution and knowledge snapshot evaluation. */
 export class KnowledgeSemanticService {
   readonly #commands: CommandExecutor
   readonly #diseasePacks: DiseasePackRuntimeService

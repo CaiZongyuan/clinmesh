@@ -465,7 +465,7 @@ export function summarizeExamCaseResults(caseResults: readonly ExamCaseResult[])
 }
 
 /**
- * Evaluate the machine-only pack activation gate (AC10):
+ * Evaluate the machine-only pack activation gate:
  * - Target pack machine exam passRate >= effectiveExamPassThreshold
  * - All 7 mandatory public traps pass
  * - Zero regressions across all existing active packs
@@ -524,7 +524,7 @@ export function evaluateActivationGate(input: EvaluateActivationGateInput): Acti
   }
 }
 
-/** Build the AC26 Standardized DSAP Evaluation & Attribution Report from pure machine checks. */
+/** Build the Standardized DSAP Evaluation & Attribution Report from pure machine checks. */
 export function buildDsapStandardizedReport(input: BuildDsapStandardizedReportInput): DsapStandardizedReport {
   const failureSummaryByLayer: ExamLayerFailureSummaryMap = {
     'agent-safety': { failureCount: 0, failingCases: [], layer: 'agent-safety' },

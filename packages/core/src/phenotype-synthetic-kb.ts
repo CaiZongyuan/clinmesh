@@ -4,7 +4,7 @@ import {
 } from '@clinmesh/contracts/phenotype-matcher'
 
 /**
- * Pure declarative synthetic rare/inherited phenotype knowledge base (AC30).
+ * Pure declarative synthetic rare/inherited phenotype knowledge base.
  * Used as caller-supplied data input to `matchPhenotypeCandidates`; the matcher
  * algorithm itself contains zero hardcoded disease IDs or disease-specific branches.
  */
