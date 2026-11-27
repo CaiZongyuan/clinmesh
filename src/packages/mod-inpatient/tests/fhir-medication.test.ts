@@ -42,6 +42,33 @@ async function medicationJourney(request: Parameters<typeof wardClient>[0]) {
   expect(original).toMatchObject({ dosageInstruction: active.entry[0]!.resource.dosageInstruction });
   expect(bundle.parse(await get(`${locator}/_history`)).entry.map(entry => entry.resource.meta.versionId)).toEqual(['3', '2', '1']);
   expect(await search('MedicationDispense')).toEqual(deliveries);
+  const prn = await act('order.sign', { itemId: directory.find(item => item.code === 'atorvastatin')!.id, dose: 20, route: 'PO', frequency: 'PRN', duration: 'long' });
+  const prnPath = `/fhir/R5/MedicationRequest/${prn.orderId}`;
+  await ward.role('ward-nurse'); await act('order.verify', { orderIds: [prn.orderId] });
+  await act('task.request-prn', { orderId: prn.orderId, reason: 'Documented clinical assessment' });
+  const prnTask = (await view()).tasks.find(row => row.orderId === prn.orderId)!;
+  await ward.role('ward-pharmacist'); await act('task.dispense', { taskIds: [prnTask.id] });
+  await ward.role('cardiologist');
+  const verified = await get(`${prnPath}/_history/2`);
+  expect(verified).toMatchObject({ status: 'active', dosageInstruction: [{ asNeeded: true }] });
+  const handovers = await search('MedicationDispense');
+  expect(handovers.entry.map(entry => entry.resource.authorizingPrescription)).toContainEqual([{ reference: `MedicationRequest/${prn.orderId}` }]);
+  await act('order.request-stop', { orderIds: [prn.orderId] });
+  expect((await view()).orders.find(row => row.id === prn.orderId)?.status).toBe('stop-requested');
+  const held = await get(prnPath);
+  expect(held).toMatchObject({ status: 'on-hold', meta: { versionId: '3' } });
+  expect(await get(`${prnPath}/_history/3`)).toEqual(held);
+  await ward.role('ward-nurse');
+  await expect(act('task.administer', { taskIds: [prnTask.id] })).rejects.toThrow('WARD_TASK_CONFLICT');
+  await act('order.verify-stop', { orderIds: [prn.orderId] });
+  await ward.role('cardiologist');
+  const stopped = await get(prnPath);
+  expect(stopped).toMatchObject({ status: 'stopped', meta: { versionId: '4' } });
+  expect(await get(`${prnPath}/_history/4`)).toEqual(stopped);
+  expect(await get(`${prnPath}/_history/3`)).toEqual(held);
+  expect(await get(`${prnPath}/_history/2`)).toEqual(verified);
+  expect(bundle.parse(await get(`${prnPath}/_history`)).entry.map(({ resource }) => [resource.meta.versionId, resource.status])).toEqual([['4', 'stopped'], ['3', 'on-hold'], ['2', 'active'], ['1', 'active']]);
+  expect(await search('MedicationDispense')).toEqual(handovers);
 }
 
 it('projects one signed ward medication and the actual pharmacy handover through Node', () => withNodeWorkspace(origin => medicationJourney((path, init) => fetch(origin + path, init))), 45000);

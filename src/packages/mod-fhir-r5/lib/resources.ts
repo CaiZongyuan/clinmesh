@@ -19,7 +19,13 @@ function identifierSystem(issuer: string, packId: string) {
 const terminology = 'http://terminology.hl7.org/CodeSystem';
 const local = clinicalFactSystem;
 const serviceStatus = (status: string) => ['cancelled', 'withdrawn', 'stopped'].includes(status) ? 'revoked' : ['reported', 'acknowledged', 'completed', 'dispensed'].includes(status) ? 'completed' : status === 'generation-failed' ? 'entered-in-error' : 'active';
-const medicationStatus = (status: string) => ['cancelled', 'withdrawn'].includes(status) ? 'cancelled' : status === 'stopped' ? 'stopped' : ['completed', 'dispensed'].includes(status) ? 'completed' : 'active';
+function medicationStatus(status: string) {
+  if (status === 'stop-requested') return 'on-hold';
+  if (status === 'stopped') return 'stopped';
+  if (['cancelled', 'withdrawn'].includes(status)) return 'cancelled';
+  if (['completed', 'dispensed'].includes(status)) return 'completed';
+  return 'active';
+}
 
 export function projectResources(reader: StoreReader, actor: Actor, type: ResourceType) {
   const at = actor.at;
