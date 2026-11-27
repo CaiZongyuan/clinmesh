@@ -7,6 +7,7 @@ import { api, errorMessage, scopeKey, words, type WorkbenchPanelProps, type Lang
 import { createEncounterDrafts, type EncounterDrafts } from './encounter-drafts';
 import { PatientReply } from './PatientReply';
 import { ClinicianPanel } from './ClinicianPanel';
+import { ConsultationMic, VoiceWorkbench } from './modules/voice/VoiceControls';
 
 export type { WorkbenchPanelProps } from './workbench-api';
 export type WorkbenchPanels = Readonly<Record<string, ComponentType<WorkbenchPanelProps>>>;
@@ -33,7 +34,7 @@ function Consultation(props: Props) {
   const [message, setMessage] = useState('');
   const { encounter } = props;
   const canAsk = allowed(props, 'consultation.question') && !encounter.replyPending;
-  return <div className="clinical-panel"><ol className="consultation-turns">{encounter.turns.map(turn => <li key={turn.id}>
+  return <div className="clinical-panel"><ConsultationMic {...props} ask={content => command(props, 'consultation.question', { content, channel: 'voice' })} recover={setMessage}/><ol className="consultation-turns">{encounter.turns.map(turn => <li key={turn.id}>
     <strong>{turn.speaker === 'patient' ? text('Patient', '患者') : text('Clinician', '医生')}</strong><small> · {turn.virtualAt.slice(11, 16)} UTC · {turn.channel}</small><p>{turn.content}</p>
   </li>)}</ol>
     {encounter.status === 'active' && <><Field label={text('Question for the patient', '向患者提问')}><Textarea value={message} disabled={!canAsk} onValueChange={setMessage}/></Field>
@@ -187,5 +188,7 @@ export function EncounterPanel(props: Props & { drafts?: EncounterDrafts }) {
   ];
   if (props.encounter.status === 'completed') tabs.push({ value: 'debrief', label: text('Debrief', '复盘'), content: <Debrief {...props}/> });
   const clinical = <div className="encounter-panel"><PatientHeader {...props}/><Tabs label={text('Clinical views', '临床页签')} defaultValue="consultation" items={tabs}/><Complete {...props} drafts={drafts}/></div>;
-  return allowed(props, 'record.draft') ? <ClinicianPanel key={`${props.workspace.epoch}/${props.encounter.id}/${props.workspace.roleId}`} {...props} edited={drafts.getState().manuallyEdited}>{clinical}</ClinicianPanel> : clinical;
+  const binding = `${props.workspace.epoch}/${props.encounter.id}/${props.workspace.roleId}`;
+  const workbench = allowed(props, 'record.draft') ? <ClinicianPanel key={binding} {...props} edited={drafts.getState().manuallyEdited}>{clinical}</ClinicianPanel> : clinical;
+  return props.workspace.enabledModules.includes('mod-voice') && allowed(props, 'consultation.question') ? <VoiceWorkbench key={binding} epoch={props.workspace.epoch} encounterId={props.encounter.id}>{workbench}</VoiceWorkbench> : workbench;
 }

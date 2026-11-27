@@ -6,7 +6,8 @@ import { createApp } from './app';
 import { createWorkspaceApp } from './workspace';
 import { BUILTIN_DATA_PACKS } from './builtin-data-packs';
 import { workerGatePolicy } from './host-policy';
-import { builtinModules } from './builtin-modules';
+import { hostModules } from './builtin-modules';
+import { connectWorkerVoice } from './worker-voice';
 import type { EvaluationLaunch } from './evaluation-host';
 
 declare const CLINMESH_LOOPBACK_WRANGLER: boolean;
@@ -14,9 +15,10 @@ declare const CLINMESH_LOOPBACK_WRANGLER: boolean;
 export class WorkspaceDurableObject<Env = unknown> extends DurableObject<Env> {
   protected readonly store = createDurableObjectSqliteStore(this.ctx.storage);
   protected readonly builtinDataPacks = BUILTIN_DATA_PACKS;
-  private readonly workspace = createWorkspaceApp(this.store, gateSettings(this.env as WorkerEnvironment), builtinModules, this.env as WorkerEnvironment, task => this.ctx.waitUntil(task), (_, connect) => {
+  private readonly workspace = createWorkspaceApp(this.store, gateSettings(this.env as WorkerEnvironment), hostModules((this.env as WorkerEnvironment).CLINMESH_VOICE_ENABLED), this.env as WorkerEnvironment, task => this.ctx.waitUntil(task), (_, connect) => {
     const pair = new WebSocketPair();
     const socket = pair[1];
+    socket.binaryType = 'arraybuffer';
     socket.accept();
     const connection = connect(socket);
     socket.addEventListener('message', event => connection.receive(event.data));
@@ -26,7 +28,7 @@ export class WorkspaceDurableObject<Env = unknown> extends DurableObject<Env> {
   }, {
     start: (launch, request) => (this.env as WorkerEnvironment).WORKSPACE_DO.getByName(launch.runId).startEvaluation(launch, request),
     read: runId => (this.env as WorkerEnvironment).WORKSPACE_DO.getByName(runId).readEvaluation(runId),
-  });
+  }, connectWorkerVoice);
   async startEvaluation(launch: EvaluationLaunch, request: Request): Promise<Response> {
     if (!this.ctx.id.equals((this.env as WorkerEnvironment).WORKSPACE_DO.idFromName(launch.runId))) return new Response(null, { status: 403 });
     return this.workspace.runEvaluation(launch, request);
@@ -46,6 +48,8 @@ export class WorkspaceDurableObject<Env = unknown> extends DurableObject<Env> {
 }
 
 interface WorkerEnvironment extends GateSettings, AgentEnvironment {
+  BAILIAN_TOKEN?: string;
+  CLINMESH_VOICE_ENABLED?: string;
   CLINMESH_LOCAL_DEV_OPEN?: string;
   WORKSPACE_DO: { idFromName(name: string): DurableObjectId; getByName(name: string): Pick<WorkspaceDurableObject, 'fetch' | 'handle' | 'signingSecret' | 'startEvaluation' | 'readEvaluation'> };
 }
@@ -58,5 +62,5 @@ export default { fetch(request: Request, env: WorkerEnvironment) {
   return createApp('cloudflare-worker', gateSettings(env), (incoming, credential, entering) => {
     const workspace = env.WORKSPACE_DO.getByName(credential.ticket.workspaceId);
     return incoming.headers.get('upgrade')?.toLowerCase() === 'websocket' ? workspace.fetch(incoming) : workspace.handle(incoming, credential, entering);
-  }, builtinModules).fetch(request);
+  }, hostModules(env.CLINMESH_VOICE_ENABLED)).fetch(request);
 } };

@@ -1,10 +1,12 @@
 import { Hono } from 'hono';
-import { ClinicianAssistant, PatientRuntime, registerPatientOperations, type AgentEnvironment, type AssistantSocket } from '../packages/agent-runtime';
+import { ClinicianAssistant, PatientRuntime, registerPatientOperations, type AgentEnvironment } from '../packages/agent-runtime';
+import { permitsProviderKey } from '../packages/agent-protocol';
+import { openVoiceSession, voiceBinding, voiceModule, type BailianConnect, type VoiceSocket } from '../packages/mod-voice';
 import { v7 } from 'uuid';
 import { z } from 'zod';
 import { installHospitalDataPack, readHospitalDataPack } from '../packages/data-pack';
 import { registerClinicalOperations, workspaceSchema } from '../packages/clinical-core';
-import { listEncounters, startEncounter, summarySchema } from '../packages/patient-visit';
+import { listEncounters, requireEncounter, startEncounter, summarySchema } from '../packages/patient-visit';
 import { administer, authorize, checkVersion, CoreError, createVisitorGate, ModuleRegistry, OperationCatalog, permits, registerPlatformOperations, resolveActor, sessionSchema, sessionView, type ClinMeshModule, type Credential, type GateSettings } from '../packages/platform';
 import { StoreVersionConflictError, type StorePort } from '../packages/store';
 import { BUILTIN_DATA_PACKS } from './builtin-data-packs';
@@ -19,11 +21,25 @@ export function handleError(error: Error) {
 }
 
 type SocketConnection = { receive(data: unknown): void; close(): void };
-export type UpgradeAssistant = (request: Request, connect: (socket: AssistantSocket) => SocketConnection) => Response | Promise<Response>;
-export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment = {}, background?: (task: Promise<void>) => void, upgrade?: UpgradeAssistant, evaluations?: EvaluationHost) {
-  const app = new Hono<{ Bindings: { credential: Credential; entering: boolean; upgrade?: UpgradeAssistant } }>();
+export type UpgradeSocket = (request: Request, connect: (socket: VoiceSocket) => SocketConnection) => Response | Promise<Response>;
+export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment & { BAILIAN_TOKEN?: string } = {}, background?: (task: Promise<void>) => void, upgrade?: UpgradeSocket, evaluations?: EvaluationHost, connectVoice?: BailianConnect) {
+  const app = new Hono<{ Bindings: { credential: Credential; entering: boolean; upgrade?: UpgradeSocket } }>();
   const registry = new ModuleRegistry(modules);
   app.onError(handleError);
+  if (modules.some(module => module.id === voiceModule.id)) app.get('/api/voice/session', async context => {
+    const binding = voiceBinding.parse(context.req.query());
+    await store.read(reader => {
+      const actor = resolveActor(reader, context.env.credential, new Date().toISOString());
+      authorize(actor, { name: 'voice.session', access: { visitorOnly: true, capabilities: ['assess'] }, moduleId: voiceModule.id });
+      if (actor.at.epoch !== binding.epoch) throw new CoreError(409, 'EPOCH_CONFLICT');
+      const encounter = requireEncounter(reader, actor.at, binding.encounterId);
+      if (encounter.status !== 'active' || encounter.active_practitioner_role !== actor.role.id) throw new CoreError(403, 'ROLE_FORBIDDEN');
+    });
+    if (!permitsProviderKey(new URL(context.req.url))) throw new CoreError(400, 'VOICE_HTTPS_REQUIRED');
+    const open = context.env.upgrade ?? upgrade;
+    if (!connectVoice || !open || context.req.header('upgrade')?.toLowerCase() !== 'websocket') return context.json({ code: 'WEBSOCKET_REQUIRED' }, 426);
+    return open(context.req.raw, socket => openVoiceSession(socket, connectVoice, environment.BAILIAN_TOKEN));
+  });
   app.post('/api/auth/visitor/enter', async context => {
     if (!context.env.entering) throw new CoreError(401, 'VISITOR_AUTH_REQUIRED');
     const ticket = context.env.credential.ticket;

@@ -25,6 +25,7 @@ Vite 开发页从 `src/web` 启动，按公开入口的依赖图加载模块与�
 - Node 与本地 Wrangler 在开放模式下校验监听地址，接受 `127.0.0.1`、`::1` 和映射到 `127.0.0.1` 的 `localhost`。共享监听或生产 Worker 使用 `CLINMESH_VISITOR_PASSCODE`。Node 从进程环境读取，Wrangler 本地支持 `.dev.vars`。默认签名材料由宿主生成并持久保存。可通过 `CLINMESH_SESSION_SECRET` 提供至少 32 字符的独立签名密钥。
 - 在浏览器点击「进入工作台」后选择固定病例开诊。顶栏可切换为负责医生，管理岗位可在医院设置中选择数据包并确认重置。在「模型设置」配置 BYOK 或显式启用 Mock Mode，即可提问、停止或重试患者回复。刷新会续接在途回复，等待时仍可编辑草稿。[模型配置与恢复](src/packages/agent-runtime/README.md)
 - 医生可在「处方」页检索本院与外配药品、查阅合成教学说明书、签发处方或确认无需用药。药师岗位显示已放行的待发药队列，可逐批核对效期和数量。[药房契约](src/packages/mod-pharmacy/README.md)
+- 负责医生可在问诊区的「语音设置」选择百炼或 Browser Web Speech，开启主麦向患者提问。医生助手面板支持按住听写私有指令。[语音配置与操作](src/packages/mod-voice/README.md)
 - 访问 `/dev/health` 可查看当前运行时和已装载模块。`pnpm clinmesh` 是外部 CLI 入口，操作的输入输出、授权和路由由服务端的 Operation Catalog 定义。
 
 ## 验证与架构

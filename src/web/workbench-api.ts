@@ -43,6 +43,17 @@ export function write(workspace: WorkspaceView, intent: Intent) {
 }
 
 const messages: Record<string, [string, string]> = {
+  VOICE_UNCONFIGURED: ['Add a Bailian key in Voice settings or choose Browser Web Speech.', '请在语音设置中填写百炼密钥，或选择 Browser Web Speech。'],
+  VOICE_AUTH_FAILED: ['Bailian rejected the voice key. Check Voice settings.', '百炼拒绝了语音密钥，请检查语音设置。'],
+  VOICE_RATE_LIMITED: ['Bailian voice quota or rate limit reached.', '百炼语音额度或请求速率已达上限。'],
+  VOICE_MIC_UNAVAILABLE: ['Microphone unavailable. Check microphone permission and input device.', '麦克风不可用，请检查录音权限和输入设备。'],
+  VOICE_BROWSER_STT_UNAVAILABLE: ['This browser does not provide speech recognition. Select Bailian in Voice settings.', '当前浏览器不支持语音识别，请在语音设置中选择百炼。'],
+  VOICE_BROWSER_TTS_UNAVAILABLE: ['Speech playback is unavailable in this browser.', '当前浏览器不支持语音播报。'],
+  VOICE_BROWSER_STT_FAILED: ['Browser speech recognition failed. Check permission and connection.', '浏览器语音识别失败，请检查权限及网络连接。'],
+  VOICE_TIMEOUT: ['The voice session timed out. Start the microphone again.', '语音会话超时，请重新开启麦克风。'],
+  VOICE_CONNECTION_FAILED: ['Voice connection failed. Check the workbench connection.', '语音连接失败，请检查工作台连接。'],
+  VOICE_PROVIDER_FAILED: ['The voice provider could not complete the request.', '语音提供商未能完成请求。'],
+  VOICE_HTTPS_REQUIRED: ['Open the workbench over HTTPS to use Bailian.', '请使用 HTTPS 访问工作台以接入百炼。'],
   FRONT_PAGE_RESUBMISSION_REQUIRED: ['Submit a new front page for the current diagnosis revision and repeat coding review.', '请按当前确诊修订重新提交病案首页并审核编码。'],
   ADMISSION_DIAGNOSIS_REVIEW_REQUIRED: ['Review the diagnosis draft and POA on the ward Orders tab before discharge.', '请住院主管医生在「诊断医嘱」核对草稿中每项诊断的 POA 后办理出院。'],
   INVALID_VISITOR_PASSCODE: ['Incorrect visitor passcode.', '访客口令不正确。'], VISITOR_GATE_UNCONFIGURED: ['The Visitor Gate has not been configured.', '访客门禁尚未配置。'],
