@@ -4,7 +4,8 @@ import { directorySchema, wardViewSchema } from '../../../packages/mod-inpatient
 import { Badge, Card, ConfirmActionButton, Tabs } from '../../../packages/ui-kit';
 import { api, ApiError, errorMessage, scopeKey, words, type Intent, type WorkbenchStationProps } from '../../workbench-api';
 import { Beds, Registration } from './admissions';
-import { Choice, Entry, selected, type Commands } from './controls';
+import { readWardSelection, rememberWardSelection } from '../../ward-selection';
+import { Choice, Entry, type Commands } from './controls';
 
 const Orders = lazy(() => import('./clinical').then(module => ({ default: module.Orders })));
 const Investigations = lazy(() => import('./clinical').then(module => ({ default: module.Investigations })));
@@ -20,11 +21,16 @@ export default function WardStation(props: WorkbenchStationProps) {
   const client = useQueryClient();
   const root = scopeKey(workspace, 'inpatient');
   const directory = useQuery({ queryKey: [...root, 'directory', workspace.roleId], queryFn: ({ signal }) => api('/api/his/ward', directorySchema, { signal }) });
-  const [chosen, setChosen] = useState('');
+  const [chosen, setChosen] = useState(() => readWardSelection(workspace));
   const [stage, setStage] = useState('beds');
   const [rationale, setRationale] = useState('');
   const patients = (directory.data?.admissions ?? []).map(row => ({ value: row.encounterId, label: `${row.patient} · ${row.bed ?? row.ward} · ${row.status}` }));
-  const encounterId = selected(chosen, patients);
+  const encounterId = chosen.encounterId ?? (!chosen.caseId && patients.length === 1 ? patients[0]!.value : '');
+  function choose(encounterId: string) {
+    const selection = { ...chosen, encounterId };
+    rememberWardSelection(workspace, selection);
+    setChosen(selection);
+  }
   const detail = useQuery({ queryKey: [...root, encounterId, workspace.roleId, workspace.clockRevision], enabled: Boolean(encounterId), queryFn: ({ signal }) => api(`/api/his/ward/${encounterId}`, wardViewSchema, { signal }) });
   const mutation = useMutation({ mutationFn: props.submit, async onSettled(_, __, intent) {
     await Promise.all([client.invalidateQueries({ queryKey: root }), client.invalidateQueries({ queryKey: scopeKey(workspace, intent.encounterId ?? encounterId) }), client.invalidateQueries({ queryKey: scopeKey(workspace, 'encounters'), exact: true })]);
@@ -41,8 +47,8 @@ export default function WardStation(props: WorkbenchStationProps) {
         const intent = mutation.variables!;
         mutation.mutate({ ...intent, fields: { ...intent.fields, clinicalOverride: { reasonCode: 'specialist-judgment', note: rationale, ruleCodes: alert } } }, { onSuccess: () => setRationale('') });
       }}>{text('Approve pathway exception', '确认临床路径偏离')}</ConfirmActionButton></Card>}
-    <Registration {...commands} choose={setChosen}/>
-    {patients.length > 0 && <Choice label={text('Ward patient', '住院患者')} value={encounterId} options={patients} change={setChosen}/>}
+    <Registration {...commands} caseId={chosen.caseId} choose={choose}/>
+    {patients.length > 0 && <Choice label={text('Ward patient', '住院患者')} value={encounterId} options={patients} change={choose}/>}
     {ward && <><Card className="cm-actions"><strong>{ward.patient}</strong><span>{ward.ward} · {ward.bed ?? text('Unassigned', '未占床')}</span><Badge>{ward.status}</Badge><span>{ward.clinical} · {ward.finance.locked ? text('Settled', '已结算') : text('Open account', '账户开放')} · {ward.chart.state}</span></Card>
       <Tabs label={text('Inpatient phases', '住院阶段')} value={stage} onValueChange={value => { if (value) setStage(value); }} items={phases.map(([value, en, zh, Panel]) => ({ value, label: text(en, zh), content: stage === value ? <Suspense fallback={<p role="status">{text('Loading…', '正在加载…')}</p>}><Panel key={`${workspace.roleId}:${encounterId}`} {...commands} ward={ward}/></Suspense> : null }))}/></>}
   </section>;

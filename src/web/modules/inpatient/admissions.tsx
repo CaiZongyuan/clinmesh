@@ -4,11 +4,11 @@ import { Button, Card } from '../../../packages/ui-kit';
 import { words } from '../../workbench-api';
 import { Action, Choice, Entry, selected, WardAction, type Commands, type StageProps } from './controls';
 
-export function Registration(props: Commands & { choose(id: string): void }) {
+export function Registration(props: Commands & { caseId?: string; choose(id: string): void }) {
   const { directory, language } = props;
   const text = words(language);
   const [wardChoice, setWard] = useState('');
-  const [caseChoice, setCase] = useState('');
+  const [caseChoice, setCase] = useState(props.caseId ?? '');
   const [reason, setReason] = useState('');
   const wards = directory.organization.wards.map(item => ({ value: item.id, label: item.name[language] }));
   const cases = props.workspace.cases.map(item => ({ value: item.id, label: item.demographics.name }));
@@ -17,7 +17,7 @@ export function Registration(props: Commands & { choose(id: string): void }) {
   if (!props.allowed('ward.register') && !props.allowed('ward.certificate.issue')) return null;
   return <Card><h2>{text('Admission desk', '住院登记')}</h2><div className="workbench-fields">
     <Choice label={text('Receiving ward', '收治病区')} options={wards} value={ward} change={setWard}/>
-    {props.allowed('ward.register') && <><Choice label={text('Patient for admission', '待住院患者')} options={cases} value={patient} change={setCase}/><Action commands={props} targetId={patient} version={0} name="ward.register" fields={{ ward }} label={text('Register direct admission', '办理直接入院')} done={opened}/></>}
+    {props.allowed('ward.register') && <><Choice label={text('Patient for admission', '待住院患者')} options={cases} value={patient} change={setCase}/><Action commands={props} targetId={patient} version={0} name="ward.register" fields={{ ward }} label={text('Register direct admission', '办理直接入院')} confirmation={`${text('Register direct admission', '办理直接入院')} · ${cases.find(row => row.value === patient)?.label} · ${wards.find(row => row.value === ward)?.label}`} done={opened}/></>}
     {props.allowed('ward.certificate.issue') && directory.outpatients.length > 0 && <><Entry label={text('Referral indication', '转住院指征')} value={reason} change={setReason}/>{directory.outpatients.map(visit => <Action key={visit.id} commands={props} targetId={visit.id} version={visit.version} fields={{ ward, reason }} disabled={!reason.trim()} label={`${text('Issue admission certificate', '开住院证')} · ${visit.patient}`} name="ward.certificate.issue"/>)}</>}
     {directory.referrals.map(cert => <Action key={cert.id} commands={props} targetId={cert.id} version={0} fields={{}} label={`${text('Redeem certificate', '核销住院证')} · ${cert.patient}`} name="ward.certificate.redeem" done={opened}/>)}
   </div></Card>;

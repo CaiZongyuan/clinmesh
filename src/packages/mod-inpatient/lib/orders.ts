@@ -50,6 +50,8 @@ export function registerOrders(catalog: OperationCatalog, billing?: WardBilling)
     if (members.filter(item => item.primary).length !== 1 || members.some((item, index) => item.ordinal !== index + 1) || new Set(members.map(item => JSON.stringify([item.codeSystem, item.code]))).size !== members.length) conflict('INVALID_ADMISSION_DIAGNOSIS');
     for (const item of members) if (!ctx.tx.list(ctx.at, 'catalog_items', { kind: 'diagnoses', code_system: item.codeSystem, code: item.code }).length) conflict('DIAGNOSIS_NOT_IN_CATALOG');
     const previous = ctx.tx.list(ctx.at, 'diagnosis_revisions', { encounter_id: ctx.targetId }).sort((first, second) => second.revision - first.revision)[0];
+    for (const row of ctx.tx.list(ctx.at, 'diagnosis_drafts', { encounter_id: ctx.targetId })) ctx.tx.remove(ctx.at, 'diagnosis_drafts', row.id, row.version);
+    for (const item of members) ctx.tx.insert(ctx.at, 'diagnosis_drafts', { id: v7(), encounter_id: ctx.targetId, code_system: item.codeSystem, code: item.code, is_primary: item.primary, poa_code: item.poa, ordinal: item.ordinal, version: 1 });
     ctx.tx.appendDiagnosisRevision(ctx.at, { id: v7(), encounter_id: ctx.targetId, confirmed_by: ctx.actor.role.id, revision: (previous?.revision ?? 0) + 1, previous_revision_id: previous?.id ?? null, ...times(ctx) }, members.map(item => ({ id: v7(), code_system: item.codeSystem, code: item.code, ordinal: item.ordinal, is_primary: item.primary, poa_code: item.poa })));
     return advance(ctx, admission);
   });

@@ -55,7 +55,7 @@ export function retiredRecordFields(template: readonly { id: string }[], saved: 
 
 export function saveRecord(context: CommandContext, fields: Record<string, string>, expectedDraftVersion: number) {
   const { tx, at, targetId } = context;
-  const version = editEncounter(context);
+  const version = editEncounter(context, 'record');
   const { template: visible } = patientPresentation(tx, at, targetId);
   if (Object.keys(fields).some(id => !visible.some(field => field.id === id))) throw new CoreError(400, 'FIELD_NOT_IN_TEMPLATE');
   const draft = tx.list(at, 'clinical_record_drafts', { encounter_id: targetId })[0];
@@ -70,7 +70,7 @@ export function saveRecord(context: CommandContext, fields: Record<string, strin
 
 export function signRecord(context: CommandContext, expectedDraftVersion?: number, review?: z.infer<typeof retiredReview>) {
   const { tx, at, targetId, actor } = context;
-  const version = editEncounter(context);
+  const version = editEncounter(context, 'record');
   const state = recordState(tx, at, targetId);
   if (expectedDraftVersion !== undefined) checkVersion(state.draftVersion, expectedDraftVersion);
   const { template, retiredIds } = patientPresentation(tx, at, targetId);

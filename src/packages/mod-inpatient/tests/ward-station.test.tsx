@@ -31,3 +31,30 @@ it('opens the real Chinese workbench and protects ward bed assignment behind hum
   expect(screen.queryByRole('button', { name: '签发手术申请' })).toBeNull();
   cleanup(); client.clear();
 }, false, { CLINMESH_PORT: '51964' }), 30_000);
+
+it('registers the second case selected in the queue and preserves that encounter when the nurse takes over', () => withNodeWorkspace(async origin => {
+  const transport = globalThis.fetch;
+  const ward = await wardClient((path, init) => transport(origin + path, init));
+  const first = await ward.admit('赵德明');
+  vi.stubGlobal('matchMedia', () => Object.assign(new EventTarget(), { matches: true }));
+  vi.stubGlobal('fetch', (path: string, init?: RequestInit) => transport(origin + path, { ...init, headers: { ...init?.headers, cookie: ward.cookie } }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const human = userEvent.setup();
+  render(<QueryClientProvider client={client}><ThemeFontProvider><App/></ThemeFontProvider></QueryClientProvider>);
+  await screen.findByRole('button', { name: '岗位 · 挂号分诊岗' });
+  if (!screen.queryByRole('button', { name: '住院登记 · 周秀兰' })) await human.click(screen.getByRole('button', { name: '病例队列' }));
+  await human.click(await screen.findByRole('button', { name: '住院登记 · 周秀兰' }));
+  expect((await screen.findByRole('combobox', { name: '待住院患者' })).textContent).toContain('周秀兰');
+  const register = screen.getByRole('button', { name: '办理直接入院' });
+  expect(register.getAttribute('data-agent-confirm')).toContain('周秀兰');
+  await human.click(register);
+  await waitFor(() => expect(screen.getByRole('combobox', { name: '住院患者' }).textContent).toContain('周秀兰'));
+  const agent = createClinMeshUiAgent();
+  expect((await agent.act({ steps: [{ ref: '岗位 · 挂号分诊岗', action: 'press', args: ['病房护士'] }] })).ok).toBe(true);
+  const assign = await screen.findByRole('button', { name: '确认分床或转床' });
+  expect(assign.getAttribute('data-agent-confirm')).toMatch(/周秀兰.*心内一病区/);
+  await human.click(assign);
+  await waitFor(() => expect(screen.getByRole('combobox', { name: '住院患者' }).textContent).toContain('周秀兰 · heart-01'));
+  expect(await ward.get(`/api/his/ward/${first}`)).toMatchObject({ status: 'registered', bed: null });
+  cleanup(); client.clear();
+}, false, { CLINMESH_PORT: '51964' }), 30_000);

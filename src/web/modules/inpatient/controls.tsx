@@ -11,12 +11,14 @@ export function Choice({ label, value, options, change }: { label: string; value
   return <Field label={label}><Select value={value || null} options={options} onValueChange={value => { if (value) change(value); }}/></Field>;
 }
 export function Entry({ label, value, change }: { label: string; value: string; change(value: string): void }) { return <Field label={label}><Input value={value} onValueChange={change}/></Field>; }
-export function Action({ commands, name, label, targetId, version, fields, disabled = false, done }: { commands: Commands; name: string; label: string; targetId: string; version: number; fields?: Record<string, unknown>; disabled?: boolean; done?(receipt: unknown): void }) {
+export function Action({ commands, name, label, confirmation = label, targetId, version, fields, disabled = false, done }: { commands: Commands; name: string; label: string; confirmation?: string; targetId: string; version: number; fields?: Record<string, unknown>; disabled?: boolean; done?(receipt: unknown): void }) {
   if (!commands.allowed(name)) return null;
-  return <ConfirmActionButton confirmation={label} disabled={commands.busy || disabled} onClick={() => { void commands.run({ name, targetId, version, fields }).then(done, () => {}); }}>{label}</ConfirmActionButton>;
+  return <ConfirmActionButton confirmation={confirmation} disabled={commands.busy || disabled} onClick={() => { void commands.run({ name, targetId, version, fields }).then(done, () => {}); }}>{label}</ConfirmActionButton>;
 }
 export function WardAction({ panel, name, ...props }: Omit<Parameters<typeof Action>[0], 'commands' | 'targetId' | 'version'> & { panel: StageProps }) {
-  return <Action {...props} commands={panel} name={`ward.${name}`} targetId={panel.ward.encounterId} version={panel.ward.version}/>;
+  const wardName = panel.directory.organization.wards.find(row => row.id === panel.ward.ward)?.name[panel.language] ?? panel.ward.ward;
+  const subject = `${panel.ward.patient} · ${wardName} · ${panel.ward.encounterId.slice(-6)}`;
+  return <Action {...props} commands={panel} name={`ward.${name}`} confirmation={`${props.label} · ${subject}${props.fields?.bed ? ` · ${props.fields.bed}` : ''}`} targetId={panel.ward.encounterId} version={panel.ward.version}/>;
 }
 export const namedOptions = (values: string[]) => values.map(value => ({ value, label: value }));
 export const selected = (value: string, options: Option[]) => options.some(option => option.value === value) ? value : options[0]?.value ?? '';

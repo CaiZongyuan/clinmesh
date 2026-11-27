@@ -47,8 +47,6 @@ export function registerDischarge(catalog: OperationCatalog, billing?: WardBilli
     if (billing && !billing.readAdmissionFunds(ctx.tx, ctx.at, ctx.targetId).canClearBed) conflict('SETTLEMENT_REQUIRED');
     const held = occupancy(ctx.tx, ctx.at, admission) ?? conflict('BED_REQUIRED');
     ctx.tx.update(ctx.at, 'bed_occupancies', held.id, held.version, { released_at: ctx.virtualAt });
-    const encounter = requireEncounter(ctx.tx, ctx.at, ctx.targetId);
-    ctx.tx.update(ctx.at, 'encounters', encounter.id, encounter.version, { status: 'completed' });
     return advance(ctx, admission, 'cleared');
   });
   catalog.command(route('chart.submit', 'admit'), frontPage.shape, receipt, (ctx, fields) => {
@@ -71,6 +69,7 @@ export function registerDischarge(catalog: OperationCatalog, billing?: WardBilli
   });
   catalog.command(route('chart.archive', 'code-chart'), { revision: z.int().positive() }, receipt.extend({ archiveId: id }), (ctx, { revision }) => {
     const admission = mutateAdmission(ctx, ['cleared']);
+    if (requireEncounter(ctx.tx, ctx.at, ctx.targetId).status !== 'completed' || !ctx.tx.list(ctx.at, 'clinical_record_revisions', { encounter_id: ctx.targetId }).length) conflict('CLINICAL_COMPLETION_REQUIRED');
     const latest = latestPage(ctx, admission, revision);
     const review = ctx.tx.list(ctx.at, 'ward_coding_reviews', { revision_id: latest.id })[0] ?? conflict('CODING_REVIEW_REQUIRED');
     const snapshot = commonView(ctx.tx, ctx.at, ctx.targetId, billing);

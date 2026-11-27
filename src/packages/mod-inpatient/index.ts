@@ -29,6 +29,7 @@ export function createInpatientModule(billing?: WardBilling): ClinMeshModule<Ope
       const [admission] = tx.list(at, 'inpatient_admissions', { encounter_id: write.encounterId });
       if (!admission) return;
       if (tx.list(at, 'medical_record_archives', { admission_id: admission.id }).length) conflict('CHART_ARCHIVED');
+      if (admission.status === 'cleared' && (write.kind === 'record' || write.kind === 'complete')) return;
       if (write.kind === 'complete' || !['admitted', 'discharge-pending'].includes(admission.status)) conflict('ADMISSION_STATE_CONFLICT');
       if (write.kind === 'diagnose') conflict('ADMISSION_POA_REQUIRED');
       if (write.kind === 'accept-investigation' && !tx.list(at, 'ward_specimen_dispatches', { order_id: write.orderId }).length) conflict('WARD_DISPATCH_REQUIRED');

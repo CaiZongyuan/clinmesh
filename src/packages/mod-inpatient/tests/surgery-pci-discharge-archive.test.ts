@@ -7,6 +7,7 @@ import { createApp } from '../../../server/app';
 import { createWorkspaceApp } from '../../../server/workspace';
 import { createNodeSqliteStore } from '../../store';
 import { createInpatientModule } from '../index';
+import { encounterViewSchema } from '../../clinical-core';
 
 async function pciJourney(request: Parameters<typeof wardClient>[0]) {
   const ward = await wardClient(request);
@@ -71,8 +72,18 @@ async function pciJourney(request: Parameters<typeof wardClient>[0]) {
   await funds('inpatient.discharge.settle', { commitToken: settlement.commitToken });
   await ward.role('cardiologist'); await expect(act('discharge.recall', { reason: 'Late recall' })).rejects.toThrow('SETTLEMENT_LOCKED');
   await ward.role('ward-nurse'); await act('discharge.clear');
+  expect(await read()).toMatchObject({ status: 'cleared', bed: null, clinical: 'active' });
   await ward.role('cardiologist'); await act('chart.submit', { summary: 'Intervention concluded', disposition: 'Home', followUp: 'Cardiac clinic' });
-  await ward.role('records-coder'); await act('chart.review', { revision: 1, coding: 'Primary diagnosis and procedures checked' }); await act('chart.archive', { revision: 1 });
+  await ward.role('records-coder'); await act('chart.review', { revision: 1, coding: 'Primary diagnosis and procedures checked' });
+  await expect(act('chart.archive', { revision: 1 })).rejects.toThrow('CLINICAL_COMPLETION_REQUIRED');
+  await ward.role('cardiologist');
+  const visit = encounterViewSchema.parse(await ward.get(`/api/his/encounters/${encounter}`));
+  await expect(ward.send('encounter.complete', encounter, visit.version)).rejects.toThrow('COMPLETION_BLOCKED');
+  const fields = Object.fromEntries(visit.template.filter(field => field.required).map(field => [field.id, `Reviewed ${field.id} for PCI discharge`]));
+  await ward.send('record.draft', encounter, visit.version, { fields, expectedDraftVersion: visit.draftVersion });
+  await ward.send('record.sign', encounter, visit.version + 1);
+  await ward.send('encounter.complete', encounter, visit.version + 2);
+  await ward.role('records-coder'); await act('chart.archive', { revision: 1 });
   expect(await read()).toMatchObject({ status: 'cleared', bed: null, clinical: 'completed', chart: { state: 'archived', archive: { patient: '赵德明', revision: 1 } } });
   await ward.role('cardiologist'); await expect(act('order.request-stop', { orderIds: [prescription.orderId] })).rejects.toThrow('CHART_ARCHIVED');
 }

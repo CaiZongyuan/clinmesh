@@ -10,15 +10,15 @@ export function requireEncounter(reader: StoreReader, at: StoreScope, id: string
   return encounter;
 }
 
-export function editEncounter(context: CommandContext, status: 'active' | 'completed' = 'active', beforeUpdate?: () => void) {
+export function editEncounter(context: CommandContext, intent: 'active' | 'record' | 'completed' = 'active', beforeUpdate?: () => void) {
   const { tx, at, actor, targetId, expectedVersion } = context;
   const encounter = requireEncounter(tx, at, targetId);
   if (encounter.status === 'completed') throw new CoreError(409, 'ENCOUNTER_COMPLETED');
-  context.guardEncounter?.({ encounterId: targetId, kind: status === 'completed' ? 'complete' : 'clinical' });
+  context.guardEncounter?.({ encounterId: targetId, kind: intent === 'completed' ? 'complete' : intent === 'record' ? 'record' : 'clinical' });
   if (encounter.active_practitioner_role !== actor.role.id) throw new CoreError(403, 'RESPONSIBLE_ROLE_REQUIRED');
   checkVersion(encounter.version, expectedVersion);
   beforeUpdate?.();
-  tx.update(at, 'encounters', targetId, expectedVersion, { status });
+  tx.update(at, 'encounters', targetId, expectedVersion, { status: intent === 'completed' ? 'completed' : 'active' });
   return expectedVersion + 1;
 }
 
