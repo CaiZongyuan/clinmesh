@@ -159,6 +159,8 @@ it('discovers the workbench, edits real drafts, and requires human approval for 
     await screen.findByRole('tab', { name: 'Debrief' }); await set('Clinical views', 'Debrief'); await screen.findByRole('heading', { name: 'Case debrief' });
     expect((await agent.act({ steps: [{ ref: 'Role · Family clinician', action: 'press', args: ['Clinic administrator'] }] })).ok).toBe(true);
     await screen.findByRole('button', { name: 'Role · Clinic administrator' });
+    expect(screen.queryByRole('tab', { name: 'Debrief' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Case debrief' })).toBeNull();
     await human.click(screen.getByRole('button', { name: 'Teaching outpatient clinic' }));
     await screen.findByRole('button', { name: 'Review epoch reset' }); discover();
     await set('Hospital data pack', 'Teaching cardiovascular centre');

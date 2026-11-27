@@ -1,5 +1,6 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
+import { receiptOperationId } from '../../operation-catalog';
 import { checkVersion, commandEnvelope, permits, type Actor } from './commands';
 import { CoreError, sha256, type Ticket } from './visitor-gate';
 import type { OperationCatalog } from './operation-catalog';
@@ -14,7 +15,7 @@ type Dependencies = { sign(ticket: Ticket): Promise<string>; modules: ModuleRegi
 
 export function registerPlatformOperations(catalog: OperationCatalog, { sign, modules }: Dependencies) {
   const receiptQuery = commandEnvelope.pick({ epoch: true, idempotencyKey: true });
-  catalog.query({ name: 'command.receipt.get', path: '/api/commands/receipt', access: {}, queryFields: receiptQuery.shape }, receiptQuery.extend({ operation: z.string(), status: z.literal('applied'), recordedAt: z.iso.datetime(), result: z.json() }), ({ reader, actor, params }) => {
+  catalog.query({ name: receiptOperationId, path: '/api/commands/receipt', access: {}, queryFields: receiptQuery.shape }, receiptQuery.extend({ operation: z.string(), status: z.literal('applied'), recordedAt: z.iso.datetime(), result: z.json() }), ({ reader, actor, params }) => {
     const input = receiptQuery.parse(params);
     const receipt = input.epoch === actor.at.epoch && reader.findCommandReceipt(actor.at, input.idempotencyKey);
     const audit = receipt && reader.get(actor.at, 'audit_events', receipt.id);

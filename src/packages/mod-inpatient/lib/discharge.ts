@@ -2,7 +2,7 @@ import { v7 } from 'uuid';
 import { z } from 'zod';
 import { diagnosisState, reviewedDiagnosisDraft } from '../../clinical-core';
 import { requireEncounter } from '../../patient-visit';
-import { checkVersion, type CommandContext, type OperationCatalog } from '../../platform';
+import { checkVersion, clinicalOverrideInput, type CommandContext, type OperationCatalog } from '../../platform';
 import { canonicalJson, type EntityRow, type StoreReader, type StoreScope } from '../../store';
 import { blockers, pendingTransfer } from './admissions';
 import { activeMedicationIds, latestDiagnoses } from './orders';
@@ -53,7 +53,7 @@ function dischargeReady(ctx: CommandContext, admission: Admission, departing: bo
   return surgeries;
 }
 export function registerDischarge(catalog: OperationCatalog, billing?: WardBilling) {
-  catalog.command(route('discharge.issue', 'admit'), { clinicalOverride: z.unknown().optional() }, receipt, (ctx, { clinicalOverride }) => {
+  catalog.command(route('discharge.issue', 'admit'), { clinicalOverride: clinicalOverrideInput }, receipt, (ctx, { clinicalOverride }) => {
     const admission = mutateAdmission(ctx, ['admitted'], 'doctor');
     const surgeries = dischargeReady(ctx, admission, false);
     quality(ctx, { kind: 'discharge', encounterId: ctx.targetId, completedPci: surgeries.some(surgery => surgery.stages.some(stage => stage.kind === 'pci' && stage.executionId)), activeMedicationIds: activeMedicationIds(ctx.tx, ctx.at, ctx.targetId, true) }, clinicalOverride);

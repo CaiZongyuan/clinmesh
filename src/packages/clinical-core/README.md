@@ -19,7 +19,7 @@
 | `diagnosis.draft`、`diagnosis.confirm` | 就诊版本 | 草稿使用 `diagnoses` 数组，每项含 `codeSystem`、`code` 和 `primary` |
 | `encounter.complete` | 就诊版本 | 服务端在写事务内重验所有已启用门禁 |
 
-管理员签发令牌时仅首次响应含 `token`。以 `Authorization: Bearer …` 使用。重置会关闭旧 Epoch，旧令牌随之失效。管理员可按 Epoch 查询 `/api/workspace/audit/:id`。`GET /api/his/encounters/:id/debrief` 只在完诊后开放。普通的列表、详情和问诊均使用受控投影。
+管理员签发令牌时仅首次响应含 `token`。以 `Authorization: Bearer …` 使用。高风险令牌写请求须显式携带 `X-ClinMesh-Confirm`，值为当前操作 ID。令牌可按原 Epoch 和幂等键查询自己当前仍获授权的写回执。旧版回执缺少与操作者的可靠关联时，查询返回 `RECEIPT_NOT_FOUND`。重置会关闭旧 Epoch，旧令牌随之失效。管理员可按 Epoch 查询 `/api/workspace/audit/:id`。完诊后的负责医生可通过浏览器访问 `/api/his/encounters/:id/debrief`。普通的列表、详情和问诊均使用受控投影。
 
 组合根通过 `ClinMeshModule<OperationCatalog>` 传入模块。同一个模块通过 `registerOperations` 注册 Zod 查询与事务 Command，通过 `completion` 增加完诊条件，通过 `midnight` 处理机构当地的跨日事件，通过 `workbenchTabs` 声明页签。服务端取已装载模块与当前包声明的交集。新建和重置 Workspace 时，服务端在写事务内按注册顺序等待各模块的 `initializeEpoch` 完成，失败时整笔回滚。`registerRoutes` 供带访客门禁的只读 GET 页面使用。业务读写通过 Operation Catalog 获取角色检查、Zod 校验、CAS、回执和审计。工作台的 `App` 接受以页签 ID 为键的 `panels`，组件消费与 UI 相同的受控上下文。
 

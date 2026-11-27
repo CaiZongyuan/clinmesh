@@ -2,7 +2,7 @@ import { v7 } from 'uuid';
 import { z } from 'zod';
 import { requireEncounter, startEncounter } from '../../patient-visit';
 import { checkVersion, CoreError, type CommandContext, type OperationCatalog } from '../../platform';
-import type { StoreReader, StoreScope, StoreTx } from '../../store';
+import { clinicalCaseIdSchema, type StoreReader, type StoreScope, type StoreTx } from '../../store';
 import { advance, clinician, conflict, id, mutateAdmission, occupancy, organization, receipt, roleOnWard, route, text, times, wardDepartment, type Admission } from './ward';
 
 export function registerAdmission(tx: StoreTx, at: StoreScope, encounterId: string, ward: string, virtualAt: string, recordedAt: string) {
@@ -46,7 +46,7 @@ export function blockers(reader: StoreReader, at: StoreScope, admission: Admissi
 }
 export function registerAdmissions(catalog: OperationCatalog) {
   const registered = receipt.extend({ admissionId: id, encounterId: id });
-  catalog.command(route('register', 'register', 'admit'), { ward: text }, registered, (ctx, input) => { checkVersion(0, ctx.expectedVersion); return register(ctx, ctx.targetId, input.ward); });
+  catalog.command({ ...route('register', 'register', 'admit'), pathParams: { id: clinicalCaseIdSchema } }, { ward: text }, registered, (ctx, input) => { checkVersion(0, ctx.expectedVersion); return register(ctx, ctx.targetId, input.ward); });
   catalog.command(route('certificate.issue', 'sign'), { ward: text, reason: text }, receipt.extend({ certificateId: id }), (ctx, input) => {
     const encounter = requireEncounter(ctx.tx, ctx.at, ctx.targetId);
     if (encounter.encounter_class !== 'outpatient' || encounter.status !== 'active' || encounter.active_practitioner_role !== ctx.actor.role.id) conflict('OUTPATIENT_REFERRAL_REQUIRED');

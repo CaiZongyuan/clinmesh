@@ -156,7 +156,7 @@ function PatientHeader({ encounter, language }: Pick<Props, 'encounter' | 'langu
 
 function Debrief({ workspace, encounter, language }: Props) {
   const text = words(language);
-  const query = useQuery({ queryKey: scopeKey(workspace, encounter.id, 'debrief'), queryFn: ({ signal }) => api(`/api/his/encounters/${encounter.id}/debrief`, debriefSchema, { signal }), staleTime: Infinity });
+  const query = useQuery({ queryKey: scopeKey(workspace, encounter.id, 'debrief', workspace.roleId), queryFn: ({ signal }) => api(`/api/his/encounters/${encounter.id}/debrief`, debriefSchema, { signal }), staleTime: Infinity });
   if (query.isError) return <p role="alert">{errorMessage(query.error, language)}</p>;
   if (!query.data) return <p role="status">{text('Opening debrief…', '正在打开复盘…')}</p>;
   const truth = query.data.caseTruth;
@@ -186,7 +186,7 @@ export function EncounterPanel(props: Props & { drafts?: EncounterDrafts }) {
     { value: 'diagnosis', label: text('Diagnoses', '诊断'), content: <DiagnosisEditor {...props} drafts={drafts}/> },
     ...props.workspace.tabs.flatMap(tab => { const Panel = props.panels?.[tab.id]; return Panel ? [{ value: tab.id, label: tab.label[props.language], content: <Panel {...props} drafts={drafts}/> }] : []; }),
   ];
-  if (props.encounter.status === 'completed') tabs.push({ value: 'debrief', label: text('Debrief', '复盘'), content: <Debrief {...props}/> });
+  if (props.encounter.status === 'completed' && props.encounter.responsibleRole === props.workspace.roleId) tabs.push({ value: 'debrief', label: text('Debrief', '复盘'), content: <Debrief {...props}/> });
   const clinical = <div className="encounter-panel"><PatientHeader {...props}/><Tabs label={text('Clinical views', '临床页签')} defaultValue="consultation" items={tabs}/><Complete {...props} drafts={drafts}/></div>;
   const binding = `${props.workspace.epoch}/${props.encounter.id}/${props.workspace.roleId}`;
   const workbench = allowed(props, 'record.draft') ? <ClinicianPanel key={binding} {...props} edited={drafts.getState().manuallyEdited}>{clinical}</ClinicianPanel> : clinical;

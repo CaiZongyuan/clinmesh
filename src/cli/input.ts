@@ -1,7 +1,7 @@
 import { open, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep, win32 } from 'node:path';
 import { z } from 'zod';
-import type { Operation } from '../packages/operation-catalog';
+import type { OperationDescription } from '../packages/operation-catalog';
 import { CliError, invalid } from './errors';
 
 export function parseArguments(argv: string[]) {
@@ -13,7 +13,7 @@ export function parseArguments(argv: string[]) {
     const match = /^--([a-z][a-zA-Z0-9-]*)(?:=(.*))?$/s.exec(word);
     if (!match || flags.has(match[1]!)) invalid('Use each named flag once.');
     const [, name, inline] = match;
-    if (name === 'yes' || name === 'json') {
+    if (name === 'yes' || name === 'json' || name === 'version') {
       if (inline !== undefined) invalid(`--${name} takes no value.`);
       flags.set(name, 'true');
     } else {
@@ -26,8 +26,9 @@ export function parseArguments(argv: string[]) {
   if (!['json', 'table'].includes(output) || (flags.has('json') && output !== 'json')) invalid('Choose --json or --output table.');
   const yes = flags.has('yes');
   const input = flags.get('input');
-  for (const flag of ['output', 'json', 'yes', 'input']) flags.delete(flag);
-  return { words, flags, output, yes, input };
+  const version = flags.has('version');
+  for (const flag of ['output', 'json', 'yes', 'input', 'version']) flags.delete(flag);
+  return { words, flags, output, yes, input, version };
 }
 
 const limit = 1024 * 1024;
@@ -63,23 +64,21 @@ async function workspaceInput(source: string) {
 }
 
 function scalar(schema: z.ZodType, text: string) {
-  const { type } = z.toJSONSchema(schema, { io: 'input' });
-  if (type === 'string') return text;
-  if (type === 'integer' || type === 'number') {
-    if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(text)) invalid('Expected a JSON number.');
-    return Number(text);
-  }
-  if (type === 'boolean' && ['true', 'false'].includes(text)) return text === 'true';
+  if (schema.safeParse(text).success) return text;
+  if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(text) && schema.safeParse(Number(text)).success) return Number(text);
+  if (['true', 'false'].includes(text) && schema.safeParse(text === 'true').success) return text === 'true';
   return invalid('Use typed scalar flags or supply structured fields with --input.');
 }
 
-export async function operationInput(operation: Operation, args: ReturnType<typeof parseArguments>) {
+export async function operationInput(operation: OperationDescription, args: ReturnType<typeof parseArguments>) {
   const fields = args.input === undefined ? {} : await workspaceInput(args.input);
-  const shape: z.ZodRawShape = operation.inputSchema.shape;
+  const schema = z.fromJSONSchema(operation.inputSchema);
+  if (!(schema instanceof z.ZodObject)) throw Error('Invalid catalog input contract');
+  const shape: z.ZodRawShape = schema.shape;
   for (const [flag, text] of args.flags) {
     const field = flag.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
     if (!Object.hasOwn(shape, field) || Object.hasOwn(fields, field)) invalid(`Unknown or repeated field --${flag}.`);
     fields[field] = scalar(shape[field] as z.ZodType, text);
   }
-  return fields;
+  return schema.parse(fields);
 }

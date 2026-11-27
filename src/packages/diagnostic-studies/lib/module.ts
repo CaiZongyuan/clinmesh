@@ -59,7 +59,7 @@ export function createStudyModule(definition: Definition, billing?: DiagnosticBi
           ...readDiagnosticOrder(reader, at, order, raw => { const { frames, ...text } = storedStudy.parse(raw); return { ...text, frameCount: frames.length }; }), priorSurgeryId: requestFor(reader, at, order.id)!.prior_surgery_id,
         })) };
       });
-      catalog.command({ name: `${kind}.issue`, path: `${base}/issue`, method: 'POST', access: sign }, { item: quote, priorSurgeryId: z.string().min(1).optional() }, z.object({ orderId: z.uuidv7(), version: z.int().positive() }), (context, { item, priorSurgeryId }) => {
+      catalog.command({ name: `${kind}.issue`, path: `${base}/issue`, method: 'POST', access: sign, expectedVersionFields: ['item.catalogVersion'] }, { item: quote, priorSurgeryId: z.string().min(1).optional() }, z.object({ orderId: z.uuidv7(), version: z.int().positive() }), (context, { item, priorSurgeryId }) => {
         const { tx, at, targetId, actor, virtualAt, recordedAt } = context;
         const version = editEncounter(context);
         const encounter = requireEncounter(tx, at, targetId);

@@ -1,14 +1,11 @@
 import { v7 } from 'uuid';
-import { z } from 'zod';
 import { medicationSchema } from '../../data-pack';
 import { completedWardProcedures } from '../../mod-inpatient';
-import { CoreError, type ClinicalQualityGate, type ClinicalQualityIntent } from '../../platform';
+import { CoreError, overrideSchema, type ClinicalQualityGate, type ClinicalQualityIntent } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
 import { catalogCoding, clinicalFacts, sameCoding, type ClinicalFacts, type LegacyEcg } from './facts';
 import { normalizeCreatinineMgDl } from './scores';
 
-export const overrideReasons = ['contraindication-or-bleeding-risk', 'outside-result-verified', 'follow-up-arranged', 'informed-refusal', 'specialist-judgment', 'emergency-priority'] as const;
-export const overrideSchema = z.strictObject({ reasonCode: z.enum(overrideReasons), note: z.string().trim().min(4).max(2000), ruleCodes: z.array(z.string().min(1)).nonempty().max(16) });
 export const drugDefinitions = (data: ClinicalFacts) => data.catalog.filter(row => row.kind === 'medications').map(row => ({ id: row.id, ...medicationSchema.parse(row.definition) }));
 type Medication = ReturnType<typeof drugDefinitions>[number];
 

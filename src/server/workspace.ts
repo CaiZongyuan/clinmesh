@@ -7,8 +7,8 @@ import { v7 } from 'uuid';
 import { z } from 'zod';
 import { installHospitalDataPack } from '../packages/data-pack';
 import { readCompletedDebrief } from '../packages/clinical-core';
-import { authorize, CoreError, createVisitorGate, resolveActor, type OperationCatalog, type ClinMeshModule, type Credential, type GateSettings } from '../packages/platform';
-import { createOperationCatalog } from '../composition/operation-catalog';
+import { authorize, CoreError, resolveActor, type OperationCatalog, type ClinMeshModule, type Credential, type GateSettings } from '../packages/platform';
+import { createOperationCatalog } from './operation-catalog';
 import { StoreVersionConflictError, type StorePort } from '../packages/store';
 import { BUILTIN_DATA_PACKS } from './builtin-data-packs';
 import { evaluateEncounter } from './evaluation';
@@ -25,7 +25,7 @@ type SocketConnection = { receive(data: unknown): void; close(): void };
 export type UpgradeSocket = (request: Request, connect: (socket: VoiceSocket) => SocketConnection, protocol?: string) => Response | Promise<Response>;
 export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment & { BAILIAN_TOKEN?: string } = {}, background?: (task: Promise<void>) => void, upgrade?: UpgradeSocket, evaluations?: EvaluationHost, connectVoice?: BailianConnect) {
   const app = new Hono<{ Bindings: { credential: Credential; entering: boolean; upgrade?: UpgradeSocket } }>();
-  const { catalog, registry } = createOperationCatalog(modules, { environment, sign: createVisitorGate(settings).sign, packs: () => Object.values(BUILTIN_DATA_PACKS) });
+  const { catalog, registry } = createOperationCatalog(modules, settings, environment);
   app.onError(handleError);
   if (modules.some(module => module.id === voiceModule.id)) app.get('/api/voice/session', async context => {
     const binding = voiceBinding.parse(context.req.query());
@@ -98,7 +98,7 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     const query = context.req.queries();
     if (Object.entries(query).some(([key, values]) => !entry.contract.queryFields.includes(key) || values.length !== 1)) throw new CoreError(400, 'INVALID_INPUT');
     const params = { ...context.req.param(), ...context.req.query() };
-    if (entry.method === 'GET') entry.contract.inputSchema.parse(params);
+    entry.contract.paramsSchema.parse(params);
     const targetId = context.req.param('id') ?? context.env.credential.ticket.workspaceId;
     const credential = context.env.credential;
     const replyOperation = ['consultation.question', 'consultation.retry', 'consultation.stop'].includes(entry.name);

@@ -5,9 +5,12 @@
 3. 依赖单向流动：可选 Clinical Modules → Mini HIS Core → Store / Platform Ports。核心不导入 `mod-*`，Web 与服务器不互相导入，也不允许循环。
 4. 组合根选择 `ClinMeshModule`；业务模块通过注册钩子提供路由和操作，不以副作用安装自身。两个运行时共享同一个 Hono 工厂。
 
+操作或 schema 变更后运行 `pnpm generate:catalog`，将真实注册的公开契约投影到 CLI。路由与契约一致性测试会比对当前 Hono 路由、完整离线清单和运行时技能示例。
+
 | 包 | 职责 |
 | --- | --- |
-| [platform](platform/index.ts) | Visitor Gate、单角色 Capability Token、Operation Catalog、Command 事务、Virtual Time 和模块契约 |
+| [operation-catalog](operation-catalog/index.ts) | 纯 TypeScript 操作契约、离线 schema 与类型化 HTTP 请求投影 |
+| [platform](platform/index.ts) | Visitor Gate、单角色 Capability Token、操作执行与回执、Command 事务、Virtual Time 和模块契约 |
 | [patient-visit](patient-visit/index.ts) | 固定病例开诊、患者身份与分诊快照、顺序问诊和单待答回复 |
 | [clinical-core](clinical-core/index.ts) | 模板病历、多编码诊断、不可变修订、完诊门禁与复盘。参见[核心契约](clinical-core/README.md) |
 | [mod-lab](mod-lab/index.ts) | 检验、ECG 与 TTE 的确定性报告、版本修订和医生已阅。参见[工作台操作与接口](mod-lab/README.md) |

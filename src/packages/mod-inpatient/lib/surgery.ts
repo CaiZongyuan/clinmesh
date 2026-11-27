@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { medicationSchema, type Coding } from '../../data-pack';
 import { availableStock, takeStock } from '../../mod-pharmacy';
 import { requireEncounter } from '../../patient-visit';
-import { checkVersion, sha256, type CommandContext, type OperationCatalog } from '../../platform';
+import { checkVersion, clinicalOverrideInput, sha256, type CommandContext, type OperationCatalog } from '../../platform';
 import { canonicalJson, prescriptionDirectionsSchema, type StoreReader, type StoreScope } from '../../store';
 import { itemFor, localDay, policy } from './calendar';
 import { latestDiagnoses, validateMedication, wardOrders } from './orders';
@@ -107,7 +107,7 @@ function complete(ctx: CommandContext, surgery: Current, note: string | undefine
   return { ...advance(ctx, surgery.admission), executionId };
 }
 export function registerSurgery(catalog: OperationCatalog, billing?: WardBilling) {
-  catalog.command(route('surgery.request', 'schedule-procedure'), { ...notice.shape, clinicalOverride: z.unknown().optional() }, receipt.extend({ requestId: id }), (ctx, { clinicalOverride, ...input }) => {
+  catalog.command(route('surgery.request', 'schedule-procedure'), { ...notice.shape, clinicalOverride: clinicalOverrideInput }, receipt.extend({ requestId: id }), (ctx, { clinicalOverride, ...input }) => {
     const admission = mutateAdmission(ctx, ['admitted'], 'doctor');
     const { binding } = procedure(ctx.tx, ctx.at, input.procedureId);
     const org = organization(ctx.tx, ctx.at);
@@ -169,7 +169,7 @@ export function registerSurgery(catalog: OperationCatalog, billing?: WardBilling
     correctSupply(ctx, surgery.stage, input.useId, input.quantity, input.note, billing);
     return advance(ctx, surgery.admission);
   });
-  catalog.command(route('surgery.record-medication', 'schedule-procedure'), { ...requestField, ...medication.shape, clinicalOverride: z.unknown().optional() }, receipt.extend({ medicationOrderId: id }), (ctx, input) => {
+  catalog.command(route('surgery.record-medication', 'schedule-procedure'), { ...requestField, ...medication.shape, clinicalOverride: clinicalOverrideInput }, receipt.extend({ medicationOrderId: id }), (ctx, input) => {
     const surgery = inProgress(ctx, input.requestId);
     const medicationOrderId = recordMedication(ctx, surgery, input, input.clinicalOverride, billing);
     return { ...advance(ctx, surgery.admission), medicationOrderId };
@@ -188,7 +188,7 @@ export function registerSurgery(catalog: OperationCatalog, billing?: WardBilling
     return advance(ctx, surgery.admission);
   });
   const executed = receipt.extend({ executionId: id });
-  catalog.command(route('surgery.execute', 'schedule-procedure'), { ...requestField, materials: materials.default([]), medications: z.array(medication).max(12).default([]), note: text.optional(), clinicalOverride: z.unknown().optional() }, executed, (ctx, input) => {
+  catalog.command(route('surgery.execute', 'schedule-procedure'), { ...requestField, materials: materials.default([]), medications: z.array(medication).max(12).default([]), note: text.optional(), clinicalOverride: clinicalOverrideInput }, executed, (ctx, input) => {
     const surgery = current(ctx, input.requestId);
     if (surgery.request.status !== 'ready') conflict('SURGERY_NOT_READY');
     markStarted(ctx, surgery);
@@ -202,7 +202,7 @@ export function registerSurgery(catalog: OperationCatalog, billing?: WardBilling
     if ((await preview(ctx, surgery)).fingerprint !== input.fingerprint) conflict('STALE_SURGERY_PREVIEW');
     return complete(ctx, surgery, input.note, billing);
   });
-  catalog.command(route('surgery.convert-to-pci', 'schedule-procedure'), { ...requestField, procedureId: id, materials: materials.default([]), clinicalOverride: z.unknown().optional() }, receipt, (ctx, input) => {
+  catalog.command(route('surgery.convert-to-pci', 'schedule-procedure'), { ...requestField, procedureId: id, materials: materials.default([]), clinicalOverride: clinicalOverrideInput }, receipt, (ctx, input) => {
     const surgery = current(ctx, input.requestId);
     const result = report(ctx, surgery);
     if (surgery.request.status !== 'standby-pci' || !result?.observations.length || !surgery.stage.completed_execution_id || procedure(ctx.tx, ctx.at, input.procedureId).binding?.kind !== 'pci') conflict('PCI_CONVERSION_UNAVAILABLE');

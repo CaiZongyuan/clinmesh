@@ -1,3 +1,10 @@
+import { z } from 'zod';
+import { compatibleInput } from '../../operation-catalog';
+
+export const overrideReasons = ['contraindication-or-bleeding-risk', 'outside-result-verified', 'follow-up-arranged', 'informed-refusal', 'specialist-judgment', 'emergency-priority'] as const;
+export const overrideSchema = z.strictObject({ reasonCode: z.enum(overrideReasons), note: z.string().trim().min(4).max(2000), ruleCodes: z.array(z.string().min(1)).nonempty().max(16) });
+export const clinicalOverrideInput = compatibleInput(z.unknown().optional(), overrideSchema.optional());
+
 type MedicationIntent = { codeSystem: string; code: string; dose: number; timesPerDay: number };
 export type ClinicalQualityIntent = { encounterId: string } & (
   | { kind: 'medication'; lines: readonly MedicationIntent[]; activeMedicationIds?: readonly string[] }

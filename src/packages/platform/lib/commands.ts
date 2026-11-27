@@ -1,6 +1,6 @@
 import { v7 } from 'uuid';
 import { z } from 'zod';
-import type { OperationRoute } from '../../operation-catalog';
+import { receiptOperationId, type OperationRoute } from '../../operation-catalog';
 import { canonicalJson, type StorePort, type StoreReader, type StoreScope, type StoreTx } from '../../store';
 import { CoreError, sha256, type Credential } from './visitor-gate';
 import type { ClinicalQualityIntent } from './clinical-quality';
@@ -37,7 +37,7 @@ export function resolveActor(reader: StoreReader, credential: Credential, now: s
 
 export function permits(actor: Actor, route: Pick<Route, 'name' | 'access' | 'moduleId'>) {
   return (!route.moduleId || actor.enabledModules.includes(route.moduleId)) && (!route.access.visitorOnly || actor.kind === 'visitor') &&
-    (!actor.allowedOperations || actor.allowedOperations.includes(route.name)) && (!route.access.capabilities || route.access.capabilities.some(capability => actor.role.capabilities.includes(capability)));
+    (!actor.allowedOperations || route.name === receiptOperationId || actor.allowedOperations.includes(route.name)) && (!route.access.capabilities || route.access.capabilities.some(capability => actor.role.capabilities.includes(capability)));
 }
 export function authorize(actor: Actor, route: Pick<Route, 'name' | 'access' | 'moduleId'>) {
   if (route.moduleId && !actor.enabledModules.includes(route.moduleId)) throw new CoreError(404, 'MODULE_DISABLED');

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineOperation, type Operation } from '../../operation-catalog';
-import type { StorePort, StoreReader } from '../../store';
+import { entityIdSchema, type StorePort, type StoreReader } from '../../store';
 import { authorize, commandEnvelope, executeCommand, resolveActor, type Actor, type ClinicalQualityGate, type CommandContext, type EncounterWrite, type Route } from './commands';
 import { CoreError, type Credential } from './visitor-gate';
 
@@ -34,7 +34,7 @@ export class OperationCatalog {
   query<Output extends Result>(route: Omit<Route, 'method'> & { assistantRead?: 'encounter'; queryFields?: z.ZodRawShape }, output: z.ZodType<Output>, read: (context: ReadContext) => Output) {
     route = { ...route, moduleId: this.moduleId ?? route.moduleId };
     const available = this.moduleAvailable;
-    const contract = defineOperation({ ...route, method: 'GET' }, z.strictObject({}), output, route.queryFields);
+    const contract = defineOperation({ ...route, method: 'GET' }, z.strictObject({}), output, entityIdSchema, route.queryFields);
     this.add({ ...route, method: 'GET', contract, invoke: ({ store, credential, targetId, params }) => store.read(reader => {
       const actor = resolveActor(reader, credential, new Date().toISOString());
       authorize(actor, route);
@@ -51,12 +51,13 @@ export class OperationCatalog {
     const gate = this.clinicalQuality;
     const guardEncounter = this.guardEncounter;
     const available = this.moduleAvailable;
-    const contract = defineOperation(route, input, disclosure ? z.union([disclosure.firstOutput, output]) : output);
-    this.add({ ...route, contract, async invoke({ store, credential, targetId, body, providerHeaders, confirmedOperation }) {
+    const contract = defineOperation(route, input, disclosure ? z.union([disclosure.firstOutput, output]) : output, entityIdSchema);
+    this.add({ ...route, contract, async invoke({ store, credential, targetId, params, body, providerHeaders, confirmedOperation }) {
       const actor = await store.read(reader => resolveActor(reader, credential, new Date().toISOString()));
       authorize(actor, route);
       if (actor.kind === 'capability' && contract.risk === 'high-risk-write' && confirmedOperation !== contract.id) throw new CoreError(403, 'CONFIRMATION_REQUIRED');
       const parsed = input.parse(await body());
+      if (actor.kind === 'capability') contract.inputSchema.parse({ ...parsed, ...(contract.pathFields.includes('id') && { id: targetId }), ...params });
       const args = parsed as z.output<z.ZodObject<Fields>>;
       const prepared = await disclosure?.prepare(actor, args);
       let firstResponse: Result | undefined;

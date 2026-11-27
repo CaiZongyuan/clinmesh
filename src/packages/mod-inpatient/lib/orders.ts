@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { medicationSchema, pharmacyRulesSchema, readClinicalCase } from '../../data-pack';
 import { availableStock, checkPrescription, takeStock } from '../../mod-pharmacy';
 import { requireEncounter } from '../../patient-visit';
-import { checkVersion, type CommandContext, type OperationCatalog } from '../../platform';
+import { checkVersion, clinicalOverrideInput, type CommandContext, type OperationCatalog } from '../../platform';
 import type { EntityRow, StoreReader, StoreScope } from '../../store';
 import { expand, localDay, policy, task } from './calendar';
 import { advance, chargeOrder, conflict, id, mutateAdmission, openOrder, receipt, route, text, times, wardDepartment, type WardBilling } from './ward';
@@ -78,7 +78,7 @@ export function registerOrders(catalog: OperationCatalog, billing?: WardBilling)
     ctx.tx.update(ctx.at, 'encounters', encounter.id, encounter.version, { status: encounter.status });
     return advance(ctx, admission);
   });
-  catalog.command(route('order.sign', 'admit'), { itemId: id, duration: z.enum(['long', 'temporary']), frequency: text, dose: z.number().positive().optional(), route: text.optional(), surgeryExecutionId: id.optional(), clinicalOverride: z.unknown().optional() }, receipt.extend({ orderId: id }), (ctx, input) => {
+  catalog.command(route('order.sign', 'admit'), { itemId: id, duration: z.enum(['long', 'temporary']), frequency: text, dose: z.number().positive().optional(), route: text.optional(), surgeryExecutionId: id.optional(), clinicalOverride: clinicalOverrideInput }, receipt.extend({ orderId: id }), (ctx, input) => {
     const admission = mutateAdmission(ctx, ['admitted'], 'doctor');
     if (!latestDiagnoses(ctx.tx, ctx.at, ctx.targetId).some(item => item.poa)) conflict('DIAGNOSIS_UNCONFIRMED');
     const settings = policy(ctx.tx, ctx.at).settings;
