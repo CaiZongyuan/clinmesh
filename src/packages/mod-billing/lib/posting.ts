@@ -3,7 +3,7 @@ import type { PostingSource } from './contracts';
 
 function fulfilledOrder(reader: StoreReader, at: StoreScope, order: EntityRow<'clinical_orders'>) {
   if (['completed', 'dispensed', 'reported'].includes(order.status)) return true;
-  if (reader.list(at, 'order_executions', { order_id: order.id }).length || reader.list(at, 'diagnostic_reports', { order_id: order.id }).length) return true;
+  if (reader.list(at, 'order_executions', { order_id: order.id, outcome: 'completed' }).length || reader.list(at, 'diagnostic_reports', { order_id: order.id }).length) return true;
   return reader.list(at, 'prescription_orders', { order_id: order.id }).some(member => reader.list(at, 'dispenses', { prescription_order_id: member.id }).length);
 }
 

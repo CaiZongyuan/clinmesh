@@ -87,8 +87,12 @@ it('keeps a saved draft separate from formal orders and isolates catalog conflic
   expect(JSON.stringify(saved)).not.toMatch(/Decimal transcription|hiddenHistory|follow-up|matchKey/);
 });
 
-it('publishes only released versions, retains old acknowledgements and rechecks completion in the write transaction', async () => {
-  const { call, encounterId, view, issue, start, role, signRecord, confirmDiagnosis } = await clinic();
+it.each(['before', 'after'] as const)('issues one repeat %s the first order is corrected and requires both latest reports to be reviewed', async timing => {
+  const { call, encounterId, view, issue, start, role, signRecord, confirmDiagnosis } = await clinic(pack => {
+    const truth = pack.cases.find(patient => patient.caseId === 'g02')!.caseTruth;
+    const initial = truth.results.find(result => result.service.code === 'hs-tni' && result.revision === 1)!;
+    truth.results.push({ ...initial, stage: 'repeat', observations: [{ ...initial.observations[0]!, value: 45 }] });
+  });
   const [order] = await issue('hs-tni');
   const orderId = order!.id;
   await expect(call('lab.start', orderId, 1)).rejects.toThrow('INVALID_ORDER_STATE');
@@ -99,16 +103,22 @@ it('publishes only released versions, retains old acknowledgements and rechecks 
   expect(JSON.stringify(await view())).not.toContain('Decimal transcription');
   await expect(call('lab.amend', first.id, 4, { reportVersion: 1 })).rejects.toThrow('ROLE_FORBIDDEN');
   await call('lab.acknowledge', first.id, 4, { reportVersion: 1 });
-  const [repeat] = await issue('hs-tni');
+  let repeat = timing === 'before' ? (await issue('hs-tni'))[0] : undefined;
   await role(1, 'coordinator');
   await call('lab.amend', first.id, 5, { reportVersion: 1 });
   const revised = (await view()).orders[0]!;
   const latest = revised.reports[1]!;
-  expect((await view()).orders.find(order => order.id === repeat!.id)?.status).toBe('issued');
   expect(revised.status).toBe('reported');
   expect(revised.reports[0]).toMatchObject({ ...first, acknowledged: { role: 'family-clinician' } });
   expect(latest).toMatchObject({ previousId: first.id, version: 2, acknowledged: null, observations: [{ value: 120, interpretation: 'high', critical: true }] });
   await role(2, 'family-clinician');
+  repeat ??= (await issue('hs-tni'))[0];
+  expect(repeat?.status).toBe('issued');
+  const beforeThird = await view();
+  await call('lab.save-draft', encounterId, beforeThird.draft.version, { serviceIds: [order!.serviceId] });
+  const nextDraft = (await view()).draft;
+  expect(await call('lab.issue', encounterId, nextDraft.version, { items: nextDraft.items })).toMatchObject({ results: [{ serviceId: order!.serviceId, error: 'ACTIVE_ORDER_EXISTS' }] });
+  expect((await view()).orders).toHaveLength(2);
   await expect(call('lab.acknowledge', first.id, 6, { reportVersion: 1 })).rejects.toThrow('REPORT_SUPERSEDED');
   await expect(call('lab.acknowledge', latest.id, 6, { reportVersion: 1 })).rejects.toThrow('VERSION_CONFLICT');
   await signRecord();
@@ -116,7 +126,12 @@ it('publishes only released versions, retains old acknowledgements and rechecks 
   await expect(call('encounter.complete', encounterId, 5)).rejects.toThrow('COMPLETION_BLOCKED');
   await call('lab.acknowledge', latest.id, 6, { reportVersion: 2 });
   await expect(call('encounter.complete', encounterId, 5)).rejects.toThrow('COMPLETION_BLOCKED');
-  await call('lab.cancel', repeat!.id, 1);
+  await start(repeat!.id);
+  await call('lab.report-now', repeat!.id, 3);
+  const repeatReport = (await view()).orders.find(item => item.id === repeat!.id)!.reports[0]!;
+  expect(repeatReport.observations[0]).toMatchObject({ value: 45, interpretation: 'high' });
+  await expect(call('encounter.complete', encounterId, 5)).rejects.toThrow('COMPLETION_BLOCKED');
+  await call('lab.acknowledge', repeatReport.id, 4, { reportVersion: 1 });
   await expect(call('encounter.complete', encounterId, 5)).resolves.toEqual({ version: 6 });
 });
 

@@ -60,7 +60,15 @@ it('lets an agent stage an order while issue and version-specific acknowledgemen
     await formal('Acknowledge opened reports', '/acknowledge');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Acknowledge opened reports' }).hasAttribute('disabled')).toBe(true));
     await human.click(screen.getByRole('button', { name: 'Close reports' }));
-    expect((await act('Role · Family clinician', 'press', 'Cashier')).ok).toBe(true);
+    expect((await act('Role · Family clinician', 'press', 'Clinic administrator')).ok).toBe(true);
+    await screen.findByRole('button', { name: 'Role · Clinic administrator' });
+    await act('Clinical views', 'setValue', 'Investigations');
+    await human.click(await screen.findByRole('button', { name: 'Read reports' }));
+    await human.click(await screen.findByRole('button', { name: /^Read · High-sensitivity cardiac troponin I/ }));
+    await formal('Publish correction', '/amend');
+    await human.click(screen.getByRole('button', { name: 'Close reports' }));
+    expect(await screen.findByText('Revised report awaiting review')).toBeDefined();
+    expect((await act('Role · Clinic administrator', 'press', 'Cashier')).ok).toBe(true);
     await screen.findByRole('button', { name: 'Role · Cashier' });
     expect((await act('Clinical views', 'setValue', 'Cashier')).ok).toBe(true);
     const charge = await screen.findByRole('checkbox', { name: /^High-sensitivity cardiac troponin I/ });

@@ -84,14 +84,16 @@ export function issueOrders(context: CommandContext, items: Quote[], legacy: Leg
       results.push({ serviceId, error: 'CATALOG_CONFLICT' }); continue;
     }
     const prior = orders.filter(order => order.catalog_item_id === serviceId);
-    if (prior.some(order => !['acknowledged', 'cancelled', 'generation-failed'].includes(order.status))) {
+    const reviews = new Set(prior.filter(order => tx.list(at, 'diagnostic_reports', { order_id: order.id }).some(report =>
+      tx.list(at, 'report_acknowledgements', { report_id: report.id }).length > 0)).map(order => order.id));
+    if (prior.some(order => !['cancelled', 'generation-failed'].includes(order.status) && !reviews.has(order.id))) {
       results.push({ serviceId, error: 'ACTIVE_ORDER_EXISTS' }); continue;
     }
     const orderId = v7();
     tx.insert(at, 'clinical_orders', { id: orderId, encounter_id: targetId, catalog_item_id: serviceId, kind: service.kind, status: 'issued', version: 1, virtual_at: virtualAt, recorded_at: recordedAt });
     const stages: ('follow-up' | 'repeat' | 'inpatient' | 'initial')[] = [];
     if (followUp) stages.push('follow-up');
-    if (prior.some(order => order.status === 'acknowledged')) stages.push('repeat');
+    if (reviews.size) stages.push('repeat');
     if (encounter.encounter_class === 'inpatient') stages.push('inpatient');
     tx.insert(at, 'lab_requests', { id: v7(), order_id: orderId, stages: [...stages, 'initial'] });
     if (context.actor.enabledModules.includes('mod-billing')) billing?.freezeCharge(tx, at, { ...price, orderId, encounterId: targetId, catalogItemId: serviceId, quantity: 1, virtualAt, recordedAt });
