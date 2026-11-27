@@ -20,6 +20,7 @@ export const clinicalScoreIdSchema = z.enum([
 export type ClinicalScoreId = z.infer<typeof clinicalScoreIdSchema>
 
 export const clinicalScoreMissingInputSchema = z.enum([
+  'severeAscvdEventCount', 'priorCoronaryRevascularization',
   'hypertensionHistory', 'diabetesHistory',
   'acsPresentation',
   'age',

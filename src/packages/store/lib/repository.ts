@@ -32,6 +32,7 @@ export interface StoreTx {
   listEpochs(workspaceId: string): (WorkspaceEpoch & { epoch: string })[];
   updateEpoch(at: StoreScope, expectedClockRevision: number, changes: Partial<Pick<WorkspaceEpoch, 'status' | 'virtual_time'>>): void;
   insert<Name extends InsertableEntity>(at: StoreScope, name: Name, row: EntityRow<NoInfer<Name>>): void;
+  addPatientIdentifiers(at: StoreScope, patientId: string, identifiers: readonly Omit<EntityRow<'patient_identifiers'>, 'patient_id'>[]): void;
   appendDiagnosisRevision(at: StoreScope, revision: EntityRow<'diagnosis_revisions'>, members: readonly DiagnosisMember[]): void;
   get<Name extends PublicEntity>(at: StoreScope, name: Name, id: string): EntityRow<Name> | undefined;
   list<Name extends PublicEntity>(at: StoreScope, name: Name, filter?: Partial<EntityRow<NoInfer<Name>>>): EntityRow<Name>[];
@@ -164,6 +165,10 @@ export function createRepository(db: SqlConnection, checkOpen: () => void): Stor
       publicEntity(name);
       if ((dedicatedWrites as readonly string[]).includes(name)) throw new Error('Use the aggregate repository operation');
       keys(at);
+      if (name === 'patient_identifiers') {
+        const { patient_id, ...identifier } = z.strictObject({ id: uuid, patient_id: uuid, issuer: z.string().min(1), value: z.string().min(1) }).parse(row);
+        return tx.addPatientIdentifiers(at, patient_id, [identifier]);
+      }
       writeEntity(db, at, name, row, true);
     },
     appendDiagnosisRevision(location, revision, members) {
@@ -189,7 +194,10 @@ export function createRepository(db: SqlConnection, checkOpen: () => void): Stor
       applyPatch(name, `${isolation} AND id = ?`, [...keys(at), uuid.parse(id)], 'version', z.int().positive().parse(expected), values);
       if (previous) {
         const archived = { id: v7(), version: previous.version, replaced_at: new Date().toISOString() };
-        if ('display_name' in previous) tx.insert(at, 'patient_identity_versions', { ...archived, patient_id: id, display_name: previous.display_name, birth_date: previous.birth_date });
+        if ('display_name' in previous) {
+          const identifiers = tx.list(at, 'patient_identifiers', { patient_id: id }).map(({ issuer, value }) => ({ issuer, value }));
+          tx.insert(at, 'patient_identity_versions', { ...archived, patient_id: id, display_name: previous.display_name, birth_date: previous.birth_date, identifiers });
+        }
         else if ('active_practitioner_role' in previous) tx.insert(at, 'encounter_state_versions', { ...archived, encounter_id: id, status: previous.status, practitioner_role: previous.active_practitioner_role });
         else tx.insert(at, 'clinical_order_versions', { ...archived, order_id: id, status: previous.status });
       }
@@ -197,6 +205,14 @@ export function createRepository(db: SqlConnection, checkOpen: () => void): Stor
     remove(at, name, id, expected) {
       if (!removable.includes(name)) throw new Error('Deletion is restricted');
       cas(`DELETE FROM ${name} WHERE ${isolation} AND id = ? AND version = ?`, [...keys(at), uuid.parse(id), z.int().positive().parse(expected)]);
+    },
+    addPatientIdentifiers(at, patientId, identifiers) {
+      if (!identifiers.length) return;
+      const patient = tx.get(at, 'patients', patientId);
+      if (patient && (tx.list(at, 'patient_identifiers', { patient_id: patientId }).length || tx.list(at, 'encounters', { patient_id: patientId }).length)) {
+        tx.update(at, 'patients', patientId, patient.version, { display_name: patient.display_name });
+      }
+      for (const identifier of identifiers) writeEntity(db, at, 'patient_identifiers', { ...identifier, patient_id: patientId });
     },
     findCommandReceipt(at, key) { return list(at, 'command_receipts', { idempotency_key: key })[0]; },
     recordCommandReceipt(at, input) {

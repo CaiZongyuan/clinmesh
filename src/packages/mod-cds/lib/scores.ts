@@ -44,6 +44,7 @@ export interface ClinicalScoreObjectiveFacts {
   ckdLt60Chronicity?: SourcedFact<'confirmed' | 'excluded'>
   confirmedDiagnoses: Array<{
     code: string
+    context?: 'current' | 'history'
     source: ClinicalScoreSourceReference
   }>
   diastolicBpMmHg?: SourcedFact<number>
@@ -167,7 +168,7 @@ export function normalizeWbc10e9L(value: number, rawUnit: string): number {
   }
   const normalizedUnit = rawUnit.trim().replace(/^[×x]/iu, '').replace(/[μµ]/gu, 'u').toLowerCase()
   const count10e9L =
-    ['10*9/l', '10^9/l', 'g/l', '/nl', '10*3/ul', '10^3/ul', '10*3/mm3', '10^3/mm3', 'k/ul', 'k/mm3'].includes(normalizedUnit)
+    ['10*9/l', '10^9/l', '/nl', '10*3/ul', '10^3/ul', '10*3/mm3', '10^3/mm3', 'k/ul', 'k/mm3'].includes(normalizedUnit)
       ? value
       : ['/ul', '/mm3', '/mm^3'].includes(normalizedUnit)
         ? value / 1000
@@ -526,8 +527,10 @@ function resolveCkdChronicityStates(
   return { lt30, lt60 }
 }
 
-export function calculateAscvdLdlTarget(input: {
+function stratifyLdlTarget(input: {
   ageYears: number
+  hypertensionHistory?: boolean
+  diabetesHistory?: boolean
   antihypertensiveTreated?: boolean
   cadOnsetAgeYears?: number
   ckdLt30Chronicity?: 'confirmed' | 'excluded'
@@ -661,9 +664,9 @@ export function calculateAscvdLdlTarget(input: {
   const hasPadWithRevascOrAmp =
     codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['I70.2', 'I73.9'])
     && codeMatchesPrefixes(input.confirmedDiagnosisCodes, ['Z95.8', 'Z89'])
-  const hasDiabetes = hasConfirmedDiabetesDiagnosis(input.confirmedDiagnosisCodes)
+  const hasDiabetes = hasConfirmedDiabetesDiagnosis(input.confirmedDiagnosisCodes) || input.diabetesHistory === true
   const hasConfirmedHtn =
-    hasConfirmedHypertensionDiagnosis(input.confirmedDiagnosisCodes) || input.antihypertensiveTreated === true
+    hasConfirmedHypertensionDiagnosis(input.confirmedDiagnosisCodes) || input.antihypertensiveTreated === true || input.hypertensionHistory === true
   const normalizedDxCodes = input.confirmedDiagnosisCodes.map(code => code.trim().toUpperCase()).filter(Boolean)
   const hasCodedStage4Ckd = normalizedDxCodes.some(code => code.startsWith('N18.4'))
   const hasCodedStage5OrDialysisCkd = normalizedDxCodes.some(code => /^(?:N18\.[56]|Z99\.2)/.test(code))
@@ -679,14 +682,9 @@ export function calculateAscvdLdlTarget(input: {
     && normalizedDxCodes.some(code => /^(?:N18(?:\.9|$)|E1[0-4]\.2|I12(?!\.0)|I13(?!\.2)|N03|Z94\.0)/.test(code))
 
   if (hasAscvd) {
-    const codeSevereEventCount =
-      input.confirmedDiagnosisCodes.filter(code =>
-        codeMatchesPrefixes([code], [...ACS_ICD10_PREFIXES, 'I25.2', 'I63']),
-      ).length + (hasPadWithRevascOrAmp ? 1 : 0)
-    const severeEventCount =
-      input.severeAscvdEventCount === undefined
-        ? codeSevereEventCount
-        : Math.max(0, Math.trunc(input.severeAscvdEventCount)) + (hasPadWithRevascOrAmp ? 1 : 0)
+    const distinctEventTypes = Number(codeMatchesPrefixes(normalizedDxCodes, [...ACS_ICD10_PREFIXES, 'I25.2']))
+      + Number(codeMatchesPrefixes(normalizedDxCodes, ['I63'])) + Number(hasPadWithRevascOrAmp)
+    const severeEventCount = Math.max(distinctEventTypes, input.severeAscvdEventCount ?? 0)
     if (severeEventCount >= 2) {
       const goal = evaluateGoal(1.4)
       return {
@@ -700,6 +698,7 @@ export function calculateAscvdLdlTarget(input: {
       }
     }
     if (severeEventCount === 0) {
+      if (input.severeAscvdEventCount === undefined) return { status: 'incomplete', missingInputs: ['severeAscvdEventCount'] }
       const goal = evaluateGoal(1.8)
       return {
         ...(goal === undefined ? {} : { ldlGoalEvaluation: goal }),
@@ -723,6 +722,11 @@ export function calculateAscvdLdlTarget(input: {
     let minHighRiskFactors = (priorRevasc ? 1 : 0) + (hasDiabetes ? 1 : 0) + (hasConfirmedHtn ? 1 : 0)
     let maxHighRiskFactors = minHighRiskFactors
     const upgradeMissing: ClinicalScoreMissingInput[] = []
+    for (const [factor, unknown] of [
+      ['priorCoronaryRevascularization', !priorRevasc && input.priorCoronaryRevascularization === undefined],
+      ['diabetesHistory', !hasDiabetes && input.diabetesHistory === undefined],
+      ['hypertensionHistory', !hasConfirmedHtn && input.hypertensionHistory === undefined],
+    ] as const) if (unknown) { maxHighRiskFactors++; upgradeMissing.push(factor) }
 
     if (hasCad) {
       const definitelyPremature =
@@ -788,9 +792,9 @@ export function calculateAscvdLdlTarget(input: {
         value: 1.4,
       }
     }
-    if (maxHighRiskFactors >= 2) {
+    if (input.severeAscvdEventCount === undefined || maxHighRiskFactors >= 2) {
       return {
-        missingInputs: [...new Set(upgradeMissing)],
+        missingInputs: [...new Set([...(input.severeAscvdEventCount === undefined ? ['severeAscvdEventCount' as const] : []), ...(maxHighRiskFactors >= 2 ? upgradeMissing : [])])],
         status: 'incomplete',
       }
     }
@@ -1066,6 +1070,26 @@ export function calculateAscvdLdlTarget(input: {
   }
 }
 
+export function calculateAscvdLdlTarget(input: Parameters<typeof stratifyLdlTarget>[0]): ReturnType<typeof stratifyLdlTarget> {
+  const current = stratifyLdlTarget(input)
+  if (hasConfirmedAscvdDiagnosis(input.confirmedDiagnosisCodes) || input.knownCoronaryRevascularization || input.priorCoronaryRevascularization) return current
+  const unresolved = (['diabetesHistory', 'hypertensionHistory', 'priorCoronaryRevascularization'] as const).filter(field => {
+    if (input[field] !== undefined) return false
+    if (field === 'diabetesHistory') return !hasConfirmedDiabetesDiagnosis(input.confirmedDiagnosisCodes)
+    if (field === 'hypertensionHistory') return !hasConfirmedHypertensionDiagnosis(input.confirmedDiagnosisCodes) && !input.antihypertensiveTreated
+    return true
+  })
+  if (!unresolved.length) return current
+  const possible = Array.from({ length: 2 ** unresolved.length }, (_, mask) => {
+    const history = Object.fromEntries(unresolved.map((field, index) => [field, Boolean(mask & (1 << index))]))
+    const score = stratifyLdlTarget({ ...input, ...history })
+    return score.status === 'complete' ? score.tierCode : 'incomplete'
+  })
+  const needed = unresolved.filter((_, index) => possible.some((tier, mask) => tier !== possible[mask ^ (1 << index)]))
+  if (!needed.length) return current
+  return { status: 'incomplete', missingInputs: [...new Set([...(current.status === 'incomplete' ? current.missingInputs : []), ...needed])] }
+}
+
 const SCORE_METADATA: Record<ClinicalScoreId, { titleEn: string; titleZh: string; unit: string }> = {
   'ascvd-ldl-target': {
     titleEn: 'ASCVD Risk & LDL-C Target',
@@ -1120,6 +1144,8 @@ export const MISSING_INPUT_LABELS: Record<ClinicalScoreMissingInput, { en: strin
   pciDaptIndication: { en: 'Coronary stenting (PCI) or DAPT indication', zh: '冠脉支架植入（PCI）或双联抗血小板（DAPT）指征' },
   priorBleedingHistory: { en: 'Prior spontaneous bleeding history', zh: '既往自发性出血史' },
   hypertensionHistory: { en: 'Hypertension history', zh: '高血压史' },
+  severeAscvdEventCount: { en: 'Number of distinct severe ASCVD events', zh: '重大 ASCVD 独立事件次数' },
+  priorCoronaryRevascularization: { en: 'Prior coronary revascularization', zh: '既往冠脉血运重建史' },
   diabetesHistory: { en: 'Diabetes history', zh: '糖尿病史' },
   serumCreatinine: { en: 'Serum creatinine report', zh: '血肌酐 (SCr)' },
   sex: { en: 'Biological sex', zh: '性别' },
@@ -1360,7 +1386,8 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
 
   let graceResult: ClinicalScoreResult
   {
-    const diagnosisCodes = facts.confirmedDiagnoses.map(item => item.code)
+    const current = facts.confirmedDiagnoses.filter(item => item.context !== 'history')
+    const diagnosisCodes = current.map(item => item.code)
     const acsApplicable =
       facts.acsPresentation !== undefined
         ? facts.acsPresentation.value
@@ -1377,7 +1404,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     if (facts.elevatedCardiacBiomarker === undefined) missing.push('elevatedCardiacBiomarker')
     const sources = [
       facts.acsPresentation?.source,
-      ...(facts.acsPresentation === undefined ? facts.confirmedDiagnoses.map(item => item.source) : []),
+      ...(facts.acsPresentation === undefined ? current.map(item => item.source) : []),
       admissionAdultAge?.source,
       admissionHeartRateBpm?.source,
       admissionSystolicBpMmHg?.source,
@@ -1462,11 +1489,12 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
           ? true
           : undefined
 
+    const presentationCodes = facts.confirmedDiagnoses.filter(item => item.context !== 'history').map(item => item.code)
     const uaNstemiApplicable =
       facts.uaNstemiPresentation !== undefined
         ? facts.uaNstemiPresentation.value
-        : !codeMatchesPrefixes(diagnosisCodes, STEMI_ICD10_PREFIXES)
-          && codeMatchesPrefixes(diagnosisCodes, UA_NSTEMI_ICD10_PREFIXES)
+        : !codeMatchesPrefixes(presentationCodes, STEMI_ICD10_PREFIXES)
+          && codeMatchesPrefixes(presentationCodes, UA_NSTEMI_ICD10_PREFIXES)
     const missing: ClinicalScoreMissingInput[] = []
     if (!uaNstemiApplicable) missing.push('uaNstemiPresentation')
     if (admissionAdultAge === undefined) missing.push('age')
@@ -1629,6 +1657,7 @@ export function evaluateClinicalScores(facts: ClinicalScoreObjectiveFacts): Clin
     } else {
       const calc = calculateAscvdLdlTarget({
         ageYears: adultAge.value,
+        diabetesHistory: facts.diabetesHistory?.value, hypertensionHistory: facts.hypertensionHistory?.value,
         ...(facts.antihypertensiveMedicationActive === undefined
           ? {}
           : { antihypertensiveTreated: facts.antihypertensiveMedicationActive.value }),

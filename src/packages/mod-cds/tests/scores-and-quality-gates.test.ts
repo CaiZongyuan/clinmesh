@@ -3,6 +3,9 @@ import { expect, it } from 'vitest';
 import { z } from 'zod';
 import { cdsWorkspace } from '../../../server/testing/cds-workspace';
 import { builtinModules } from '../../../server/builtin-modules';
+import { createHash } from 'node:crypto';
+import { canonicalJson } from '../../store';
+import { labViewSchema, issueReceipt } from '../../mod-lab';
 import type { ClinMeshModule, OperationCatalog } from '../../platform';
 import { calculateAscvdLdlTarget, calculateCkdEpi2021Egfr, calculateCockcroftGaultCrCl, calculateGraceAcs, calculatePreciseDapt, calculateTimiUaNstemi, evaluateClinicalScores, guidelinesSchema, orderSetsSchema, scoreViewSchema } from '../index';
 
@@ -28,6 +31,92 @@ it('matches calibrated renal, ischemic, bleeding and lipid targets in convention
 
 const dose = { codeSystem: 'urn:clinmesh:general:drug', code: 'doxycycline', dose: 100, routeCode: 'PO', timesPerDay: 1, days: 1, quantity: 1 };
 const override = (rule: string) => ({ reasonCode: 'specialist-judgment', note: 'Outside bacterial test reviewed with the patient.', ruleCodes: [rule] });
+
+it('requires current ACS presentation and counts distinct severe events rather than overlapping diagnosis codings', async () => {
+  const host = await cdsWorkspace(pack => pack.cases[0]!.priorHistory.diagnoses.push({ codeSystem: 'http://hl7.org/fhir/sid/icd-10', code: 'I21.4' }));
+  try {
+    const path = await host.start('Avery Reed', 'J18.9');
+    const { scores } = scoreViewSchema.parse(await host.get(`${path}/cds/scores`));
+    expect(scores.find(item => item.id === 'grace-acs')?.missingInputs).toContain('acsPresentation');
+    expect(scores.find(item => item.id === 'timi-ua-nstemi')?.missingInputs).toContain('uaNstemiPresentation');
+  } finally { await host.store.close(); }
+  const ambiguous = calculateAscvdLdlTarget({ ageYears: 75, confirmedDiagnosisCodes: ['I21.4', 'I21.4'] });
+  expect(ambiguous).toMatchObject({ status: 'incomplete', missingInputs: expect.arrayContaining(['severeAscvdEventCount']) });
+  expect(calculateAscvdLdlTarget({ ageYears: 75, confirmedDiagnosisCodes: ['I25.1'] })).toMatchObject({ status: 'incomplete', missingInputs: expect.arrayContaining(['severeAscvdEventCount']) });
+  const primary = { ageYears: 62, sex: 'female' as const, smokingStatus: 'never' as const, egfrMlMin173m2: 93, systolicBpMmHg: 119, diastolicBpMmHg: 76, ldlCholesterol: { unit: 'mmol/L', value: 2.1 }, hdlCholesterol: { unit: 'mmol/L', value: 1.6 }, confirmedDiagnosisCodes: [], priorCoronaryRevascularization: false };
+  expect(calculateAscvdLdlTarget(primary)).toMatchObject({ status: 'incomplete', missingInputs: expect.arrayContaining(['diabetesHistory']) });
+  expect(calculateAscvdLdlTarget({ ...primary, diabetesHistory: false, hypertensionHistory: false })).toMatchObject({ status: 'complete', tierCode: 'low' });
+});
+
+it('rejects WBC mass concentration and accepts equivalent cell-count units for PRECISE-DAPT', () => {
+  const inputs = { ageYears: { value: 62 }, sex: { value: 'female' as const }, weightKg: { value: 70 }, serumCreatinine: { value: { value: 1, unit: 'mg/dL' } }, hemoglobin: { value: { value: 13, unit: 'g/dL' } }, priorBleedingHistory: { value: 'negative' as const }, pciDaptIndication: { value: true }, confirmedDiagnoses: [] };
+  const score = (value: number, unit: string) => evaluateClinicalScores({ ...inputs, wbc: { value: { value, unit } } }).find(item => item.id === 'precise-dapt');
+  expect(score(6.8, 'g/L')).toMatchObject({ status: 'incomplete', missingInputs: ['wbc'] });
+  expect(score(6.8, '×10^9/L')).toMatchObject({ status: 'complete' });
+  expect(score(6.8, '×10^9/L')).toEqual(score(6800, '/µL'));
+});
+
+it('completes the frozen global-general 1.3.0 chest-pain encounter after both paid reports are signed and acknowledged', async () => {
+  const host = await cdsWorkspace(pack => {
+    pack.manifest.version = '1.3.0';
+    delete pack.knowledge!.cds;
+    for (const service of pack.catalog.services) delete service.modality;
+    for (const topic of pack.knowledge!.guidelineTopics) delete topic.evidence;
+    for (const patient of pack.cases) for (const result of patient.caseTruth.results) delete result.stSegmentDeviation;
+    expect(createHash('sha256').update(canonicalJson(pack)).digest('hex')).toBe('5d82796c5987c32f0529d1e5c453a00ae68737b943526be659d1441cc67b1207');
+  });
+  try {
+    const path = await host.start('Jordan Vale', 'I21.4');
+    const lab = () => host.get(`${path}/lab`).then(value => labViewSchema.parse(value));
+    const serviceIds = (await lab()).services.filter(service => ['ecg12', 'hs-tni'].includes(service.code)).map(item => item.id);
+    await host.applied(host.command(`${path}/lab/draft`, 0, { serviceIds }, 'PUT'));
+    const issued = issueReceipt.parse(await host.applied(host.command(`${path}/lab/issue`, 1, { items: (await lab()).draft.items })));
+    expect(issued.results).toHaveLength(2);
+    await host.role('cashier');
+    for (const entry of issued.results) {
+      if (!('orderId' in entry)) throw Error(entry.error);
+      await host.collect(path, entry.orderId);
+    }
+    await host.role('family-clinician');
+    for (const order of (await lab()).orders) {
+      for (const [index, action] of ['accept', 'start', 'report-now'].entries()) await host.applied(host.command(`/api/his/lab/orders/${order.id}/${action}`, index + 1));
+      const signed = (await lab()).orders.find(item => item.id === order.id)!;
+      await host.applied(host.command(`/api/his/reports/${signed.reports[0]!.id}/acknowledge`, signed.version, { reportVersion: 1 }));
+    }
+    await host.applied(host.command(`${path}/no-medication`, 5, { reason: 'Reviewed decision for this visit.' }));
+    expect(await host.get(`${path}/completion`)).toMatchObject({ ready: true });
+    expect(await host.applied(host.command(`${path}/complete`, 6))).toMatchObject({ version: 7 });
+  } finally { await host.store.close(); }
+});
+
+it('returns only topic-specific missing inputs and links each triage, bedside and report observation to its revision', async () => {
+  const host = await cdsWorkspace(pack => {
+    const topics = pack.knowledge!.guidelineTopics;
+    topics.push({ ...topics[0]!, id: 'blood-pressure', evidence: [{ codeSystem: 'http://loinc.org', code: '8462-4' }] });
+  });
+  try {
+    const path = await host.start('Jordan Vale', 'I21.4');
+    const get = () => host.get(`${path}/cds/guidelines`).then(value => guidelinesSchema.parse(value));
+    const { topics } = await get();
+    expect(topics[0]!.missingInputs).toEqual(['http://loinc.org|89579-7', 'urn:clinmesh:clinical|stSegmentDeviation']);
+    expect(topics[1]!.observations.map(item => item.code)).toEqual(['8462-4']);
+    expect(topics[1]!.missingInputs).toEqual([]);
+    await host.applied(host.command(`${path}/cds/risk-assessment`, 5, { expectedRevision: 0, fields: { stSegmentDeviation: true, killipClass: 'I' } }));
+    const visit = path.split('/').at(-1)!;
+    await host.store.withTransaction(tx => {
+      const service = tx.list(host.at, 'catalog_items', { kind: 'services', code: 'hs-tni' })[0]!;
+      const orderId = v7(), times = { virtual_at: host.now, recorded_at: host.now };
+      tx.insert(host.at, 'clinical_orders', { id: orderId, encounter_id: visit, catalog_item_id: service.id, kind: 'lab', status: 'reported', version: 1, ...times });
+      tx.insert(host.at, 'diagnostic_reports', { id: v7(), order_id: orderId, revision: 1, previous_revision_id: null, signed_by: 'lab', ...times, findings: { summary: { en: 'Troponin', zh: '肌钙蛋白' }, observations: [{ codeSystem: 'http://loinc.org', code: '89579-7', display: { en: 'Troponin', zh: '肌钙蛋白' }, value: 51, unit: 'ng/L', interpretation: 'high', critical: false }] } });
+    });
+    const complete = await get();
+    expect(complete.topics[0]!.missingInputs).toEqual([]);
+    for (const observation of complete.observations) {
+      const { reference, versionId } = observation.source;
+      expect(await host.get(`/fhir/R5/${reference}/_history/${versionId}`)).toMatchObject({ resourceType: 'Observation', meta: { versionId } });
+    }
+  } finally { await host.store.close(); }
+});
 
 it('distinguishes missing creatinine, proven renal contraindication and dosage limits inside the signed command', async () => {
   const host = await cdsWorkspace(pack => {

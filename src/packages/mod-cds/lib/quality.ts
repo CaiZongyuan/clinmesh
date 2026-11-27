@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { medicationSchema } from '../../data-pack';
 import { CoreError, type ClinicalQualityGate, type ClinicalQualityIntent } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
-import { catalogCoding, clinicalFacts, sameCoding, type ClinicalFacts } from './facts';
+import { catalogCoding, clinicalFacts, sameCoding, type ClinicalFacts, type LegacyEcg } from './facts';
 import { normalizeCreatinineMgDl } from './scores';
 
 export const overrideReasons = ['contraindication-or-bleeding-risk', 'outside-result-verified', 'follow-up-arranged', 'informed-refusal', 'specialist-judgment', 'emergency-priority'] as const;
@@ -83,10 +83,10 @@ export function qualityIssues(reader: StoreReader, at: StoreScope, data: Clinica
   return { red: [...red].sort(), alerts: [...alerts].sort() };
 }
 
-export const enforceQuality: ClinicalQualityGate = (context, intent, input, operation) => {
+export const clinicalQualityGate = (legacy: LegacyEcg): ClinicalQualityGate => (context, intent, input, operation) => {
   if (intent.kind === 'investigation') return;
   const { tx, at, actor, virtualAt, recordedAt } = context;
-  const data = clinicalFacts(tx, at, intent.encounterId);
+  const data = clinicalFacts(tx, at, intent.encounterId, legacy);
   const { red, alerts } = qualityIssues(tx, at, data, intent);
   if (red.length) throw new CoreError(409, 'CLINICAL_QUALITY_RED_LINE', { ruleCodes: red.join(',') });
   if (!alerts.length) return;

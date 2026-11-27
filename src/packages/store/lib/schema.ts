@@ -131,7 +131,7 @@ export const tables = {
   inventory_lot_quarantines: table({ id: lot, source_version: choice('clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', 'clinmesh.snapshot.v4', 'clinmesh.snapshot.v5', 'sqlite.schema.v1', 'sqlite.schema.v2', 'sqlite.schema.v3', 'sqlite.schema.v4'), source_sha256: optional(digest), quantity_at_migration: column(z.int().negative(), 'integer', name => `${name} < 0`), ledger_fingerprint: column(z.uuid({ version: 'v5' })) }),
   clinical_risk_assessments: revisions('clinical_risk_assessments', 'encounter_id', { encounter_id: enc, fields: frozen, signed_by: text }),
   clinical_override_reasons: table({ id: ref('clinical_overrides'), audit_id: ref('audit_events'), reason_code: text, command_name: text }, 'audit_id'),
-  patient_identity_versions: table({ patient_id: id, version, display_name: text, birth_date: optional(column(z.iso.date())), replaced_at: timestamp }, 'patient_id, version'),
+  patient_identity_versions: table({ patient_id: id, version, display_name: text, birth_date: optional(column(z.iso.date())), identifiers: column(z.array(z.strictObject({ issuer: z.string().min(1), value: z.string().min(1) })), 'json'), replaced_at: timestamp }, 'patient_id, version'),
   encounter_state_versions: table({ encounter_id: enc, version, status: text, practitioner_role: text, replaced_at: timestamp }, 'encounter_id, version'),
   clinical_order_versions: table({ order_id: order, version, status: text, replaced_at: timestamp }, 'order_id, version'),
 } satisfies Record<string, TableDefinition>;

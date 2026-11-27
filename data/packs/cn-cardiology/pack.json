@@ -869,6 +869,7 @@
     "guidelineTopics": [
       {
         "id": "hypertension-treatment-principles",
+          "evidence": [{ "codeSystem": "http://loinc.org", "code": "8480-6" }, { "codeSystem": "http://loinc.org", "code": "8462-4" }],
         "source": "https://www.nhc.gov.cn/fzs/c100048/202509/2f3f7cce449145f8b361e70b3ed4ae9a/files/WS%20T%20872%E2%80%942025-20250930105429913.pdf",
         "version": "WS/T 872—2025",
         "physicalPage": 5,

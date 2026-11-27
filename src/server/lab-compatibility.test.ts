@@ -13,6 +13,7 @@ it('opens the v2 cardiology snapshot with ECG and TTE available and rejects inva
   const pack = structuredClone(cardiology);
   Reflect.deleteProperty(pack.knowledge, 'pharmacy');
   Reflect.deleteProperty(pack.knowledge, 'cds');
+  for (const topic of pack.knowledge.guidelineTopics) Reflect.deleteProperty(topic, 'evidence');
   Reflect.deleteProperty(pack.catalog.medications.find(item => item.code === 'dapagliflozin')!.safety, 'contraindicatedEgfrBelow');
   pack.manifest.version = '1.0.0';
   pack.catalog.services = pack.catalog.services.filter(service => service.kind !== 'registration');

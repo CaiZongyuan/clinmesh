@@ -30,6 +30,32 @@ it('advertises only the eleven R5 read surfaces and refuses writes and unknown s
 const projected = z.object({ id: z.string(), resourceType: z.string(), meta: z.object({ versionId: z.string(), lastUpdated: z.iso.datetime() }) }).passthrough();
 const bundle = z.object({ type: z.string(), total: z.int(), entry: z.array(z.object({ resource: projected })).default([]) });
 
+it('freezes all identifiers at each Patient version and maps local issuers to absolute naming systems', async () => {
+  const host = await cdsWorkspace(pack => {
+    pack.cases[0]!.demographics.identifiers = [{ issuer: '门诊 登记处', value: 'first' }];
+    pack.cases[1]!.demographics.identifiers = [{ issuer: '门诊 登记处', value: 'first' }, { issuer: 'https://example.org/mrn', value: 'second' }];
+  });
+  try {
+    await host.start('Avery Reed', 'J18.9');
+    const original = bundle.parse(await host.get('/fhir/R5/Patient')).entry[0]!.resource;
+    const path = `/fhir/R5/Patient/${original.id}`;
+    await host.start('Jordan Vale', 'I21.4');
+    expect(await host.get(`${path}/_history/1`)).toEqual(original);
+    expect(bundle.parse(await host.get(`${path}/_history`)).total).toBe(2);
+    expect(await host.get(path)).toMatchObject({ meta: { versionId: '2' }, identifier: [{ system: expect.stringMatching(/^urn:/), value: 'first' }, { system: 'https://example.org/mrn', value: 'second' }] });
+  } finally { await host.store.close(); }
+});
+
+it('reports the recorded lab publication failure in AuditEvent', async () => {
+  const host = await cdsWorkspace();
+  try {
+    const id = v7();
+    await host.store.withTransaction(tx => tx.insert(host.at, 'audit_events', { id, actor: 'lab-simulation', practitioner_role: 'lab-simulation', operation: 'lab.publish-due', target_id: v7(), virtual_at: host.now, recorded_at: host.now, outcome: 'generation-failed' }));
+    await host.role('coordinator');
+    expect(await host.get(`/fhir/R5/AuditEvent/${id}`)).toMatchObject({ outcome: { code: { code: '8' }, detail: [{ text: 'generation-failed' }] } });
+  } finally { await host.store.close(); }
+});
+
 it('resolves every declared type, instance and version from formal facts without exposing unissued results or private case data', async () => {
   const host = await cdsWorkspace();
   try {

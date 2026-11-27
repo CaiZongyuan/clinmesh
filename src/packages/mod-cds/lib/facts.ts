@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ageOn } from '../../clinical-core';
+import { ageOn, clinicalFactId, clinicalFactSystem, triageMeasures } from '../../clinical-core';
 import { catalogSchema, knowledgeSchema, readClinicalCase, type Coding } from '../../data-pack';
 import { signedFindingsSchema } from '../../mod-lab';
 import { requireEncounter } from '../../patient-visit';
@@ -12,7 +12,7 @@ export const bedsideFields = z.strictObject({
   killipClass: killipClassSchema, cardiacArrestOnAdmission: z.boolean(), stSegmentDeviation: z.boolean(),
   anginaEpisodes24h: z.int().min(0).max(100), aspirinUsedLast7Days: z.boolean(), familyHistoryPrematureCad: z.boolean(),
   knownCoronaryRevascularizationOrStenosisGe50: z.boolean(), priorBleedingHistory: priorBleedingHistorySchema, smokingStatus: smokingStatusSchema,
-  pciDaptIndication: z.boolean(), cadOnsetAgeYears: z.int().min(0).max(120), severeAscvdEventCount: z.int().min(0).max(100),
+  pciDaptIndication: z.boolean(), priorCoronaryRevascularization: z.boolean(), cadOnsetAgeYears: z.int().min(0).max(120), severeAscvdEventCount: z.int().min(0).max(100),
   hypertensionHistory: z.boolean(), diabetesHistory: z.boolean(), dyslipidemiaHistory: z.boolean(),
   ckdLt30Chronicity: z.enum(['confirmed', 'excluded']), ckdLt60Chronicity: z.enum(['confirmed', 'excluded']),
   weightKg: z.number().min(1).max(400), heightCm: z.number().min(30).max(260), acuteChestPain: z.boolean(),
@@ -23,18 +23,21 @@ const loinc = 'http://loinc.org';
 const measures = { serumCreatinine: ['2160-0', '14682-9'], hemoglobin: ['718-7'], wbc: ['6690-2', '26464-8'],
   totalCholesterol: ['2093-3', '14647-2'], hdlCholesterol: ['2085-9', '14646-4'], ldlCholesterol: ['2089-1', '13457-7', '22748-8'],
   troponin: ['89579-7', '67151-1', '6598-7', '10839-9', '49563-0'], egfr: ['98979-8', '33914-3', '62238-1'] };
-type Measurement = Coding & { unit: string; value: string | number; observedAt: string; source: ClinicalScoreSourceReference; interpretation?: string };
+type Measurement = Coding & { unit: string; value: string | number | boolean; observedAt: string; source: ClinicalScoreSourceReference; interpretation?: string };
+const evidenceCoding = z.strictObject({ codeSystem: z.url(), code: z.string().min(1) });
+export const legacyEcgSchema = z.array(z.strictObject({ packId: z.string(), packVersion: z.string(), ecg: evidenceCoding, topicEvidence: z.record(z.string(), z.array(evidenceCoding)) }));
+export type LegacyEcg = z.infer<typeof legacyEcgSchema>;
 const sourced = <Value>(value: Value, source: ClinicalScoreSourceReference) => ({ value, source });
 const reference = (label: string, reference: string, version: number | string) => ({ label, reference, versionId: String(version) });
 const byTime = (first: { virtual_at: string; id: string }, second: { virtual_at: string; id: string }) => Date.parse(first.virtual_at) - Date.parse(second.virtual_at) || first.id.localeCompare(second.id);
 
-export function authorizedFacts({ reader, actor, targetId }: ReadContext) {
+export function authorizedFacts({ reader, actor, targetId }: ReadContext, legacy: LegacyEcg) {
   const encounter = requireEncounter(reader, actor.at, targetId);
   if (encounter.active_practitioner_role !== actor.role.id) throw new CoreError(403, 'RESPONSIBLE_ROLE_REQUIRED');
-  return clinicalFacts(reader, actor.at, encounter.id);
+  return clinicalFacts(reader, actor.at, encounter.id, legacy);
 }
 
-export function clinicalFacts(reader: StoreReader, at: StoreScope, encounterId: string) {
+export function clinicalFacts(reader: StoreReader, at: StoreScope, encounterId: string, legacy: LegacyEcg) {
   const encounter = requireEncounter(reader, at, encounterId);
   const patient = reader.get(at, 'patients', encounter.patient_id)!;
   const caseView = readClinicalCase(reader, at, encounter.source_case_id)!;
@@ -62,41 +65,51 @@ export function clinicalFacts(reader: StoreReader, at: StoreScope, encounterId: 
     const latest = revisions.at(-1);
     if (!latest || !service) return [];
     const data = signedFindingsSchema.safeParse(latest.findings);
-    return data.success ? [{ service, first: revisions[0]!, latest, findings: data.data, source: reference(service.display.en, `DiagnosticReport/${order.id}`, latest.revision) }] : [];
+    return data.success ? [{ orderId: order.id, service, first: revisions[0]!, latest, findings: data.data, source: reference(service.display.en, `DiagnosticReport/${order.id}`, latest.revision) }] : [];
   }).sort((first, second) => byTime(first.first, second.first));
   const observed: Measurement[] = [
     ...caseView.priorHistory.observations.filter(item => Date.parse(item.observedAt) <= Date.parse(now)).map(item => ({ ...item.analyte, value: item.value, unit: item.unit, observedAt: item.observedAt, source: historyRef })),
-    ...reports.flatMap(report => report.findings.observations.map(item => ({ ...item, observedAt: report.first.virtual_at, source: report.source }))),
+    ...reports.flatMap(report => report.findings.observations.map(item => ({ ...item, observedAt: report.first.virtual_at, source: reference(item.display.en, `Observation/${clinicalFactId(report.orderId, item.codeSystem, item.code)}`, report.latest.revision) }))),
   ].sort((first, second) => Date.parse(first.observedAt) - Date.parse(second.observedAt));
   const matched = (name: keyof typeof measures) => observed.filter(item => item.codeSystem === loinc && measures[name].includes(item.code));
   const quantity = (item?: Measurement) => item && typeof item.value === 'number' ? sourced({ unit: item.unit, value: item.value }, item.source) : undefined;
   const facts: ClinicalScoreObjectiveFacts = { confirmedDiagnoses: [
-    ...codes.map(code => ({ code, source: reference('Diagnosis', `Diagnosis/${confirmed!.id}`, confirmed!.revision) })),
-    ...caseView.priorHistory.diagnoses.filter(item => diagnosticSystems.includes(item.codeSystem)).map(item => ({ code: item.code, source: historyRef })),
+    ...diagnoses.filter(item => diagnosticSystems.includes(item.codeSystem)).map(item => ({ code: item.code, source: reference('Confirmed diagnosis', `Condition/${clinicalFactId(encounterId, item.codeSystem, item.code)}`, confirmed!.revision) })),
+    ...caseView.priorHistory.diagnoses.filter(item => diagnosticSystems.includes(item.codeSystem)).map(item => ({ code: item.code, context: 'history' as const, source: historyRef })),
   ] };
   if (typeof age === 'number') facts.ageYears = sourced(age, reference('Patient identity', `Patient/${patient.id}`, patient.version));
   if (caseView.demographics.sex === 'male' || caseView.demographics.sex === 'female') facts.sex = sourced(caseView.demographics.sex, reference('Sex at registration', `Patient/${patient.id}`, patient.version));
   if (triage) {
     const vitals = z.object({ heartRateBpm: z.number(), systolicMmHg: z.number(), diastolicMmHg: z.number() }).parse(triage.vitals);
-    const source = reference('Triage', `Observation/${triage.id}`, 1);
-    facts.heartRateBpm = sourced(vitals.heartRateBpm, source);
-    facts.systolicBpMmHg = sourced(vitals.systolicMmHg, source);
-    facts.diastolicBpMmHg = sourced(vitals.diastolicMmHg, source);
+    const source = (field: string) => reference(field, `Observation/${clinicalFactId(triage.id, field)}`, 1);
+    facts.heartRateBpm = sourced(vitals.heartRateBpm, source('heartRateBpm'));
+    facts.systolicBpMmHg = sourced(vitals.systolicMmHg, source('systolicMmHg'));
+    facts.diastolicBpMmHg = sourced(vitals.diastolicMmHg, source('diastolicMmHg'));
+    for (const [field, [code, unit]] of Object.entries(triageMeasures)) {
+      const value = triage.vitals[field];
+      if (typeof value === 'number') observed.push({ codeSystem: loinc, code, value, unit, observedAt: triage.virtual_at, source: source(field) });
+    }
   }
-  if (assessment) Object.assign(facts, Object.fromEntries(Object.entries(bedside).map(([key, value]) => [key, sourced(value, reference('Bedside assessment', `Observation/${assessment.id}`, assessment.revision))])));
+  if (assessment) {
+    const source = reference('Bedside risk assessment', `Observation/${clinicalFactId(encounterId, 'risk-assessment')}`, assessment.revision);
+    Object.assign(facts, Object.fromEntries(Object.entries(bedside).map(([key, value]) => [key, sourced(value, source)])));
+    for (const [code, value] of Object.entries(bedside)) if (code !== 'stSegmentDeviation') observed.push({ codeSystem: clinicalFactSystem, code, value, unit: code === 'weightKg' ? 'kg' : code === 'heightCm' ? 'cm' : '1', observedAt: assessment.virtual_at, source });
+  }
   for (const name of ['serumCreatinine', 'hemoglobin', 'wbc', 'ldlCholesterol', 'hdlCholesterol', 'totalCholesterol'] as const) facts[name] = quantity(matched(name).at(-1));
-  const firstCurrent = (name: keyof typeof measures) => quantity(matched(name).find(item => item.source.reference.startsWith('DiagnosticReport/')));
+  const firstCurrent = (name: keyof typeof measures) => quantity(matched(name).find(item => item.source.reference.startsWith('Observation/')));
   facts.admissionSerumCreatinine = firstCurrent('serumCreatinine') ?? null;
   facts.baselineHemoglobin = firstCurrent('hemoglobin') ?? null;
   facts.baselineWbc = firstCurrent('wbc') ?? null;
-  const firstEcg = reports.find(report => report.service.modality === 'ecg-12-lead');
+  const historical = legacy.find(entry => entry.packId === pack.pack_id && entry.packVersion === pack.pack_version);
+  const firstEcg = reports.find(report => report.service.modality === 'ecg-12-lead' || (!report.service.modality && historical && sameCoding(historical.ecg, report.service)));
   if (firstEcg?.findings.stSegmentDeviation !== undefined) facts.stSegmentDeviation = sourced(firstEcg.findings.stSegmentDeviation, firstEcg.source);
-  const biomarker = matched('troponin').find(item => item.interpretation && item.source.reference.startsWith('DiagnosticReport/'));
+  if (facts.stSegmentDeviation?.source) observed.push({ codeSystem: clinicalFactSystem, code: 'stSegmentDeviation', value: facts.stSegmentDeviation.value, unit: '1', observedAt: firstEcg?.findings.stSegmentDeviation !== undefined ? firstEcg.latest.virtual_at : assessment!.virtual_at, source: facts.stSegmentDeviation.source });
+  const biomarker = matched('troponin').find(item => item.interpretation && item.source.reference.startsWith('Observation/'));
   if (biomarker && ['high', 'normal', 'low'].includes(biomarker.interpretation!)) facts.elevatedCardiacBiomarker = sourced(biomarker.interpretation === 'high', biomarker.source);
   const scores = evaluateClinicalScores(facts);
   const currentCreatinine = matched('serumCreatinine').at(-1);
   const measuredEgfr = matched('egfr').at(-1);
   const egfr = measuredEgfr && (!currentCreatinine || Date.parse(measuredEgfr.observedAt) >= Date.parse(currentCreatinine.observedAt)) && typeof measuredEgfr.value === 'number' && /^mL\/min\/1\.73\s*m(?:2|²|\^2)$/i.test(measuredEgfr.unit) ? measuredEgfr.value : scores[0]!.value;
-  return { encounter, patient, age, pack, now, bedside, assessment, codes, catalog, byId, orders, reports, observed, facts, scores, firstEcg, biomarker, currentCreatinine, egfr, knowledge, caseView, diagnoses };
+  return { encounter, patient, age, pack, now, bedside, assessment, codes, catalog, byId, orders, reports, observed, facts, scores, firstEcg, biomarker, currentCreatinine, egfr, knowledge, caseView, diagnoses, historical };
 }
 export type ClinicalFacts = ReturnType<typeof clinicalFacts>;

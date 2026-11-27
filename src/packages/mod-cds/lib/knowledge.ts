@@ -4,13 +4,21 @@ import { localizedName, type ReadContext } from '../../platform';
 import { catalogCoding, sameCoding, type ClinicalFacts } from './facts';
 import { activeDrugs, completedPci, drugContraindication, drugDefinitions, incompatible, recentCreatinine, renalRisk } from './quality';
 
-const evidence = z.object({ codeSystem: z.string(), code: z.string(), unit: z.string(), value: z.union([z.number(), z.string()]), observedAt: z.iso.datetime(), source: z.object({ reference: z.string(), versionId: z.string(), label: z.string() }) });
-export const guidelinesSchema = z.object({ population: z.enum(['adult', 'pediatric', 'all-only']), topics: knowledgeSchema.shape.guidelineTopics, observations: z.array(evidence), missingInputs: z.array(z.string()) });
+const evidence = z.object({ codeSystem: z.string(), code: z.string(), unit: z.string(), value: z.union([z.number(), z.string(), z.boolean()]), observedAt: z.iso.datetime(), source: z.object({ reference: z.string(), versionId: z.string(), label: z.string() }) });
+const evidenceView = { observations: z.array(evidence), missingInputs: z.array(z.string()) };
+export const guidelinesSchema = z.object({ population: z.enum(['adult', 'pediatric', 'all-only']), topics: z.array(knowledgeSchema.shape.guidelineTopics.element.extend(evidenceView)), ...evidenceView });
 export function guidelines(data: ClinicalFacts) {
   const population = typeof data.age !== 'number' || data.age < 0 ? 'all-only' : data.age < 18 ? 'pediatric' : 'adult';
-  const topics = data.knowledge.guidelineTopics.filter(topic => topic.population === 'all' || topic.population === population);
-  const missing = topics.flatMap(topic => (topic.evidence ?? []).filter(code => !data.observed.some(item => sameCoding(code, item))).map(code => code.code));
-  return guidelinesSchema.parse({ population, topics, observations: data.observed, missingInputs: [...new Set([...missing, ...data.scores.flatMap(score => [...score.missingInputs])])] });
+  const topics = data.knowledge.guidelineTopics.filter(topic => topic.population === 'all' || topic.population === population).map(topic => {
+    const observations = [], missingInputs = [];
+    for (const coding of topic.evidence ?? data.historical?.topicEvidence[topic.id] ?? []) {
+      const fact = data.observed.filter(item => sameCoding(coding, item)).sort((first, second) => Date.parse(second.observedAt) - Date.parse(first.observedAt))[0];
+      if (fact) observations.push(fact);
+      else missingInputs.push(`${coding.codeSystem}|${coding.code}`);
+    }
+    return { ...topic, observations, missingInputs };
+  });
+  return guidelinesSchema.parse({ population, topics, observations: [...new Set(topics.flatMap(topic => topic.observations))], missingInputs: [...new Set(topics.flatMap(topic => topic.missingInputs))] });
 }
 
 const state = z.enum(['unavailable', 'excluded', 'skipped', 'needs-review', 'ready']);

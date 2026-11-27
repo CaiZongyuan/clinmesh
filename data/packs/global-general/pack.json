@@ -344,6 +344,12 @@
     "guidelineTopics": [
       {
         "id": "acute-chest-pain-troponin",
+          "evidence": [
+            { "codeSystem": "http://loinc.org", "code": "89579-7" },
+            { "codeSystem": "http://loinc.org", "code": "8480-6" },
+            { "codeSystem": "http://loinc.org", "code": "8867-4" },
+            { "codeSystem": "urn:clinmesh:clinical", "code": "stSegmentDeviation" }
+          ],
         "source": "https://doi.org/10.1161/CIR.0000000000001029",
         "version": "2021",
         "physicalPage": 3,
