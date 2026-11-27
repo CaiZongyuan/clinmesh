@@ -16,7 +16,7 @@ it.each([baseline, baselineV2, billingBaseline, patientBaseline])('imports $form
   try {
     await store.importLogicalSnapshot(previous);
     const upgraded = await store.exportLogicalSnapshot(previous.workspaceId);
-    expect(upgraded.format).toBe('clinmesh.snapshot.v6');
+    expect(upgraded.format).toBe('clinmesh.snapshot.v7');
     expect(upgraded.tables.slice(0, previous.tables.length)).toEqual(previous.tables);
     expect(upgraded.tables.slice(previous.tables.length).filter(table => table.name !== 'inventory_lot_quarantines').every(table => !table.rows.length)).toBe(true);
     const quarantines = upgraded.tables.find(table => table.name === 'inventory_lot_quarantines')!.rows;
@@ -30,6 +30,18 @@ it.each([baseline, baselineV2, billingBaseline, patientBaseline])('imports $form
 });
 
 const encoded = readFileSync(new URL('./fixtures/e3842543-v3.json.gz.b64', import.meta.url), 'utf8');
+it('restores the prior pharmacy snapshot and preserves its signed, dispensed and withdrawn records', async () => {
+  const archived = readFileSync(new URL('./fixtures/cc914872-v6.json.gz.b64', import.meta.url), 'utf8');
+  const previous = z.object({ format: z.literal('clinmesh.snapshot.v6'), workspaceId: z.uuidv7(), tables: z.array(z.object({ name: z.string(), rows: z.array(z.json()) })), pi: z.array(z.json()), sha256: z.literal('510bd9757b4072f6062cb9c28d76d5e348123c357e06c1897a110df44a7dc159') }).parse(JSON.parse(gunzipSync(Buffer.from(archived, 'base64')).toString()));
+  const store = createNodeSqliteStore({ dbPath: ':memory:' });
+  try {
+    await store.importLogicalSnapshot(previous);
+    const upgraded = await store.exportLogicalSnapshot(previous.workspaceId);
+    expect(upgraded.tables.slice(0, previous.tables.length)).toEqual(previous.tables);
+    expect(upgraded.tables.slice(previous.tables.length).every(table => !table.rows.length)).toBe(true);
+    for (const name of ['prescription_signatures', 'prescription_directions', 'prescription_withdrawals', 'dispenses']) expect(upgraded.tables.find(table => table.name === name)?.rows.length).toBeGreaterThan(0);
+  } finally { await store.close(); }
+});
 const completeBilling = z.object({ format: z.literal('clinmesh.snapshot.v3'), sha256: z.string(), workspaceId: z.uuidv7(),
   tables: z.array(z.object({ name: z.string(), rows: z.array(z.json()).nonempty() })).length(55), pi: z.array(z.json()).length(2) }).parse(JSON.parse(gunzipSync(Buffer.from(encoded, 'base64')).toString('utf8')));
 const completePatient = { ...completeBilling, format: 'clinmesh.snapshot.v4', sha256: patientDelta.sha256, tables: [
@@ -44,10 +56,10 @@ it.each([completeBilling, completePatient, completeLab])('restores all nonempty 
     const current = await store.exportLogicalSnapshot(previous.workspaceId);
     expect(current.tables.slice(0, previous.tables.length)).toEqual(previous.tables);
     const missing = [...(previous.format === 'clinmesh.snapshot.v3' ? ['patient_reply_runs', 'agent_model_calls'] : []), ...(previous.format !== 'clinmesh.snapshot.v5' ? ['lab_drafts', 'lab_requests'] : []), 'prescription_signatures', 'prescription_directions', 'prescription_withdrawals', 'inventory_lot_quarantines'];
-    expect(current.tables.slice(previous.tables.length).map(table => table.name)).toEqual(missing);
-    expect(current.tables.slice(previous.tables.length, -1).every(table => !table.rows.length)).toBe(true);
-    expect(current.tables.at(-1)?.rows).toMatchObject([{ source_sha256: previous.sha256, source_version: previous.format, quantity_at_migration: -3 }]);
+    expect(current.tables.slice(previous.tables.length).map(table => table.name)).toEqual([...missing, 'clinical_risk_assessments', 'clinical_override_reasons', 'patient_identity_versions', 'encounter_state_versions', 'clinical_order_versions']);
+    expect(current.tables.slice(previous.tables.length).filter(table => table.name !== 'inventory_lot_quarantines').every(table => !table.rows.length)).toBe(true);
+    expect(current.tables.find(table => table.name === 'inventory_lot_quarantines')?.rows).toMatchObject([{ source_sha256: previous.sha256, source_version: previous.format, quantity_at_migration: -3 }]);
     expect(current.pi).toEqual(previous.pi);
-    expect(current.format).toBe('clinmesh.snapshot.v6');
+    expect(current.format).toBe('clinmesh.snapshot.v7');
   } finally { await store.close(); }
 });

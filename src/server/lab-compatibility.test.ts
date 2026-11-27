@@ -12,13 +12,16 @@ import { createWorkspaceApp } from './workspace';
 it('opens the v2 cardiology snapshot with ECG and TTE available and rejects invasive angiography from the lab draft', async () => {
   const pack = structuredClone(cardiology);
   Reflect.deleteProperty(pack.knowledge, 'pharmacy');
+  Reflect.deleteProperty(pack.knowledge, 'cds');
+  Reflect.deleteProperty(pack.catalog.medications.find(item => item.code === 'dapagliflozin')!.safety, 'contraindicatedEgfrBelow');
   pack.manifest.version = '1.0.0';
   pack.catalog.services = pack.catalog.services.filter(service => service.kind !== 'registration');
   const rules = pack.knowledge.regionalRules['mod-drg-cn'];
   for (const key of ['diagnosisSystem', 'procedureSystem', 'tiers', 'catalogCoverage', 'plans']) Reflect.deleteProperty(rules, key);
-  for (const service of pack.catalog.services) Reflect.deleteProperty(service, 'requiresProcedure');
-  for (const patient of pack.cases) for (const result of patient.caseTruth.results) for (const observation of result.observations) {
-    Reflect.deleteProperty(observation, 'unit'); Reflect.deleteProperty(observation, 'interpretation');
+  for (const service of pack.catalog.services) { Reflect.deleteProperty(service, 'requiresProcedure'); Reflect.deleteProperty(service, 'modality'); }
+  for (const patient of pack.cases) for (const result of patient.caseTruth.results) {
+    Reflect.deleteProperty(result, 'stSegmentDeviation');
+    for (const observation of result.observations) { Reflect.deleteProperty(observation, 'unit'); Reflect.deleteProperty(observation, 'interpretation'); }
   }
   const digest = (value: unknown) => createHash('sha256').update(canonicalJson(z.json().parse(value))).digest('hex');
   expect(digest(pack)).toBe('a78c9f8b3f84b1f35a4e48393d8eda2615c314c4570844b7b4a55749db5e83a3');

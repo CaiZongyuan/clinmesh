@@ -129,6 +129,11 @@ export const tables = {
   prescription_directions: table({ order_id: order, directions: column(signedDirections, 'json') }, 'order_id'),
   prescription_withdrawals: table({ prescription_id: ref('prescriptions'), actor: text, practitioner_role: text, reason: text, ...times }, 'prescription_id'),
   inventory_lot_quarantines: table({ id: lot, source_version: choice('clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', 'clinmesh.snapshot.v4', 'clinmesh.snapshot.v5', 'sqlite.schema.v1', 'sqlite.schema.v2', 'sqlite.schema.v3', 'sqlite.schema.v4'), source_sha256: optional(digest), quantity_at_migration: column(z.int().negative(), 'integer', name => `${name} < 0`), ledger_fingerprint: column(z.uuid({ version: 'v5' })) }),
+  clinical_risk_assessments: revisions('clinical_risk_assessments', 'encounter_id', { encounter_id: enc, fields: frozen, signed_by: text }),
+  clinical_override_reasons: table({ id: ref('clinical_overrides'), audit_id: ref('audit_events'), reason_code: text, command_name: text }, 'audit_id'),
+  patient_identity_versions: table({ patient_id: id, version, display_name: text, birth_date: optional(column(z.iso.date())), replaced_at: timestamp }, 'patient_id, version'),
+  encounter_state_versions: table({ encounter_id: enc, version, status: text, practitioner_role: text, replaced_at: timestamp }, 'encounter_id, version'),
+  clinical_order_versions: table({ order_id: order, version, status: text, replaced_at: timestamp }, 'order_id, version'),
 } satisfies Record<string, TableDefinition>;
 
 export type Entity = keyof typeof tables;
@@ -138,6 +143,7 @@ export const entityNames = Object.keys(tables) as Entity[];
 export const billingEntities = ['charge_sources', 'billing_previews', 'billing_attempts', 'billing_recoveries', 'billing_releases', 'billing_settlements'] as const satisfies readonly Entity[];
 export const pharmacyEntities = ['prescription_signatures', 'prescription_directions', 'prescription_withdrawals', 'inventory_lot_quarantines'] as const satisfies readonly Entity[];
 export const labEntities = ['lab_drafts', 'lab_requests'] as const satisfies readonly Entity[];
+export const decisionEntities = ['clinical_risk_assessments', 'clinical_override_reasons', 'patient_identity_versions', 'encounter_state_versions', 'clinical_order_versions'] as const satisfies readonly Entity[];
 
 export const editable = {
   patients: ['display_name', 'birth_date'], encounters: ['active_practitioner_role', 'status'], consultations: ['reply_pending'],

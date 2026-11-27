@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import type { EncounterView } from '../packages/clinical-core';
 
-type Drafts = { note?: { fields: Record<string, string>; version: number }; diagnoses?: { items: EncounterView['diagnoses']; baseline: EncounterView['diagnoses']; version: number }; acknowledgedVersion: number };
+export type StagedMember = { catalogId: string; codeSystem: string; code: string; kind: string };
+type Drafts = { orderSet?: { templateId: string; members: StagedMember[] }; note?: { fields: Record<string, string>; version: number }; diagnoses?: { items: EncounterView['diagnoses']; baseline: EncounterView['diagnoses']; version: number }; acknowledgedVersion: number };
 export const createEncounterDrafts = () => create<Drafts>(() => ({ acknowledgedVersion: 0 }));
 export type EncounterDrafts = ReturnType<typeof createEncounterDrafts>;
 

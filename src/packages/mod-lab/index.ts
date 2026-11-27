@@ -6,6 +6,7 @@ import { clinicalServices, issueOrders, labOrders, legacyProcedure, savedDraft, 
 import { moveOrder, publishDue, readOrder, reportsReviewed, reviewReport } from './lib/reports';
 
 export { labViewSchema, issueReceipt, type LabView, type LabOrder, type LabBillingPort } from './lib/contracts';
+export { findings as signedFindingsSchema } from './lib/contracts';
 
 const base = '/api/his/encounters/:id/lab';
 const sign = { capabilities: ['sign'], visitorOnly: true };

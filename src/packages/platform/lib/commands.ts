@@ -11,7 +11,8 @@ export const practitionerRole = z.object({ id: z.string(), name: localizedName, 
 const organization = z.object({ practitionerRoles: z.array(practitionerRole) });
 export type Access = { capabilities?: readonly string[]; visitorOnly?: boolean };
 export type Actor = ReturnType<typeof resolveActor>;
-export type CommandContext = { tx: StoreTx; at: StoreScope; actor: Actor; targetId: string; expectedVersion: number; virtualAt: string; recordedAt: string; checkClinicalQuality?(intent: ClinicalQualityIntent, clinicalOverride?: unknown): void };
+export type CommandContext = { tx: StoreTx; at: StoreScope; actor: Actor; targetId: string; expectedVersion: number; virtualAt: string; recordedAt: string; checkClinicalQuality?(intent: ClinicalQualityIntent, clinicalOverride?: unknown): readonly string[] | void };
+export type ClinicalQualityGate = (context: CommandContext, intent: ClinicalQualityIntent, clinicalOverride: unknown, operation: string) => readonly string[] | void;
 export type Route = { name: string; method: 'GET' | 'PUT' | 'POST'; path: string; access: Access; moduleId?: string };
 
 export function resolveActor(reader: StoreReader, credential: Credential, now: string) {

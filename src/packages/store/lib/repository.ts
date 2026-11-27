@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { v7 } from 'uuid';
 import { canonicalJson, type JsonValue } from './json';
 import { editable, entityNames, epoch, scope, tables, uuid, workspace, type Changes, type Column, type EditableEntity, type Entity, type EntityRow, type PublicEntity, type StoreScope, type TableDefinition, type Workspace, type WorkspaceEpoch } from './schema';
 import type { SqlConnection, SqlRow, SqlValue } from './sqlite';
@@ -184,7 +185,14 @@ export function createRepository(db: SqlConnection, checkOpen: () => void): Stor
       if (patch.some(([key]) => !allowed.includes(key))) throw new Error('Invalid update fields');
       const fields = definitions[name].fields;
       const values: [string, SqlValue][] = patch.filter(([, value]) => value !== undefined).map(([key, value]) => [key, encoded(fields[key]!, value)]);
+      const previous = !values.length ? undefined : name === 'patients' ? tx.get(at, 'patients', id) : name === 'encounters' ? tx.get(at, 'encounters', id) : name === 'clinical_orders' ? tx.get(at, 'clinical_orders', id) : undefined;
       applyPatch(name, `${isolation} AND id = ?`, [...keys(at), uuid.parse(id)], 'version', z.int().positive().parse(expected), values);
+      if (previous) {
+        const archived = { id: v7(), version: previous.version, replaced_at: new Date().toISOString() };
+        if ('display_name' in previous) tx.insert(at, 'patient_identity_versions', { ...archived, patient_id: id, display_name: previous.display_name, birth_date: previous.birth_date });
+        else if ('active_practitioner_role' in previous) tx.insert(at, 'encounter_state_versions', { ...archived, encounter_id: id, status: previous.status, practitioner_role: previous.active_practitioner_role });
+        else tx.insert(at, 'clinical_order_versions', { ...archived, order_id: id, status: previous.status });
+      }
     },
     remove(at, name, id, expected) {
       if (!removable.includes(name)) throw new Error('Deletion is restricted');

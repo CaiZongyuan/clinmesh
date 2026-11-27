@@ -54,10 +54,11 @@ export function registerClinicalOperations(catalog: OperationCatalog, registry: 
     requireEncounter(reader, actor.at, targetId);
     return completion(reader, actor.at, targetId, clinicalState(reader, actor.at, targetId), registry, actor.enabledModules);
   });
-  catalog.command({ name: 'encounter.complete', method: 'POST', path: `${base}/complete`, access: sign }, {}, version, context => {
+  catalog.command({ name: 'encounter.complete', method: 'POST', path: `${base}/complete`, access: sign }, { clinicalOverride: z.unknown().optional() }, version, (context, input) => {
     const { tx, at, targetId, actor } = context;
     const nextVersion = editEncounter(context, 'completed', () => {
       if (!completion(tx, at, targetId, clinicalState(tx, at, targetId), registry, actor.enabledModules).ready) throw new CoreError(409, 'COMPLETION_BLOCKED');
+      context.checkClinicalQuality?.({ kind: 'complete', encounterId: targetId }, input.clinicalOverride);
     });
     return { version: nextVersion };
   });

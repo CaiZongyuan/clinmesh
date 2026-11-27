@@ -1,21 +1,20 @@
 import { z } from 'zod';
 import type { StorePort, StoreReader } from '../../store';
-import { authorize, commandEnvelope, executeCommand, resolveActor, type Actor, type CommandContext, type Route } from './commands';
+import { authorize, commandEnvelope, executeCommand, resolveActor, type Actor, type ClinicalQualityGate, type CommandContext, type Route } from './commands';
 import { CoreError, type Credential } from './visitor-gate';
-import type { ClinicalQualityGate } from './clinical-quality';
 
-export type ReadContext = { reader: StoreReader; actor: Actor; targetId: string };
+export type ReadContext = { reader: StoreReader; actor: Actor; targetId: string; availableModules?: readonly string[] };
 type Call = { store: StorePort; credential: Credential; targetId: string; body(): Promise<unknown>; providerHeaders?: Headers };
 type Result = z.core.util.JSONType;
 type Definition = Route & { assistantRead?: 'encounter'; input: z.ZodType; output: z.ZodType; invoke(call: Call): Promise<Result> };
 
 export class OperationCatalog {
   readonly #entries: Definition[] = [];
-  constructor(private readonly moduleId?: string, private readonly clinicalQuality?: ClinicalQualityGate) {}
+  constructor(private readonly moduleId?: string, private readonly clinicalQuality?: ClinicalQualityGate, private readonly installedModules?: readonly string[]) {}
   get entries(): readonly Definition[] { return this.#entries; }
 
   contribute(moduleId: string | undefined, register: (catalog: OperationCatalog) => void) {
-    const contribution = new OperationCatalog(moduleId, this.clinicalQuality);
+    const contribution = new OperationCatalog(moduleId, this.clinicalQuality, this.installedModules);
     register(contribution);
     for (const entry of contribution.entries) this.add(entry);
   }
@@ -30,7 +29,7 @@ export class OperationCatalog {
     this.add({ ...route, method: 'GET', input: z.strictObject({}), output, invoke: ({ store, credential, targetId }) => store.read(reader => {
       const actor = resolveActor(reader, credential, new Date().toISOString());
       authorize(actor, route);
-      return output.parse(read({ reader, actor, targetId }));
+      return output.parse(read({ reader, actor, targetId, availableModules: this.installedModules?.filter(id => actor.enabledModules.includes(id)) }));
     }) });
   }
 

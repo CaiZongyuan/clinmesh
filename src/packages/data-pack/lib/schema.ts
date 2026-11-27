@@ -53,11 +53,12 @@ export const medication = concept.extend({
   inpatientDoseBasis: z.strictObject({ amount: positive, unit: text }),
   safety: z.strictObject({
     classCodes: texts.min(1), allergyGroupCodes: texts, indicationPrefixes: texts,
-    maxSingleDose: positive, maxDailyDose: positive, contraindicatedEgfrBelow: positive.optional(),
+    maxSingleDose: positive, maxDailyDose: positive, contraindicatedEgfrBelow: positive.optional(), minimumHeartRate: positive.optional(), minimumSystolic: positive.optional(),
   }),
   packageInsertSummary: bilingual, unitPriceMinor: money, insuranceTier: text.optional(),
 });
 const service = concept.extend({
+  modality: z.enum(['ecg-12-lead', 'coronary-angiography']).optional(),
   kind: z.enum(['lab', 'examination', 'imaging', 'pathology', 'nursing', 'registration']),
   unitPriceMinor: money, unit: text, analytes: z.array(analyte),
   turnaroundMinutes: z.int().min(1).max(10080).optional(), requiresProcedure: z.boolean().optional(),
@@ -78,9 +79,10 @@ export const pharmacyKnowledge = pharmacyRules.extend({ openingStock: z.array(st
 const member = coding.extend({ kind: z.enum(['medications', 'services', 'procedures', 'materials']) });
 export const knowledge = z.strictObject({
   pharmacy: pharmacyKnowledge.optional(),
+  cds: z.strictObject({ diagnosticSystems: z.array(z.url()), ffrAnalytes: z.array(coding), pciProcedures: z.array(coding) }).optional(),
   guidelineTopics: z.array(z.strictObject({
     id: text, source: z.httpUrl(), version: text, physicalPage: z.int().positive(), verbatim: text, qualifiers: texts,
-    population: z.enum(['adult', 'pediatric', 'all']),
+    population: z.enum(['adult', 'pediatric', 'all']), evidence: z.array(coding).optional(),
   })),
   orderSetTemplates: z.array(named.extend({
     scope: z.enum(['outpatient', 'inpatient', 'postop']), triggerDiagnoses: z.array(coding), members: z.array(member).min(1),
@@ -110,7 +112,7 @@ const asset = text.refine(value => {
   if (value.startsWith('https://')) return z.httpUrl().safeParse(value).success;
   return /^(?:[\w-]+\/)*[\w.-]+\.(?:webp|png|jpe?g)$/i.test(value) && !value.includes('..');
 });
-const authoredFindings = z.strictObject({ service: coding, summary: bilingual,
+const authoredFindings = z.strictObject({ service: coding, summary: bilingual, stSegmentDeviation: z.boolean().optional(),
   observations: z.array(observation.extend({ unit: text.optional(), interpretation: z.enum(['normal', 'high', 'low', 'abnormal']).optional() })),
 });
 const result = authoredFindings.extend({

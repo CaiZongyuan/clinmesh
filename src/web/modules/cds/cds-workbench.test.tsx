@@ -1,0 +1,48 @@
+// @vitest-environment jsdom
+import '../../../../scripts/testing/ui-sdk-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, expect, it, vi } from 'vitest';
+import { withNodeWorkspace } from '../../../../scripts/testing/node-workspace';
+import { openPharmacySession } from '../../../../scripts/testing/pharmacy-session';
+import { createClinMeshUiAgent, ThemeFontProvider } from '../../../packages/ui-kit';
+import { App } from '../../App';
+
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+it('stages screened investigations and accepts a human-confirmed clinical override in the actual workbench', async () => {
+  const transport = globalThis.fetch;
+  vi.stubGlobal('matchMedia', () => Object.assign(new EventTarget(), { matches: true }));
+  const agent = createClinMeshUiAgent();
+  const person = userEvent.setup();
+  const act = (ref: string, action: 'press' | 'setValue', args?: string[]) => agent.act({ steps: [{ ref, action, args }] });
+  await withNodeWorkspace(async origin => {
+    const session = await openPharmacySession((path, init) => transport(origin + path, init));
+    const path = await session.start('Riley Dale', 'J06.9');
+    vi.stubGlobal('fetch', (path: string, init?: RequestInit) => transport(origin + path, { ...init, headers: { ...init?.headers, cookie: session.cookie } }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><ThemeFontProvider><App/></ThemeFontProvider></QueryClientProvider>);
+    await screen.findByRole('tab', { name: 'Decision support' });
+    expect((await act('Clinical views', 'setValue', ['Decision support'])).ok).toBe(true);
+    await screen.findByText('Clinical risk scores');
+    expect(screen.getByText(/High-sensitivity cardiac troponins are the preferred standard/)).toBeDefined();
+    expect((await act('Acute chest pain assessment', 'press')).ok).toBe(true);
+    await screen.findByRole('button', { name: 'Fill draft' });
+    expect((await act('Fill draft', 'press')).ok).toBe(true);
+    await screen.findByText('Draft ready for review in the order editor.');
+    expect(await session.get(`${path}/lab`)).toMatchObject({ orders: [], draft: { items: [expect.any(Object), expect.any(Object)] } });
+    await act('Close order set', 'press');
+    await act('Clinical views', 'setValue', ['Prescriptions']);
+    await screen.findByRole('button', { name: 'Add · Doxycycline' });
+    await act('Add · Doxycycline', 'press');
+    await person.click(screen.getByRole('button', { name: 'Sign prescription' }));
+    await screen.findByText('Clinical pathway alert');
+    const select = screen.getByRole('combobox', { name: 'Override reason' });
+    await person.click(select);
+    await person.click(await screen.findByRole('option', { name: 'External result verified' }));
+    await person.type(screen.getByRole('textbox', { name: 'Clinical explanation' }), 'Reviewed documented outside culture.');
+    expect((await act('Confirm clinical override', 'press')).ok).toBe(false);
+    await person.click(screen.getByRole('button', { name: 'Confirm clinical override' }));
+    await waitFor(async () => expect(await session.get(`${path}/prescriptions`)).toMatchObject({ prescriptions: [{ status: 'signed' }] }));
+  });
+}, 45000);
