@@ -42,6 +42,7 @@ export function startEncounter(context: CommandContext, language?: 'en' | 'zh') 
   tx.insert(at, 'encounters', { id: encounterId, patient_id: patientId, source_case_id: targetId, encounter_class: patientCase.encounterClass,
     active_practitioner_role: role.id, version: 1, status: 'active', ...times });
   tx.insert(at, 'encounter_triage', { id: v7(), encounter_id: encounterId, vitals: patientCase.triageVitals, ...times });
+  tx.insert(at, 'pi_sessions', { id: encounterId, encounter_id: encounterId, agent: 'patient' });
   tx.insert(at, 'consultations', { id: consultationId, encounter_id: encounterId, reply_pending: false, version: 1 });
   const opening = z.object({ openingStatement: localizedName }).parse(tx.list(at, 'case_personas', { case_id: targetId })[0]?.persona);
   const manifest = tx.list(at, 'data_pack_installations')[0]!.manifest;

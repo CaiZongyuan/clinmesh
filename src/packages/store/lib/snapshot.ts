@@ -5,10 +5,11 @@ import { createReader, createRepository, readEntity, writeEntity } from './repos
 import { billingEntities, entityNames, epoch as epochFields, tables, uuid, workspace as workspaceFields, type TableDefinition } from './schema';
 import type { SqlConnection } from './sqlite';
 
-const format = 'clinmesh.snapshot.v3';
+const format = 'clinmesh.snapshot.v4';
+const firstTableByVersion = { 'clinmesh.snapshot.v1': 'encounter_triage', 'clinmesh.snapshot.v2': billingEntities[0], 'clinmesh.snapshot.v3': 'patient_reply_runs' } as const;
 const record = z.record(z.string(), z.json());
 const snapshotSchema = z.strictObject({
-  format: z.enum(['clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', format]), workspaceId: uuid,
+  format: z.enum(['clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', format]), workspaceId: uuid,
   tables: z.array(z.strictObject({ name: z.string(), rows: z.array(record) })),
   pi: z.array(piImage), sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
@@ -27,10 +28,10 @@ export async function seal(content: SnapshotContent): Promise<LogicalSnapshot> {
 export async function verifySnapshot(input: unknown): Promise<SnapshotContent> {
   const { sha256, ...content } = snapshotSchema.parse(input);
   if ((await seal(content)).sha256 !== sha256) throw new StoreSnapshotError('Snapshot digest mismatch');
-  const missing = content.format === format ? [] : [...(content.format === 'clinmesh.snapshot.v1' ? ['encounter_triage'] : []), ...billingEntities];
-  const expected = ['workspaces', 'workspace_epochs', ...entityNames.filter(name => !missing.includes(name))];
+  const count = content.format === format ? entityNames.length : entityNames.indexOf(firstTableByVersion[content.format]);
+  const expected = ['workspaces', 'workspace_epochs', ...entityNames.slice(0, count)];
   if (content.tables.length !== expected.length || content.tables.some((table, index) => table.name !== expected[index])) throw new StoreSnapshotError('Incomplete or unordered snapshot tables');
-  return { ...content, format, tables: [...content.tables, ...missing.map(name => ({ name, rows: [] }))] };
+  return { ...content, format, tables: [...content.tables, ...entityNames.slice(count).map(name => ({ name, rows: [] }))] };
 }
 
 export function capture(db: SqlConnection, workspaceId: string): SnapshotContent {

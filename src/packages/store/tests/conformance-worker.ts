@@ -15,4 +15,4 @@ export class ConformanceObject extends WorkspaceDurableObject<TestEnv> {
   }
 }
 
-export default { fetch(request: Request, env: TestEnv) { return env.STORE.getByName(request.method === 'POST' ? 'node-import' : 'source').fetch(request); } };
+export default { fetch(request: Request, env: TestEnv) { return env.STORE.getByName(new URL(request.url).pathname).fetch(request); } };

@@ -2,7 +2,7 @@ import { v7 } from 'uuid';
 import { z } from 'zod';
 
 export class CoreError extends Error {
-  constructor(readonly status: 400 | 401 | 403 | 404 | 409 | 503, readonly code: string, readonly details?: Readonly<Record<string, string | number>>) { super(code); }
+  constructor(readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 429 | 502 | 503 | 504, readonly code: string, readonly details?: Readonly<Record<string, string | number>>) { super(code); }
 }
 
 const identity = z.strictObject({ kind: z.literal('visitor'), workspaceId: z.uuidv7(), id: z.uuidv7(), expiresAt: z.iso.datetime() });

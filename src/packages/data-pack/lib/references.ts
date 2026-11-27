@@ -27,7 +27,7 @@ function reference<Item>(index: ReadonlyMap<string, Item>, id: string, path: str
 }
 
 function normalized(value: string) {
-  return value.normalize('NFKC').toLowerCase().replace(/[\u200b-\u200d\ufeff]/gu, '').replace(/\s+/gu, ' ');
+  return value.normalize('NFKC').toLowerCase().replace(/\p{Cf}/gu, '').replace(/\s+/gu, ' ');
 }
 
 function termPattern(term: string) {
@@ -73,21 +73,30 @@ function mentionsCode(text: string, byInitial: ReadonlyMap<string, string[]>, hi
   return false;
 }
 
-function checkPersona(patient: ClinicalCase, diagnoses: ReadonlyMap<string, Diagnosis>, codes: ReturnType<typeof registeredCodes>) {
-  const known = new Set(patient.priorHistory.diagnoses.map(codingKey));
+export function diagnosisDisclosureGuard(catalog: Diagnosis[]) {
+  const codes = registeredCodes(catalog);
+  const diagnoses = indexBy(catalog, codingKey, 'catalog.diagnoses');
+  return (prior: Coding[], answers: Coding[]) => {
+    const known = new Set(prior.map(codingKey));
+    const hidden = answers.filter(item => !known.has(codingKey(item))).map(item => reference(diagnoses, codingKey(item), 'caseTruth.diagnoses'));
+    const groups = Array.from(groupBy(hidden, item => item.codeSystem), ([system, entries]) => {
+      const hiddenCodes = new Set(entries.map(entry => normalized(entry.code)));
+      const names = entries.flatMap(entry => [entry.display.en, entry.display.zh, ...entry.aliases ?? []])
+        .filter(name => !hiddenCodes.has(normalized(name))).map(termPattern);
+      return { registered: codes.get(system)!, hiddenCodes, names };
+    });
+    return (speech: string) => {
+      const field = normalized(speech);
+      return !groups.some(({ registered, hiddenCodes, names }) => mentionsCode(field, registered, hiddenCodes) || names.some(pattern => pattern.test(field)));
+    };
+  };
+}
+
+function checkPersona(patient: ClinicalCase, guard: ReturnType<typeof diagnosisDisclosureGuard>) {
+  const accepts = guard(patient.priorHistory.diagnoses, [patient.caseTruth.primaryDiagnosis, ...patient.caseTruth.secondaryDiagnoses]);
   const persona = patient.patientPersona;
-  const speech = [persona.character, persona.healthLiteracy, persona.speechStyle, persona.openingStatement, ...persona.symptoms, persona.medicationMemory, ...persona.boundaries]
-    .flatMap(field => [normalized(field.en), normalized(field.zh)]);
-  const hidden = [patient.caseTruth.primaryDiagnosis, ...patient.caseTruth.secondaryDiagnoses]
-    .filter(item => !known.has(codingKey(item))).map(item => reference(diagnoses, codingKey(item), 'caseTruth.diagnoses'));
-  for (const [system, entries] of groupBy(hidden, item => item.codeSystem)) {
-    const hiddenCodes = new Set(entries.map(entry => normalized(entry.code)));
-    const names = entries.flatMap(entry => [entry.display.en, entry.display.zh, ...entry.aliases ?? []])
-      .filter(name => !hiddenCodes.has(normalized(name))).map(termPattern);
-    if (speech.some(field => mentionsCode(field, codes.get(system)!, hiddenCodes) || names.some(pattern => pattern.test(field)))) {
-      throw new DataPackError('PERSONA_TRUTH_LEAK', 'patientPersona');
-    }
-  }
+  const speech = [persona.character, persona.healthLiteracy, persona.speechStyle, persona.openingStatement, ...persona.symptoms, persona.medicationMemory, ...persona.boundaries];
+  if (speech.some(field => !accepts(field.en) || !accepts(field.zh))) throw new DataPackError('PERSONA_TRUTH_LEAK', 'patientPersona');
 }
 
 function checkOrganization({ manifest, organization, catalog }: HospitalDataPack) {
@@ -170,7 +179,7 @@ export function validateReferences(pack: HospitalDataPack) {
     }
   }
   indexBy(pack.cases, item => JSON.stringify([item.caseId, item.version]), 'cases');
-  const codes = registeredCodes(catalog.diagnoses);
+  const guard = diagnosisDisclosureGuard(catalog.diagnoses);
   for (const patient of pack.cases) {
     indexBy(patient.demographics.identifiers, id => JSON.stringify([id.issuer, id.value]), 'demographics.identifiers');
     requireCodes('diagnoses', patient.priorHistory.diagnoses, 'priorHistory.diagnoses');
@@ -189,7 +198,7 @@ export function validateReferences(pack: HospitalDataPack) {
     requireCodes('materials', truth.expectedMaterials ?? [], 'expectedMaterials');
     if (truth.noMedication && truth.expectedMedications?.length) throw new DataPackError('INVALID_PACK', 'noMedication');
     checkResults(truth.results, entries.services);
-    checkPersona(patient, entries.diagnoses, codes);
+    checkPersona(patient, guard);
   }
   return entries;
 }

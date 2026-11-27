@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { editEncounter, readVisit, requireEncounter, submitQuestion, turnInput } from '../../patient-visit';
+import { editEncounter, readVisit, requireEncounter } from '../../patient-visit';
 import { CoreError, type ModuleRegistry, type OperationCatalog } from '../../platform';
 import type { StoreReader, StoreScope } from '../../store';
 import { confirmDiagnoses, currentRecordFields, diagnosisState, patientPresentation, recordState, retiredRecordFields, sameRecord, saveDiagnoses, saveRecord, signRecord } from './records';
@@ -44,8 +44,6 @@ export function registerClinicalOperations(catalog: OperationCatalog, registry: 
     const state = clinicalState(reader, actor.at, targetId);
     return { ...visit, ...state, completion: completion(reader, actor.at, targetId, state, registry, actor.enabledModules) };
   });
-  catalog.command({ name: 'consultation.question', method: 'POST', path: `${base}/consultation/turns`, access: assess }, turnInput.shape,
-    version.extend({ turnId: z.uuidv7() }), (context, { channel, content }) => submitQuestion(context, { channel, content }));
   catalog.command({ name: 'record.draft', method: 'PUT', path: `${base}/clinical-record/draft`, access: assess }, { expectedDraftVersion: z.int().nonnegative(), fields: noteFields },
     version.extend({ draftVersion: z.int() }), (context, input) => saveRecord(context, input.fields, input.expectedDraftVersion));
   catalog.command({ name: 'record.sign', method: 'POST', path: `${base}/clinical-record/sign`, access: sign }, { expectedDraftVersion: z.int().nonnegative().optional(), retiredReview: retiredReview.optional() },

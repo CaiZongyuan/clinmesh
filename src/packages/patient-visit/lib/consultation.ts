@@ -8,7 +8,7 @@ export const turnInput = z.strictObject({ content: z.string().trim().min(1).max(
 function append(tx: StoreTx, at: StoreScope, encounterId: string, speaker: 'clinician' | 'patient', input: z.infer<typeof turnInput>, virtualAt: string, recordedAt: string, questionId?: string) {
   const consultation = tx.list(at, 'consultations', { encounter_id: encounterId })[0]!;
   const pending = speaker === 'clinician';
-  if (consultation.reply_pending === pending) throw new CoreError(409, pending ? 'PATIENT_REPLY_PENDING' : 'NO_PENDING_QUESTION');
+  if (consultation.reply_pending === pending) throw new CoreError(409, pending ? 'CONSULTATION_REPLY_IN_FLIGHT' : 'NO_PENDING_QUESTION');
   const turns = tx.list(at, 'consultation_turns', { consultation_id: consultation.id });
   if (questionId && !turns.some(turn => turn.ordinal === turns.length && turn.id === questionId && turn.speaker === 'clinician')) throw new CoreError(409, 'QUESTION_CHANGED');
   tx.update(at, 'consultations', consultation.id, consultation.version, { reply_pending: pending });

@@ -95,7 +95,7 @@ export const priorHistory = z.strictObject({
 });
 export const demographics = z.strictObject({ name: text, sex, birthDate: z.iso.date(), identifiers: z.array(z.strictObject({ issuer: text, value: text })).min(1) });
 export const triageVitals = z.strictObject({ temperatureC: positive, heartRateBpm: positive, respiratoryRate: positive, systolicMmHg: positive, diastolicMmHg: positive, spo2Percent: positive.max(100) });
-const persona = z.strictObject({
+export const persona = z.strictObject({
   character: bilingual, healthLiteracy: bilingual, speechStyle: bilingual, openingStatement: bilingual,
   symptoms: z.array(bilingual).min(1), medicationMemory: bilingual, boundaries: z.array(bilingual).min(1),
 });
