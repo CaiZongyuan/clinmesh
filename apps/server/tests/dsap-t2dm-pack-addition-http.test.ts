@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { rm } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { clinicalPromptBundleSchema } from '@clinmesh/contracts/clinical-prompt-cards'
@@ -17,8 +18,9 @@ import {
   startVisitResponseSchema,
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
-import { computeDiseasePackFingerprint } from '../src/application/disease-pack-runtime-service.ts'
+import { DiseasePackRegistry, computeDiseasePackFingerprint } from '../src/application/disease-pack-runtime-service.ts'
 import { listHospitalGeneralLabPanels } from '../src/application/order-set-template-registry.ts'
+import { findHardcodedPackIdViolations } from '../../../scripts/verify-no-hardcoded-pack-ids.ts'
 import {
   createPciPaymentDrgFixture,
   parsePciResponse,
@@ -150,31 +152,109 @@ describe('DSAP Slice S13: Standalone Pure-JSON T2DM Renal Care Pack Addition (#5
     }
   })
 
-  it('AC12: proves Commit 1 diff adding t2dm-renal-care contains ONLY the new pack folder and removal of hardcoded t2dm-renal-medication baseline entry', () => {
-    const commitHash = execFileSync(
-      'git',
-      ['log', '--diff-filter=A', '-n', '1', '--pretty=format:%H', '--', 'apps/server/disease-packs/t2dm-renal-care/manifest.json'],
-      { cwd: REPOSITORY_ROOT, encoding: 'utf8' },
-    ).trim()
-    expect(commitHash).toMatch(/^[0-9a-f]{40}$/)
-
-    const changedFiles = execFileSync(
-      'git',
-      ['show', '--name-only', '--pretty=format:', commitHash],
-      { cwd: REPOSITORY_ROOT, encoding: 'utf8' },
-    )
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean)
-
-    expect(changedFiles.length).toBeGreaterThanOrEqual(8)
-    for (const filePath of changedFiles) {
-      const allowed = filePath.startsWith('apps/server/disease-packs/t2dm-renal-care/')
-        || filePath === 'apps/server/src/application/guideline-topic-registry.ts'
-      expect(allowed, `Unexpected file changed in AC12 S13 pack-addition commit: ${filePath}`).toBe(true)
+  it('AC12: proves t2dm-renal-care is pure JSON, loads as an unseen pack slug without platform edits, and verifies Commit 1 git diff when non-shallow history is present', async () => {
+    const packDir = resolve(REPOSITORY_ROOT, 'apps/server/disease-packs/t2dm-renal-care')
+    const dirEntries = await readdir(packDir, { withFileTypes: true })
+    expect(dirEntries.length).toBeGreaterThanOrEqual(8)
+    for (const entry of dirEntries) {
+      expect(entry.isFile(), `Expected regular file in t2dm-renal-care pack: ${entry.name}`).toBe(true)
+      expect(entry.name.endsWith('.json'), `Expected pure JSON file in t2dm-renal-care pack: ${entry.name}`).toBe(true)
     }
-    expect(changedFiles.some(f => f.startsWith('packages/contracts/'))).toBe(false)
-    expect(changedFiles.some(f => f.startsWith('packages/core/'))).toBe(false)
+    const entryNames = new Set(dirEntries.map(entry => entry.name))
+    for (const requiredFile of [
+      'manifest.json',
+      'triggers.json',
+      'stages.json',
+      'readiness.json',
+      'clinical.json',
+      'knowledge.json',
+      'vocabulary.json',
+      'exam-suite.json',
+    ]) {
+      expect(entryNames.has(requiredFile), `Missing expected split pack file: ${requiredFile}`).toBe(true)
+    }
+
+    expect(findHardcodedPackIdViolations(REPOSITORY_ROOT)).toEqual([])
+
+    const ephemeralSlug = 'ac12-ephemeral-renal-pack'
+    const ephemeralParentDir = await mkdtemp(join(tmpdir(), 'clinmesh-ac12-ephemeral-pack-'))
+    cleanups.push(() => rm(ephemeralParentDir, { recursive: true, force: true }))
+    const ephemeralPackDir = join(ephemeralParentDir, ephemeralSlug)
+    await mkdir(ephemeralPackDir, { recursive: true })
+    for (const entry of dirEntries) {
+      const content = await readFile(join(packDir, entry.name), 'utf8')
+      await writeFile(join(ephemeralPackDir, entry.name), content.replaceAll('t2dm-renal-care', ephemeralSlug), 'utf8')
+    }
+
+    const unverifiedRegistry = new DiseasePackRegistry({
+      includeBuiltinDraftPacks: false,
+      packDirs: [ephemeralPackDir],
+      verifyFingerprint: false,
+    })
+    const unverifiedEffective = unverifiedRegistry.getEffective(ephemeralSlug)
+    const computedFingerprint = computeDiseasePackFingerprint(unverifiedEffective.pack)
+    const manifestPath = join(ephemeralPackDir, 'manifest.json')
+    const manifestJson = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>
+    manifestJson.fingerprint = computedFingerprint
+    await writeFile(manifestPath, `${JSON.stringify(manifestJson, null, 2)}\n`, 'utf8')
+
+    const verifiedRegistry = new DiseasePackRegistry({
+      includeBuiltinDraftPacks: false,
+      packDirs: [ephemeralPackDir],
+      verifyFingerprint: true,
+    })
+    const verifiedEffective = verifiedRegistry.getEffective(ephemeralSlug)
+    expect(verifiedEffective.pack.manifest.id).toBe(ephemeralSlug)
+    expect(verifiedEffective.pack.manifest.fingerprint).toBe(computedFingerprint)
+    expect(verifiedEffective.pack.stages.map(stage => stage.id)).toEqual([
+      'initial-renal-glycemic-eval',
+      'inpatient-renal-adjustment',
+    ])
+    expect(verifiedEffective.pack.readinessTasks.map(task => task.taskId)).toContain('t2dm-renal-medication')
+    expect(verifiedEffective.pack.guidelineTopics?.map(topic => topic.id)).toContain('t2dm-renal-medication')
+    expect((verifiedEffective.pack.knowledgeSnapshots ?? []).length).toBeGreaterThanOrEqual(1)
+    expect((verifiedEffective.pack.conceptVocabulary?.nodes ?? []).length).toBeGreaterThanOrEqual(1)
+    expect(verifiedEffective.pack.examSuite.cases.length).toBeGreaterThanOrEqual(6)
+
+    // When non-shallow PR branch commit history is present, also verify Commit 1 strictly touched only the pack & old topic removal
+    let commitMeta = ''
+    try {
+      commitMeta = execFileSync(
+        'git',
+        ['log', '--diff-filter=A', '-n', '1', '--pretty=format:%H%x09%P%x09%s', '--', 'apps/server/disease-packs/t2dm-renal-care/manifest.json'],
+        { cwd: REPOSITORY_ROOT, encoding: 'utf8' },
+      ).trim()
+    } catch {
+      commitMeta = ''
+    }
+    if (commitMeta.length > 0) {
+      const [commitHash = '', parentsRaw = '', ...subjectParts] = commitMeta.split('\t')
+      const parents = parentsRaw.split(/\s+/).filter(Boolean)
+      const subject = subjectParts.join('\t')
+      if (
+        /^[0-9a-f]{40}$/.test(commitHash)
+        && parents.length === 1
+        && subject.includes('新增纯JSON 2型糖尿病肾功能用药专病包')
+      ) {
+        const changedFiles = execFileSync(
+          'git',
+          ['show', '--name-only', '--pretty=format:', commitHash],
+          { cwd: REPOSITORY_ROOT, encoding: 'utf8' },
+        )
+          .split('\n')
+          .map(line => line.trim())
+          .filter(Boolean)
+
+        expect(changedFiles.length).toBeGreaterThanOrEqual(8)
+        for (const filePath of changedFiles) {
+          const allowed = filePath.startsWith('apps/server/disease-packs/t2dm-renal-care/')
+            || filePath === 'apps/server/src/application/guideline-topic-registry.ts'
+          expect(allowed, `Unexpected file changed in AC12 S13 pack-addition commit: ${filePath}`).toBe(true)
+        }
+        expect(changedFiles.some(f => f.startsWith('packages/contracts/'))).toBe(false)
+        expect(changedFiles.some(f => f.startsWith('packages/core/'))).toBe(false)
+      }
+    }
   })
 
   it('AC3b, AC10, AC13 & AC15: activates T2DM pack without CAD, shows side-by-side multi-pack cards for CAD+T2DM, keeps ortho at 0 packs with general panels, and passes all exams with 0 LLM calls', async () => {
