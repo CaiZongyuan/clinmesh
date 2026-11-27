@@ -35,7 +35,9 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     });
     return context.json(result);
   });
-  const catalog = new OperationCatalog();
+  const catalog = new OperationCatalog(undefined, (context, intent, override, operation) => {
+    for (const module of registry.enabled(context.actor.enabledModules)) module.clinicalQuality?.(context, intent, override, operation);
+  });
   const patients = new PatientRuntime(store, environment, background);
   registerPatientOperations(catalog, environment);
   app.post('/api/agents/providers/test', async context => context.json(await patients.testProvider(context.env.credential, context.req.raw.headers, await context.req.json())));

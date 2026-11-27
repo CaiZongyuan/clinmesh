@@ -2,6 +2,7 @@ import type { Hono } from 'hono';
 import { z } from 'zod';
 import type { StoreReader, StoreScope, StoreTx } from '../../store';
 import { localizedName } from './commands';
+import type { ClinicalQualityGate } from './clinical-quality';
 
 export const gateItem = z.object({ id: z.string(), label: localizedName, passed: z.boolean() });
 export const workbenchTab = z.object({ id: z.string(), label: localizedName, readOperation: z.string().optional() });
@@ -27,6 +28,7 @@ export interface ClinMeshModule<Operations = never> {
   initializeEpoch?(tx: StoreTx, at: StoreScope, virtualAt: string, recordedAt: string): void | Promise<void>;
   encounterStarted?(tx: StoreTx, at: StoreScope, encounterId: string, virtualAt: string, recordedAt: string): void;
   completion?: CompletionCheck;
+  clinicalQuality?: ClinicalQualityGate;
   midnight?: MidnightHook;
   clockAdvanced?(tx: StoreTx, at: StoreScope, to: string, recordedAt: string): void | Promise<void>;
   workbenchTabs?: readonly z.infer<typeof workbenchTab>[];

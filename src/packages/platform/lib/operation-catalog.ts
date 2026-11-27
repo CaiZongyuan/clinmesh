@@ -2,19 +2,20 @@ import { z } from 'zod';
 import type { StorePort, StoreReader } from '../../store';
 import { authorize, commandEnvelope, executeCommand, resolveActor, type Actor, type CommandContext, type Route } from './commands';
 import { CoreError, type Credential } from './visitor-gate';
+import type { ClinicalQualityGate } from './clinical-quality';
 
 export type ReadContext = { reader: StoreReader; actor: Actor; targetId: string };
 type Call = { store: StorePort; credential: Credential; targetId: string; body(): Promise<unknown>; providerHeaders?: Headers };
 type Result = z.core.util.JSONType;
-type Definition = Route & { input: z.ZodType; output: z.ZodType; invoke(call: Call): Promise<Result> };
+type Definition = Route & { assistantRead?: 'encounter'; input: z.ZodType; output: z.ZodType; invoke(call: Call): Promise<Result> };
 
 export class OperationCatalog {
   readonly #entries: Definition[] = [];
-  constructor(private readonly moduleId?: string) {}
+  constructor(private readonly moduleId?: string, private readonly clinicalQuality?: ClinicalQualityGate) {}
   get entries(): readonly Definition[] { return this.#entries; }
 
   contribute(moduleId: string | undefined, register: (catalog: OperationCatalog) => void) {
-    const contribution = new OperationCatalog(moduleId);
+    const contribution = new OperationCatalog(moduleId, this.clinicalQuality);
     register(contribution);
     for (const entry of contribution.entries) this.add(entry);
   }
@@ -24,7 +25,7 @@ export class OperationCatalog {
     this.#entries.push(entry);
   }
 
-  query<Output extends Result>(route: Omit<Route, 'method'>, output: z.ZodType<Output>, read: (context: ReadContext) => Output) {
+  query<Output extends Result>(route: Omit<Route, 'method'> & { assistantRead?: 'encounter' }, output: z.ZodType<Output>, read: (context: ReadContext) => Output) {
     route = { ...route, moduleId: this.moduleId ?? route.moduleId };
     this.add({ ...route, method: 'GET', input: z.strictObject({}), output, invoke: ({ store, credential, targetId }) => store.read(reader => {
       const actor = resolveActor(reader, credential, new Date().toISOString());
@@ -38,6 +39,7 @@ export class OperationCatalog {
     disclosure?: { firstOutput: z.ZodType<Result>; prepare(actor: Actor, input: z.output<z.ZodObject<Fields>>): Promise<{ value: Prepared; firstResponse: Record<string, string> }> }) {
     route = { ...route, moduleId: this.moduleId ?? route.moduleId };
     const input = commandEnvelope.extend(fields).strict();
+    const gate = this.clinicalQuality;
     this.add({ ...route, input, output: disclosure ? z.union([disclosure.firstOutput, output]) : output, async invoke({ store, credential, targetId, body, providerHeaders }) {
       const actor = await store.read(reader => resolveActor(reader, credential, new Date().toISOString()));
       authorize(actor, route);
@@ -46,6 +48,7 @@ export class OperationCatalog {
       const prepared = await disclosure?.prepare(actor, args);
       let firstResponse: Result | undefined;
       const execution = await executeCommand(store, credential, route, targetId, parsed as z.infer<typeof commandEnvelope>, async context => {
+        if (gate) context.checkClinicalQuality = (intent, override) => gate(context, intent, override, route.name);
         const receipt = output.parse(await apply(context, args, prepared?.value as Prepared, providerHeaders));
         if (disclosure && prepared) firstResponse = disclosure.firstOutput.parse({ ...z.record(z.string(), z.json()).parse(receipt), ...prepared.firstResponse });
         return receipt;
