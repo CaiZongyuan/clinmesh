@@ -211,6 +211,10 @@ export function validateReferences(pack: HospitalDataPack) {
     requireCodes('materials', truth.expectedMaterials ?? [], 'expectedMaterials');
     if (truth.noMedication && truth.expectedMedications?.length) throw new DataPackError('INVALID_PACK', 'noMedication');
     checkResults(truth.results, entries.services);
+    if (truth.normalBaselines) {
+      requireCodes('services', truth.normalBaselines.map(baseline => baseline.service), 'caseTruth.normalBaselines');
+      checkResults(truth.normalBaselines.map(baseline => ({ ...baseline, stage: 'initial', revision: 1 })), entries.services);
+    }
     checkPersona(patient, guard);
   }
   return entries;

@@ -61,6 +61,7 @@ export function registerPlatformOperations(catalog: OperationCatalog, { sign, mo
         for (const module of enabled) await module.midnight?.(tx, at, date);
       }
     }
+    for (const module of enabled) await module.clockAdvanced?.(tx, at, to, context.recordedAt);
     return { virtualTime: to, clockRevision: expectedVersion + 1 };
   });
 }

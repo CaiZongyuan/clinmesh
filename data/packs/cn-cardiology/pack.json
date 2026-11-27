@@ -1,7 +1,7 @@
 {
   "manifest": {
     "packId": "cn-cardiology",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "schemaVersion": 1,
     "name": { "en": "Teaching cardiovascular centre", "zh": "心血管介入教学中心" },
     "description": {
@@ -728,6 +728,7 @@
         "code": "cag",
         "display": { "en": "Coronary angiography and physiology", "zh": "冠脉造影与功能学评估" },
         "kind": "examination",
+        "requiresProcedure": true,
         "unitPriceMinor": 80000,
         "unit": "次",
         "analytes": [
@@ -1042,7 +1043,7 @@
               "zh": "肌酐 175 µmol/L，基线 eGFR 36.1。"
             },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 175 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 175, "unit": "µmol/L" }
             ]
           },
           {
@@ -1056,7 +1057,9 @@
             "observations": [
               {
                 "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LVEF" },
-                "value": 56
+                "value": 56,
+                "unit": "%",
+                "interpretation": "normal"
               }
             ]
           },
@@ -1112,7 +1115,7 @@
               "zh": "PCI 后复查肌酐 168 µmol/L。"
             },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 168 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 168, "unit": "µmol/L" }
             ]
           },
           {
@@ -1121,7 +1124,7 @@
             "revision": 1,
             "summary": { "en": "Follow-up creatinine 170 µmol/L.", "zh": "随访肌酐 170 µmol/L。" },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 170 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 170, "unit": "µmol/L" }
             ]
           }
         ],
@@ -1216,7 +1219,7 @@
             "revision": 1,
             "summary": { "en": "Admission creatinine 72 µmol/L.", "zh": "入院肌酐 72 µmol/L。" },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 72 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 72, "unit": "µmol/L" }
             ]
           },
           {
@@ -1240,7 +1243,9 @@
             "observations": [
               {
                 "analyte": { "codeSystem": "urn:clinmesh:cv:measurement", "code": "LVEF" },
-                "value": 62
+                "value": 62,
+                "unit": "%",
+                "interpretation": "normal"
               }
             ]
           },
@@ -1281,7 +1286,7 @@
             "revision": 1,
             "summary": { "en": "Follow-up creatinine 74 µmol/L.", "zh": "随访肌酐 74 µmol/L。" },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 74 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 74, "unit": "µmol/L" }
             ]
           }
         ],
@@ -1373,7 +1378,7 @@
             "revision": 1,
             "summary": { "en": "Initial creatinine 118 µmol/L.", "zh": "初诊肌酐 118 µmol/L。" },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 118 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "14682-9" }, "value": 118, "unit": "µmol/L" }
             ]
           },
           {
@@ -1392,7 +1397,7 @@
             "revision": 1,
             "summary": { "en": "hs-cTnI 0.68 ng/mL.", "zh": "高敏肌钙蛋白 I 0.68 ng/mL。" },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 0.68 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 0.68, "unit": "ng/mL" }
             ]
           },
           {
@@ -1404,7 +1409,7 @@
               "zh": "复查标本升至 1.45 ng/mL。"
             },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 1.45 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 1.45, "unit": "ng/mL" }
             ]
           },
           {
@@ -1455,7 +1460,7 @@
               "zh": "随访高敏肌钙蛋白 I 0.012 ng/mL。"
             },
             "observations": [
-              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 0.012 }
+              { "analyte": { "codeSystem": "http://loinc.org", "code": "89579-7" }, "value": 0.012, "unit": "ng/mL" }
             ]
           }
         ],

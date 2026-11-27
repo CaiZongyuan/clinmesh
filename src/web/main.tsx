@@ -19,7 +19,7 @@ if (catalog) document.title = 'UI component catalogue · ClinMesh';
 
 createRoot(root).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, retry: false }, mutations: { retry: false } } })}>
   <ThemeFontProvider><ToastProvider>
-    <Suspense fallback={<p role="status">Loading…</p>}>{catalog ? <UiKitCatalog /> : window.location.pathname === '/dev/health' ? <RuntimeHealth /> : <App/>}</Suspense>
+    <Suspense fallback={<p role="status">Loading…</p>}>{catalog ? <UiKitCatalog /> : window.location.pathname === '/dev/health' ? <RuntimeHealth /> : <App />}</Suspense>
     <UiAgentApprovalDialog prompt={approval} />
   </ToastProvider></ThemeFontProvider>
 </QueryClientProvider>);

@@ -73,7 +73,7 @@ it('quarantines a legacy lot deficit, dispenses from healthy stock and rejects a
   const target = createNodeSqliteStore({ dbPath: ':memory:' });
   try {
     const legacy = await store.exportLogicalSnapshot(at.workspaceId);
-    legacy.format = 'clinmesh.snapshot.v4';
+    legacy.format = 'clinmesh.snapshot.v5';
     legacy.tables = legacy.tables.slice(0, legacy.tables.findIndex(table => table.name === 'prescription_signatures'));
     const amoxicillin = legacy.tables.find(table => table.name === 'catalog_items')!.rows.find(row => row.code === 'amoxicillin')!;
     const held = legacy.tables.find(table => table.name === 'inventory_lots')!.rows.find(row => row.catalog_item_id === amoxicillin.id && row.lot_number === 'GEN-A')!;

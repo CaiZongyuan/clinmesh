@@ -122,12 +122,13 @@ export function account(reader: StoreReader, at: StoreScope, encounterId: string
     const benefit = benefits?.get(line.id);
     const coverageMinor = benefit?.amountMinor ?? 0;
     const adjustedMinor = sumMinor(adjustments.map(item => item.amountMinor));
-    const netMinor = cancelled && !paidMinor && !coverageMinor && !(line.order_id && incurredOrders.has(line.order_id)) ? 0 : sumMinor([line.amount_minor, adjustedMinor]);
+    const netMinor = cancelled && !netPaidMinor && !coverageMinor && !(line.order_id && incurredOrders.has(line.order_id)) ? 0 : sumMinor([line.amount_minor, adjustedMinor]);
     const releaseRecorded = Boolean(reader.list(at, 'billing_releases', { charge_id: line.id })[0]);
     const payerPending = Boolean(benefit?.requiresReview || (benefit?.basisMinor !== undefined && benefit.basisMinor !== netMinor));
     const pending = assigned.some(item => item.status === 'unknown');
     const outstandingMinor = Math.max(0, netMinor - coverageMinor - netPaidMinor);
-    const released = !cancelled && !pending && !payerPending && (policy !== 'prepaid' || !outstandingMinor);
+    const requiresPrepayment = encounter.encounter_class === 'outpatient' && policy === 'prepaid';
+    const released = !cancelled && !pending && !payerPending && (!requiresPrepayment || !outstandingMinor);
     return { id: line.id, orderId: line.order_id, materialUseId: material?.use.id ?? null, catalogItemId: source?.catalog_item_id ?? order?.catalog_item_id ?? registration?.id ?? material?.item.id ?? null, catalogVersion: source?.catalog_version ?? (registration || material ? manifest.version : null), quantity: source?.quantity ?? material?.use.quantity ?? 1, unitPriceMinor: source?.unit_price_minor ?? material?.item.amount_minor ?? line.amount_minor, description: line.description, department: source?.department ?? null, businessDay: source?.business_day ?? businessDay(line.virtual_at, manifest.timezone), amountMinor: line.amount_minor, adjustedMinor, netMinor, coverageMinor, payerRevision: benefit?.revision ?? 0, payerPending, refundedMinor, netPaidMinor, outstandingMinor, pending, cancelled, released, releaseRecorded,
       version: (order?.version ?? 1) + adjustments.length + sumMinor(assigned.map(item => item.version)) + (benefit?.revision ?? 0), adjustments };
   });
@@ -171,7 +172,7 @@ export function readOrderFunds(reader: StoreReader, at: StoreScope, orderId: str
   const bill = clinicalAccount(reader, at, order.encounter_id, options);
   const line = bill.charges.find(line => line.orderId === orderId);
   const state = line?.pending || line?.payerPending ? 'unknown' : line && !line.outstandingMinor ? 'settled' : line && line.netPaidMinor + line.coverageMinor > 0 ? 'partial' : 'unpaid';
-  return { chargeId: line?.id ?? null, state, released: line?.released ?? false, releaseRecorded: line?.releaseRecorded ?? false, locked: Boolean(bill.settlement || state === 'unknown' || line?.netPaidMinor || line?.coverageMinor || line?.refundedMinor), netPaidMinor: line?.netPaidMinor ?? 0 };
+  return { chargeId: line?.id ?? null, state, released: line?.released ?? false, releaseRecorded: line?.releaseRecorded ?? false, locked: Boolean(bill.settlement || state === 'unknown' || line?.netPaidMinor || line?.coverageMinor), netPaidMinor: line?.netPaidMinor ?? 0 };
 }
 
 export function clinicalAccount(reader: StoreReader, at: StoreScope, encounterId: string, options: BillingOptions) {

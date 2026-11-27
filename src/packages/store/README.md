@@ -21,12 +21,14 @@ const patient = await store.read(reader => reader.get({ workspaceId, epoch }, 'p
 
 在事务中注册 `pi_sessions` 行后，运行时通过 `openPiStorage(scope, sessionId)` 获取官方 `pi-durable` Storage。每个会话在同一个数据库中使用独立的 `pi_*` 表，患者会话绑定具体 Encounter。每个会话由一个运行时管理，结束时调用 SDK 的 `close(context)`。调用方在持久化前处理 Provider 错误与凭据，Store 如实保留提交的记录。
 
-`exportLogicalSnapshot(workspaceId)` 返回 `clinmesh.snapshot.v5` JSON，包含该 Workspace 所有 Epoch、私有 Case Truth、不可变历史和已初始化的 pi 会话。它是受信任的迁移和备份入口。导出包含敏感的私有病例及会话内容，只交给获授权的运维人员。校验摘要是对省略 `sha256` 字段、递归按键名排序的紧凑 UTF-8 JSON 计算的 SHA-256。表和修订按依赖顺序排列。`importLogicalSnapshot(snapshot)` 在空库的一次事务中校验、恢复并核对全部内容。导入 v1 至 v4 时先校验原始摘要和表序，再补齐其后新增的空表。v3 引入账务明细表，v4 增加患者回复与模型调用记录，v5 增加处方签发、用法与撤回事实。JSON 导入导出在内存中完成。
+`exportLogicalSnapshot(workspaceId)` 返回 `clinmesh.snapshot.v6` JSON，包含该 Workspace 所有 Epoch、私有 Case Truth、不可变历史和已初始化的 pi 会话。它是受信任的迁移和备份入口。导出包含敏感的私有病例及会话内容，只交给获授权的运维人员。校验摘要是对省略 `sha256` 字段、递归按键名排序的紧凑 UTF-8 JSON 计算的 SHA-256。表和修订按依赖顺序排列。`importLogicalSnapshot(snapshot)` 在空库的一次事务中校验、恢复并核对全部内容。导入 v1 至 v5 时先校验原始摘要和表序，再补齐新增表。v3 引入账务明细，v4 保存患者回复和模型调用，v5 增加检验草稿和申请，v6 保存处方签发、用法、撤回和批次隔离记录。JSON 导入导出在内存中完成。
 
 每次开诊写入独立的 `encounter_triage` 分诊事实。v2 快照也记录空分诊表。`visitorSigningSecret()` 供宿主组合根取得 Visitor Gate 的签名材料。Node 在本机数据库保存它，Worker 使用独立命名的门禁 Durable Object。导出的 Workspace 快照范围仅覆盖规定的 Workspace 实体和 pi 会话。
 
 恢复事务逐批核对库存流水余额，并校验处方正式用法、状态、版本和对应撤回或发药事实。升级受信任的旧快照或 SQLite 文件时，系统为历史负余额批次追加 `inventory_lot_quarantines` 隔离记录，记录来源版本、原快照摘要（如适用）、原余额和批次流水指纹。药房仅展示可发批次。隔离批次保留全部原始流水并暂停出入库，其他批次和业务资料照常使用。最新版快照恢复时复核每一条隔离记录。无迁移依据的负余额或流水指纹冲突会触发整笔回滚。
 
 盘点时用隔离记录的 Workspace、Epoch 和批次定位原始资料，逐项核对实际入库凭据、发药及耗用记录。经药师确认的实存数量可在有真实接收凭据的独立批次中登记，保留原批次的核查资料。
+
+本机物理 schema 5 在 schema 4 上追加药房事实和隔离表。`snapshot-version.test.ts` 使用已发布代码导出的完整 v3、v4 快照逐表核对旧数据和两个 pi 会话。v4 快照在相同合成病例上增加患者回复轮次和脱敏模型调用。[合成账务快照](tests/fixtures/e3842543-v3.json.gz.b64)
 
 在 Windows 原生环境执行 `pnpm exec vitest run src/packages/store/tests`。同一套 `runStoreConformanceSuite(source, restoreIntoEmpty)` 驱动独立的源库和恢复目标。该套件会写入合成数据，使用可丢弃的空库运行。测试还在真实 workerd 与本地 SQLite 之间双向迁移数据。构建后执行 `pnpm verify:worker` 检查 Worker 体积与 Node 原生依赖。

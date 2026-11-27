@@ -8,6 +8,8 @@ function verify(receipt: Awaited<ReturnType<typeof clockContract>>, example: typ
   expect(receipt.first).toMatchObject({ dates: example.firstDates, receipts: 1, audits: 1, time: { clock_revision: 1, virtual_time: '2028-02-28T16:00:00.000Z' } });
   expect(receipt.failure).toBe('CALENDAR_FAILURE');
   expect(receipt.rolledBack).toEqual(receipt.first);
+  expect(receipt.advancedFailure).toBe('ADVANCE_FAILURE');
+  expect(receipt.afterAdvancedFailure).toEqual(receipt.first);
   expect(receipt.last).toMatchObject({ dates: example.lastDates, receipts: 2, audits: 2, time: { clock_revision: 2, virtual_time: '2028-03-01T16:00:00.000Z' } });
   expect(receipt.invalid).toEqual(['VIRTUAL_TIME_OUT_OF_RANGE', 'VIRTUAL_TIME_OUT_OF_RANGE']);
 }
