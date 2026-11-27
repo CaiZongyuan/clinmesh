@@ -1,7 +1,7 @@
 import { assistantServerFrame, type AssistantChannel, type AssistantFrame } from '../packages/agent-protocol';
 import type { AssistantSurface } from './assistant-surface';
 
-export function openAssistantChannel(binding: AssistantChannel, surface: AssistantSurface, status: (ready: boolean) => void, update: (frame: Extract<AssistantFrame, { type: 'delta' }>) => void) {
+export function openAssistantChannel(binding: AssistantChannel, surface: AssistantSurface, status: (ready: boolean) => void, update: (frame: Extract<AssistantFrame, { type: 'delta' }>) => void, admitted: (requestId: string) => void) {
   let active = true;
   let socket: WebSocket | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -21,9 +21,10 @@ export function openAssistantChannel(binding: AssistantChannel, surface: Assista
         const frame = assistantServerFrame.parse(JSON.parse(event.data));
         if (frame.type === 'ready') { attempts = 0; status(true); protectedFields(); }
         if (frame.type === 'delta') update(frame);
+        if (frame.type === 'admitted') admitted(frame.requestId);
         if (frame.type === 'cancel') { turn.abort(); turn = new AbortController(); }
         if (frame.type === 'call') {
-          const result = await surface.call(frame.request, turn.signal);
+          const result = await surface.call(frame.request, turn.signal, frame.commandToken ? { binding, token: frame.commandToken } : undefined);
           if (active && client.readyState === WebSocket.OPEN) client.send(JSON.stringify({ type: 'result', id: frame.id, result }));
         }
       } catch { client.close(); }

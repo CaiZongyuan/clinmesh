@@ -10,9 +10,11 @@ export const assistantObservations = z.array(assistantObservation);
 export type AssistantObservation = z.infer<typeof assistantObservation>;
 export const observationKey = (event: AssistantObservation) => event.type === 'consultation.final' ? `${event.type}/${event.ordinal}/${event.id}` : `${event.kind}/${event.id}/${event.version}`;
 export const assistantThread = z.object({ id: z.int().positive(), title: z.string().trim().min(1).max(100) });
-export const assistantSessionCommand = assistantBinding.extend({ action: z.enum(['list', 'new', 'rename', 'delete', 'fork']), thread: assistantThread.shape.id.optional(), title: assistantThread.shape.title.optional() });
+export const assistantSessionCommand = assistantBinding.extend({ action: z.enum(['list', 'new', 'rename', 'delete', 'fork', 'reviewed']), thread: assistantThread.shape.id.optional(), title: assistantThread.shape.title.optional(), reviewId: z.uuid().optional() });
 export const assistantMessage = z.object({ id: z.string(), role: z.enum(['clinician', 'assistant', 'thinking', 'tool']), text: z.string() });
-export const assistantView = z.object({ threads: z.array(assistantThread), thread: assistantThread.shape.id, messages: z.array(assistantMessage) });
+export const assistantView = z.object({ threads: z.array(assistantThread), thread: assistantThread.shape.id, messages: z.array(assistantMessage), review: z.object({ id: z.uuid(), committed: z.array(z.object({ operation: z.string(), result: z.json() })) }).optional() });
+export const maxUiCommands = 24;
+export const uiCommandKey = (token: string, index: number) => `assistant-ui:${token}:${index}`;
 export const assistantChannel = assistantBinding.extend({ clientId: z.uuid(), thread: assistantThread.shape.id });
 export type AssistantChannel = z.infer<typeof assistantChannel>;
 export const assistantTurn = assistantChannel.extend({ requestId: z.uuid(), content: z.string().trim().min(1).max(12000).optional(), retryOf: z.uuid().optional() }).refine(input => !(input.content && input.retryOf) && input.requestId !== input.retryOf);
@@ -27,7 +29,7 @@ export const browserRequest = z.discriminatedUnion('tool', [
 ]);
 export type BrowserRequest = z.infer<typeof browserRequest>;
 export const assistantServerFrame = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('ready') }), z.object({ type: z.literal('call'), id: z.uuid(), request: browserRequest }),
+  z.object({ type: z.literal('ready') }), z.object({ type: z.literal('admitted'), requestId: z.uuid() }), z.object({ type: z.literal('call'), id: z.uuid(), request: browserRequest, commandToken: z.uuid().optional() }),
   z.object({ type: z.literal('delta'), kind: z.enum(['assistant', 'thinking', 'tool']), text: z.string().max(32000) }),
   z.object({ type: z.literal('cancel') }),
 ]);

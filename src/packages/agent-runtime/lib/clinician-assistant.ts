@@ -1,14 +1,14 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { createRegistry, type Harness, type ToolRegistration } from '@earendil-works/pi-durable';
+import { createRegistry, type Conversation, type Harness, type ToolRegistration } from '@earendil-works/pi-durable';
 import { v7 } from 'uuid';
 import { z } from 'zod';
-import { assistantBinding, assistantChannel, assistantSessionCommand, assistantTurn, browserRequest, browserTools, type AssistantBinding } from '../../agent-protocol';
+import { assistantBinding, assistantChannel, assistantSessionCommand, assistantTurn, browserRequest, browserTools, maxUiCommands, uiCommandKey, type AssistantBinding } from '../../agent-protocol';
 import { requireEncounter } from '../../patient-visit';
 import { authorize, CoreError, permits, resolveActor, sha256, type Credential, type OperationCatalog } from '../../platform';
 import type { StorePort, StoreReader } from '../../store';
 import { AssistantBridge, type AssistantSocket } from './assistant-bridge';
-import { admitTurn, boundThread, failTurn, threadView } from './assistant-threads';
+import { admitTurn, boundThread, failTurn, pendingBrowserAction, reserveBrowserAction, settleBrowserAction, threadView } from './assistant-threads';
 import { clinicianModel, clinicianModels, mockClinician } from './clinician-model';
 import { resolveAgentProvider, type AgentEnvironment } from './configuration';
 import { openDurableAgentSession } from './session';
@@ -38,7 +38,7 @@ export function clinicianTool(name: string, description: string, schema: z.ZodOb
 export class ClinicianAssistant {
   readonly bridge = new AssistantBridge();
   private readonly busy = new Set<string>();
-  private readonly running = new Map<string, { client: string; requestId: string; thread: number; fingerprint: string; content?: string; stop(): void; result: Promise<unknown> }>();
+  private readonly running = new Map<string, { client: string; requestId: string; thread: number; fingerprint: string; content?: string; stop(): Promise<void>; result: Promise<unknown> }>();
   constructor(private readonly store: StorePort, private readonly catalog: OperationCatalog, private readonly environment: AgentEnvironment) {}
   async check(credential: Credential, binding: AssistantBinding) { return this.store.read(reader => currentActor(reader, credential, binding)); }
   async availability(credential: Credential, raw: unknown, headers: Headers) {
@@ -75,13 +75,21 @@ export class ClinicianAssistant {
   }
   sessions(credential: Credential, raw: unknown) {
     const input = assistantSessionCommand.parse(raw);
-    return this.withSession(credential, input, { models: createModels(), registry: createRegistry() }, harness => threadView(harness, input));
+    return this.withSession(credential, input, { models: createModels(), registry: createRegistry() }, harness => this.view(harness, input));
+  }
+  private async view(harness: Harness, input: z.infer<typeof assistantSessionCommand>) {
+    const view = await threadView(harness, input);
+    const id = await pendingBrowserAction(await boundThread(harness, input.roleId, view.thread));
+    if (!id) return view;
+    const at = { workspaceId: input.workspaceId, epoch: input.epoch };
+    const committed = await this.store.read(reader => Array.from({ length: maxUiCommands }, (_, index) => reader.findCommandReceipt(at, uiCommandKey(id, index))).flatMap(receipt => receipt ? [{ operation: receipt.operation, result: receipt.result }] : []));
+    return { ...view, review: { id, committed } };
   }
   async stop(credential: Credential, raw: unknown) {
     const input = assistantChannel.parse(raw);
     await this.check(credential, input);
     const job = this.running.get(threadKey(input));
-    if (job?.thread === input.thread && job.client === input.clientId) job.stop();
+    if (job?.thread === input.thread && job.client === input.clientId) await job.stop();
     return { ok: true };
   }
   async turn(credential: Credential, raw: unknown, headers: Headers) {
@@ -102,7 +110,9 @@ export class ClinicianAssistant {
     const controller = new AbortController();
     const check = async (id?: number) => { if (controller.signal.aborted || (id !== undefined && id !== input.thread)) throw new CoreError(409, 'ASSISTANT_STOPPED'); await this.check(credential, input); };
     const emit = (frame: Parameters<ReturnType<typeof client>['emit']>[0]) => { try { client().emit(frame); } catch {} };
-    const model = clinicianModels(provider, mockClinician, controller.signal, emit, check);
+    let recoveringGeneration = false;
+    let selected: Conversation | undefined;
+    const model = clinicianModels(provider, mockClinician, controller.signal, emit, async () => { recoveringGeneration = false; await check(); });
     const registry = createRegistry();
     const entries = this.catalog.entries.filter(entry => entry.method === 'GET' && entry.assistantRead === 'encounter' && permits(actor, entry));
     const native = entries.map(entry => {
@@ -121,27 +131,36 @@ export class ClinicianAssistant {
     });
     const ui = Object.entries(browserTools).map(([tool, schema]) => clinicianTool(tool, { ui_snapshot: 'List controls in this encounter.', ui_query: 'Find controls by text, kind or section.', ui_act: 'Operate the controls. Clinical confirmations require the person.' }[tool]!, schema, async (args, id) => {
       await check(id); emit({ type: 'delta', kind: 'tool', text: tool });
-      const result = await client().call(browserRequest.parse({ tool, args }), controller.signal);
+      const token = tool === 'ui_act' && selected ? await reserveBrowserAction(selected) : undefined;
+      const result = await client().call(browserRequest.parse({ tool, args }), controller.signal, token);
       await check(id);
       if (provider.apiKey && JSON.stringify(result).includes(provider.apiKey)) throw new CoreError(400, 'LLM_SECRET_IN_INPUT');
+      if (token && selected && !z.object({ reviewRequired: z.literal(true) }).safeParse(result).success) await settleBrowserAction(selected, token);
       return result;
     }, tool === 'ui_act'));
     registry.install({ name: 'clinmesh', tools: [...native, ...ui] });
-    const result = this.withSession(credential, input, { models: model.models, registry, settings: { retry: { enabled: false }, compaction: { enabled: false } } }, async harness => {
+    const result = this.withSession(credential, input, { models: model.models, registry, settings: () => ({ retry: { enabled: recoveringGeneration, maxRetries: 3, baseDelayMs: 1 }, compaction: { enabled: false } }) }, async harness => {
       const conversation = await boundThread(harness, input.roleId, input.thread);
+      selected = conversation;
       const pending = await harness.inspect(context);
       if (pending.submissions.some(item => item.conversationId !== conversation.id || item.requestId !== input.requestId)) throw new CoreError(409, 'ASSISTANT_REJOIN_REQUIRED');
+      recoveringGeneration = pending.submissions.some(item => item.conversationId === conversation.id && item.requestId === input.requestId);
       const content = await admitTurn(conversation, input, fingerprint);
+      emit({ type: 'admitted', requestId: input.requestId });
       await conversation.configure({ instructions, model: { provider: clinicianModel.provider, modelId: clinicianModel.id }, maxTurns: 12 }, context);
       const submission = await conversation.submit({ type: 'input', requestId: input.requestId, content }, context);
       const settled = await submission.wait(context);
       if (model.failure() || controller.signal.aborted || settled.status !== 'done') {
-        const failure = model.failure() ?? new CoreError(409, 'ASSISTANT_STOPPED');
+        const stopped = controller.signal.aborted || (settled.status === 'unanswered' && settled.reason === 'aborted');
+        const failure = model.failure() ?? new CoreError(409, stopped ? 'ASSISTANT_STOPPED' : 'ASSISTANT_RUN_INTERRUPTED');
         await failTurn(conversation, input.requestId, failure); throw failure;
       }
-      return threadView(harness, { ...input, action: 'list' });
+      return this.view(harness, { ...input, action: 'list' });
     });
-    this.running.set(key, { requestId: input.requestId, thread: input.thread, client: input.clientId, fingerprint, content: input.content, stop() { controller.abort(); emit({ type: 'cancel' }); }, result });
+    this.running.set(key, { requestId: input.requestId, thread: input.thread, client: input.clientId, fingerprint, content: input.content, async stop() {
+      controller.abort(); emit({ type: 'cancel' });
+      if (selected) await failTurn(selected, input.requestId, new CoreError(409, 'ASSISTANT_STOPPED'));
+    }, result });
     try { return await result; } finally { this.running.delete(key); }
   }
 }

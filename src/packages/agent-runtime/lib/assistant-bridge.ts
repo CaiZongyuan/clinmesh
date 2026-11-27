@@ -34,7 +34,7 @@ function browserConnection(socket: AssistantSocket, release: () => void) {
         else waiting.get(frame.id)?.(frame.result);
       } catch { close(); }
     },
-    call(request: BrowserRequest, signal: AbortSignal) {
+    call(request: BrowserRequest, signal: AbortSignal, commandToken?: string) {
       if (signal.aborted) throw offline();
       const id = crypto.randomUUID();
       return new Promise<unknown>((resolve, reject) => {
@@ -42,7 +42,7 @@ function browserConnection(socket: AssistantSocket, release: () => void) {
         const abort = () => { emit({ type: 'cancel' }); finish(); };
         const finish = (value?: unknown) => { clearTimeout(timeout); signal.removeEventListener('abort', abort); waiting.delete(id); if (value === undefined) reject(offline()); else resolve(value); };
         waiting.set(id, finish); signal.addEventListener('abort', abort, { once: true });
-        try { emit({ type: 'call', id, request }); } catch { finish(); }
+        try { emit({ type: 'call', id, request, commandToken }); } catch { finish(); }
       });
     },
   };

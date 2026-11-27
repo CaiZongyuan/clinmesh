@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness, experimental_readRawConfig } from 'wrangler';
 import { z } from 'zod';
-import { assistantObservations, assistantServerFrame, assistantView, observationKey, receiptSchema } from '../../agent-protocol';
+import { assistantObservations, assistantServerFrame, assistantView, observationKey, receiptSchema, uiCommandKey, type AssistantChannel } from '../../agent-protocol';
 import { workspaceSchema } from '../../clinical-core';
 import { studyViewSchema } from '../../diagnostic-studies';
 import { parseHospitalDataPack } from '../../data-pack';
@@ -135,6 +135,70 @@ it('recovers the original empty-output failure after Node restarts and runs an e
             expect(assistantView.parse(await result.json()).messages.at(-1)?.text).toBe('Second attempt succeeded.');
             expect(generations).toBe(2);
           }
+        } finally { socket.close(); }
+      }, false, env);
+    });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}, 30000);
+
+it.each(['generation', 'unanswered UI', 'approved clinical command', 'clinician stop'] as const)('rejoins an interrupted %s across actual Node process termination', async scenario => {
+  const directory = await mkdtemp(join(tmpdir(), 'clinmesh-assistant-cutoff-'));
+  const db = join(directory, 'clinic.sqlite');
+  const requestId = crypto.randomUUID();
+  const interruptedUi = scenario === 'unanswered UI' || scenario === 'approved clinical command';
+  let upstream = 0; let browserCalls = 0; let signalArrival!: () => void;
+  const arrived = new Promise<void>(resolve => { signalArrival = resolve; });
+  let cookie = ''; let channel!: AssistantChannel;
+  try {
+    await withProvider(51995, (_, response) => {
+      upstream++;
+      if (upstream === 1 && !interruptedUi) { signalArrival(); return; }
+      if (upstream === 1) {
+        const delta = { role: 'assistant', tool_calls: [{ index: 0, id: 'confirm-in-ui', type: 'function', function: { name: 'ui_act', arguments: JSON.stringify({ steps: [{ ref: 'Sign record', action: 'press' }] }) } }] };
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.end(`data: ${JSON.stringify({ id: 'ui', model: 'synthetic-model', choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: 'ui', model: 'synthetic-model', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
+      } else openAiText(response, 'Recovered the current instruction.');
+    }, async baseUrl => {
+      const env = { CLINMESH_PORT: '51996', CLINMESH_VISITOR_PASSCODE: 'test-passcode', CLINMESH_LLM_ALLOWED_BASE_URLS: baseUrl };
+      for (const launch of [1, 2]) await withNodeDatabase(db, async origin => {
+        const post = (path: string, body: object) => fetch(`${origin}/api/assistant/${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', ...userProvider(baseUrl) }, body: JSON.stringify(body) });
+        let sign: ((token: string) => Promise<void>) | undefined;
+        if (launch === 1) {
+          const clinic = await openPatient((path, init) => fetch(origin + path, init)); cookie = clinic.headers.cookie;
+          const binding = { workspaceId: clinic.workspace.workspaceId, epoch: clinic.workspace.epoch, encounterId: clinic.encounterId, roleId: 'family-clinician' };
+          const { thread } = assistantView.parse(await (await post('sessions', { ...binding, action: 'list' })).json()); channel = { ...binding, thread, clientId: crypto.randomUUID() };
+          if (scenario === 'approved clinical command') {
+            const visit = await clinic.read();
+            const draft = await fetch(origin + `${clinic.base}/clinical-record/draft`, { method: 'PUT', headers: clinic.headers, body: JSON.stringify({ epoch: binding.epoch, expectedVersion: visit.version, idempotencyKey: crypto.randomUUID(), fields: Object.fromEntries(visit.template.filter(item => item.required).map(item => [item.id, `Reviewed ${item.id}`])), expectedDraftVersion: 0 }) });
+            const saved = z.object({ version: z.int(), draftVersion: z.int() }).parse(await draft.json());
+            sign = async token => {
+              const formal = await fetch(origin + `${clinic.base}/clinical-record/sign`, { method: 'POST', headers: clinic.headers, body: JSON.stringify({ epoch: binding.epoch, expectedVersion: saved.version, idempotencyKey: uiCommandKey(token, 0), expectedDraftVersion: saved.draftVersion }) });
+              expect(formal.status).toBe(200);
+            };
+          }
+        }
+        const socket = new NodeWebSocket(`${origin.replace('http:', 'ws:')}/api/assistant/bridge?${new URLSearchParams({ ...channel, thread: String(channel.thread) })}`, { origin, headers: { cookie } });
+        await new Promise<void>((resolve, reject) => { socket.on('message', async data => {
+          const frame = assistantServerFrame.parse(JSON.parse(String(data)));
+          if (frame.type === 'ready') resolve();
+          if (frame.type === 'call') { browserCalls++; if (sign) await sign(frame.commandToken!); signalArrival(); }
+        }); socket.once('error', reject); });
+        const task = post('turn', { ...channel, requestId, ...(launch === 1 && { content: 'Review the current instruction.' }) });
+        if (launch === 1) {
+          void task.catch(() => {}); await arrived;
+          if (scenario === 'clinician stop') { expect((await post('stop', channel)).status).toBe(200); expect(await (await task).json()).toMatchObject({ code: 'ASSISTANT_STOPPED' }); }
+          return;
+        }
+        try {
+          const response = await task;
+          if (scenario === 'clinician stop') { expect(await response.json()).toMatchObject({ code: 'ASSISTANT_STOPPED' }); expect(upstream).toBe(1); return; }
+          const output = assistantView.parse(await response.json());
+          expect(output.messages.at(-1)?.text).toBe('Recovered the current instruction.');
+          expect(output.messages.filter(item => item.role === 'clinician')).toHaveLength(1);
+          expect(browserCalls).toBe(interruptedUi ? 1 : 0);
+          if (interruptedUi) expect(output.review?.committed).toEqual(scenario === 'approved clinical command' ? [expect.objectContaining({ operation: 'record.sign', result: expect.objectContaining({ revision: 1 }) })] : []);
+          expect(await (await post('turn', { ...channel, requestId })).json()).toEqual(output);
+          expect(upstream).toBe(2);
         } finally { socket.close(); }
       }, false, env);
     });

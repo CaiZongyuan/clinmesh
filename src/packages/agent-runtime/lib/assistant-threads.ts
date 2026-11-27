@@ -8,6 +8,22 @@ const context = BACKGROUND_CONTEXT;
 const directory = defineDoc({ scope: 'session', kind: 'clinmesh.assistant-threads', version: 1, initial: (): { threads: { id: number; roleId: string; title: string }[] } => ({ threads: [] }), checkpointWhen: () => true });
 const admission = defineDoc({ scope: 'conversation', history: 'latest', fork: 'initial', kind: 'clinmesh.assistant-admission', version: 1, initial: () => ({ requestId: '', clientId: '', provider: '', content: '' }), checkpointWhen: () => true });
 const receipts = defineDocFamily({ scope: 'session', family: true, kind: 'clinmesh.assistant-receipt', version: 1, initial: () => ({ clientId: '', provider: '', content: '', error: '', status: 0 }), checkpointWhen: () => true });
+const browserAction = defineDoc({ scope: 'conversation', history: 'latest', fork: 'initial', kind: 'clinmesh.browser-action', version: 1, initial: () => ({ token: '' }), checkpointWhen: () => true });
+export function pendingBrowserAction(conversation: Conversation) { return conversation.commit(async tx => (await tx.doc(browserAction, conversation.id)).token, context); }
+export function reserveBrowserAction(conversation: Conversation) {
+  return conversation.commit(async tx => {
+    const action = await tx.doc(browserAction, conversation.id);
+    if (action.token) throw new CoreError(409, 'ASSISTANT_UI_REVIEW_REQUIRED');
+    return action.token = crypto.randomUUID();
+  }, context);
+}
+export function settleBrowserAction(conversation: Conversation, token: string) {
+  return conversation.commit(async tx => {
+    const action = await tx.doc(browserAction, conversation.id);
+    if (!token || action.token !== token) throw new CoreError(409, 'ASSISTANT_UI_REVIEW_CHANGED');
+    action.token = '';
+  }, context);
+}
 const status = z.union([z.literal(400), z.literal(401), z.literal(403), z.literal(404), z.literal(409), z.literal(422), z.literal(429), z.literal(502), z.literal(503), z.literal(504)]);
 export function failTurn(conversation: Conversation, requestId: string, failure: CoreError) {
   return conversation.commit(async tx => { const receipt = await tx.doc(receipts, `${conversation.id}/${requestId}`, null); receipt.error = failure.code; receipt.status = failure.status; }, context);
@@ -52,6 +68,10 @@ export async function threadView(harness: Harness, input: z.infer<typeof assista
   const previous = await directoryFor(harness, roleId);
   let id = input.thread ?? previous.at(-1)?.id;
   let selected = id === undefined ? undefined : await boundThread(harness, roleId, id);
+  if (action === 'reviewed') {
+    if (!selected || !input.reviewId) throw new CoreError(400, 'ASSISTANT_REVIEW_REQUIRED');
+    await settleBrowserAction(selected, input.reviewId);
+  }
   if (action === 'delete' || action === 'rename') {
     if (!selected || (action === 'rename' && !title)) throw new CoreError(400, 'ASSISTANT_THREAD_REQUIRED');
     await harness.commit(async tx => {

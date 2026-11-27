@@ -72,3 +72,47 @@ it('records real diagnosis and medication refusals with the responsible role and
     ]) });
   }, false, { CLINMESH_PORT: '51998', CLINMESH_VISITOR_PASSCODE: 'test-passcode', CLINMESH_LLM_ALLOWED_BASE_URLS: baseUrl }));
 }, 30000);
+
+it('records the terminal patient provider failure and counts answered consultations', async () => {
+  let doctorCalls = 0;
+  await withProvider(51997, (_, response, raw) => {
+    const body = z.object({ model: z.string() }).parse(JSON.parse(raw));
+    if (body.model === 'tested-patient') { response.writeHead(401); response.end('synthetic-private-failure-body'); return; }
+    if (++doctorCalls > 1) { openAiText(response, 'The patient could not answer.'); return; }
+    const delta = { role: 'assistant', tool_calls: [{ index: 0, id: 'ask-1', type: 'function', function: { name: 'ask_patient', arguments: JSON.stringify({ question: 'How do you feel?' }) } }] };
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.end(`data: ${JSON.stringify({ id: 'doctor', model: body.model, choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: 'doctor', model: body.model, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
+  }, async baseUrl => withNodeWorkspace(async origin => {
+    const clinic = await openPatient((path, init) => fetch(origin + path, init));
+    const response = await fetch(`${origin}/api/eval/runs`, { method: 'POST', headers: { ...clinic.headers, ...userProvider(baseUrl) }, body: JSON.stringify({ packId: 'global-general', caseId: 'g01', maxTurns: 4, clinicianModel: 'tested-doctor', patientModel: 'tested-patient' }) });
+    const result = await response.json();
+    expect(result).toMatchObject({ error: 'LLM_PROVIDER_AUTH_FAILED', patientTurns: 0, trace: expect.arrayContaining([expect.objectContaining({ role: 'patient', operation: 'consultation.reply', error: 'LLM_PROVIDER_AUTH_FAILED' })]) });
+    expect(JSON.stringify(result)).not.toMatch(/synthetic-private-failure-body|synthetic-user-only-key/);
+  }, false, { CLINMESH_PORT: '51998', CLINMESH_VISITOR_PASSCODE: 'test-passcode', CLINMESH_LLM_ALLOWED_BASE_URLS: baseUrl }));
+}, 30000);
+
+it('audits Pi argument rejection and requires a model round after a report returns before acknowledgement', async () => {
+  let generation = 0;
+  await withProvider(51997, (_, response, raw) => {
+    const body = z.object({ messages: z.array(z.object({ role: z.string(), content: z.unknown() })) }).parse(JSON.parse(raw));
+    const message = (name: string, args: object) => ({ type: 'function', function: { name, arguments: JSON.stringify(args) } });
+    const shown = String(body.messages.find(item => item.role === 'user')?.content);
+    const visible = z.object({ services: z.array(z.object({ code: z.string(), id: z.uuidv7() })) }).parse(JSON.parse(shown));
+    const cbc = visible.services.find(item => item.code === 'cbc')!;
+    const issued = body.messages.filter(item => item.role === 'tool').map(item => { try { return z.object({ reportId: z.uuidv7(), reportVersion: z.int() }).safeParse(JSON.parse(String(item.content))).data; } catch { return undefined; } }).find(Boolean);
+    generation++;
+    const requested = generation === 1 ? [message('investigate', { serviceId: 'cbc', privateField: 'synthetic-private-model-argument' })] : generation === 2 ? [message('investigate', { serviceId: cbc.id })] : generation === 3 && issued ? [message('read_report', issued), message('acknowledge_report', { ...issued, mode: 'text' })] : generation === 4 && issued ? [message('acknowledge_report', { ...issued, mode: 'text' })] : [];
+    if (!requested.length) { openAiText(response, 'Review complete.'); return; }
+    const delta = { role: 'assistant', tool_calls: requested.map((item, index) => ({ ...item, id: `call-${generation}-${index}`, index })) };
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.end(`data: ${JSON.stringify({ id: 'doctor', model: 'tested-doctor', choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: 'doctor', model: 'tested-doctor', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
+  }, async baseUrl => withNodeWorkspace(async origin => {
+    const clinic = await openPatient((path, init) => fetch(origin + path, init));
+    const response = await fetch(`${origin}/api/eval/runs`, { method: 'POST', headers: { ...clinic.headers, ...userProvider(baseUrl) }, body: JSON.stringify({ packId: 'global-general', caseId: 'g01', maxTurns: 6, clinicianModel: 'tested-doctor', patientModel: 'tested-patient' }) });
+    const result = z.object({ trace: z.array(z.looseObject({ operation: z.string(), error: z.string().optional() })) }).parse(await response.json());
+    expect(result.trace.filter(item => item.operation === 'investigate')).toMatchObject([{ error: 'INVALID_TOOL_ARGUMENTS', input: { fields: ['serviceId'] } }, { output: { reportVersion: 1 } }]);
+    expect(result.trace.filter(item => item.operation === 'acknowledge_report')).toMatchObject([{ error: 'REPORT_REVIEW_REQUIRED' }, { output: { status: 'acknowledged' } }]);
+    expect(result.trace.filter(item => item.operation === 'lab.acknowledge')).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toMatch(/synthetic-private-model-argument|synthetic-user-only-key/);
+  }, false, { CLINMESH_PORT: '51998', CLINMESH_VISITOR_PASSCODE: 'test-passcode', CLINMESH_LLM_ALLOWED_BASE_URLS: baseUrl }));
+}, 30000);

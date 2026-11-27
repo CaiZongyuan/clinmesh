@@ -12,7 +12,12 @@ import { api, ApiError, errorMessage, jsonBody, scopeKey, words, type WorkbenchP
 type Delta = Extract<AssistantFrame, { type: 'delta' }>;
 type View = z.infer<typeof assistantView>;
 type Input = { content?: string; requestId: string; retryOf?: string };
-const receiptSchema = z.object({ clientId: z.uuid(), requestId: z.uuid(), thread: z.int().positive() });
+const receiptSchema = z.object({ clientId: z.uuid(), requestId: z.uuid(), thread: z.int().positive(), phase: z.enum(['sending', 'admitted']).default('admitted'), content: z.string().max(12000).optional(), retryOf: z.uuid().optional(), fingerprint: z.string().optional() });
+async function providerFingerprint(headers: Record<string, string>) {
+  const fields = Object.entries(headers).filter(([name]) => name !== 'X-ClinMesh-LLM-Api-Key').sort(([left], [right]) => left.localeCompare(right));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(fields)));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
 function Markdown({ body }: { body: string }) {
   return <div className="assistant-markdown">{body.split(/\n\s*\n/).map((paragraph, index) => <p key={index}>{paragraph.split(/(\*\*[^*]+\*\*|`[^`]+`)/).map((part, offset) => part.startsWith('**') ? <strong key={offset}>{part.slice(2, -2)}</strong> : part.startsWith('`') ? <code key={offset}>{part.slice(1, -1)}</code> : part)}</p>)}</div>;
 }
@@ -50,10 +55,16 @@ export function ClinicianPanel({ encounter, workspace, language, children, edite
   const clearReceipt = () => { sessionStorage.removeItem(resumeKey); setReceipt(undefined); };
   const submit = useMutation({ mutationFn: async (input: Input) => {
     if (!channel) throw Error('ASSISTANT_BRIDGE_DISCONNECTED');
-    const sent = { thread: channel.thread, clientId, requestId: input.requestId };
+    const headers = modelHeaders('clinician');
+    const secret = headers['X-ClinMesh-LLM-Api-Key'];
+    if (secret && input.content?.includes(secret)) throw new ApiError(400, 'LLM_SECRET_IN_INPUT');
+    const fingerprint = await providerFingerprint(headers);
+    const original = receipt?.requestId === input.requestId ? receipt : undefined;
+    if (original?.fingerprint && original.fingerprint !== fingerprint) throw new ApiError(409, 'LLM_REJOIN_CONFIGURATION_REQUIRED');
+    const sent = original ?? { ...input, thread: channel.thread, clientId, phase: 'sending' as const, fingerprint };
     sessionStorage.setItem(resumeKey, JSON.stringify(sent)); setReceipt(sent);
-    const init = jsonBody('POST', { ...channel, ...input });
-    return api('/api/assistant/turn', assistantView, { ...init, mode: 'same-origin', redirect: 'error', headers: { ...init.headers, ...modelHeaders('clinician') } });
+    const init = jsonBody('POST', { ...channel, requestId: input.requestId, ...(sent.phase === 'sending' && { content: sent.content, retryOf: sent.retryOf }) });
+    return api('/api/assistant/turn', assistantView, { ...init, mode: 'same-origin', redirect: 'error', headers: { ...init.headers, ...headers } });
   }, onMutate() { setStream([]); setRetry(undefined); }, onSuccess(view) { client.setQueryData<View>(queryKey, view); clearReceipt(); setStream([]); }, onError(error, attempt) {
     const uncertain = !(error instanceof ApiError) || (error.status >= 500 && !error.message.startsWith('LLM_')) || error.message === 'LLM_REJOIN_CONFIGURATION_REQUIRED';
     if (uncertain) setRetry(attempt);
@@ -73,10 +84,18 @@ export function ClinicianPanel({ encounter, workspace, language, children, edite
       if (pending) { const parsed = receiptSchema.safeParse(JSON.parse(pending)); if (parsed.success && parsed.data.clientId === clientId && parsed.data.thread === thread) submit.mutate({ requestId: parsed.data.requestId }); }
     }
   });
+  const admitted = useEffectEvent((requestId: string) => {
+    const raw = sessionStorage.getItem(resumeKey);
+    if (!raw) return;
+    const sent = receiptSchema.safeParse(JSON.parse(raw)).data;
+    if (sent?.requestId !== requestId) return;
+    const accepted = { ...sent, phase: 'admitted' as const, content: undefined, retryOf: undefined };
+    sessionStorage.setItem(resumeKey, JSON.stringify(accepted)); setReceipt(accepted);
+  });
   useEffect(() => {
     if (!channel || typeof WebSocket === 'undefined') return;
     setReady(false);
-    return openAssistantChannel(channel, surface, value => connected(value), frame => addDelta(frame));
+    return openAssistantChannel(channel, surface, value => connected(value), frame => addDelta(frame), id => admitted(id));
   }, [channel, surface]);
   const observations = useQuery({ queryKey: [...queryKey, 'observations', thread], enabled: ambient,
     queryFn: ({ signal }) => api('/api/assistant/observations', assistantObservations, { ...jsonBody('POST', binding), signal }), refetchInterval: ambient ? 3000 : false });
@@ -108,6 +127,8 @@ export function ClinicianPanel({ encounter, workspace, language, children, edite
         <Field label={text('Instruction to assistant', '助手指令')}><Textarea value={message} onValueChange={setMessage} maxLength={12000}/></Field><div className="cm-actions"><Button disabled={!enabled || !message.trim()} onClick={() => send(message)}>{text('Send to assistant', '发送给助手')}</Button>
           {submit.isPending && <Button onClick={() => { void api('/api/assistant/stop', z.object({ ok: z.boolean() }), jsonBody('POST', channel)); }}>{text('Stop assistant', '停止助手')}</Button>}
           {retry && <Button disabled={!enabled} onClick={() => submit.mutate(retry)}>{text('Retry assistant', '重试助手')}</Button>}</div>
+        {session.data?.review && <section role="status"><strong>{text('Check the interrupted interface action', '核对中断的界面动作')}</strong><p>{session.data.review.committed.length ? text('Committed commands', '已提交命令') : text('Check the current draft and clinical facts.', '请核对当前草稿及正式临床记录。')}</p>
+          {session.data.review.committed.map((receipt, index) => <p key={index}>{receipt.operation} · {JSON.stringify(receipt.result)}</p>)}<Button disabled={busy} onClick={() => manage.mutate({ action: 'reviewed', reviewId: session.data?.review?.id })}>{text('I reviewed the outcome', '我已核对结果')}</Button></section>}
         {error && <p role="alert">{errorMessage(error, language)} {error.message.startsWith('LLM_') && <Button onClick={() => useModelSettings.setState({ open: true })}>{text('Model settings', '模型设置')}</Button>}</p>}
       </AgentPanelShell>}
       {state.approval && <InlineConfirmBar key={state.approval.id} requested trigger="" confirmation={state.approval.message} confirm={text('Allow once', '放行一次')} cancel={text('Deny request', '拒绝请求')} onConfirm={() => state.approval?.answer(true)} onDeny={() => state.approval?.answer(false)}/>}

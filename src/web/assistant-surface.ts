@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { z } from 'zod';
-import type { BrowserRequest } from '../packages/agent-protocol';
+import type { AssistantBinding, BrowserRequest } from '../packages/agent-protocol';
+import { captureAssistantCommands } from './assistant-command';
 import { createClinMeshUiAgent, mountClinMeshWebMCP } from '../packages/ui-kit';
 
 type Suggestion = { field: string; ref: string; action: string; args: unknown[]; label: string };
@@ -24,10 +25,12 @@ export function createAssistantSurface(root: () => HTMLElement | null, edited: S
     state.setState({ protected: [...new Set([...edited, ...(field ? [field] : [])])] });
   };
   let accepted: Suggestion | undefined;
+  let capture: ReturnType<typeof captureAssistantCommands> | undefined;
   let alive = true;
   let glow: ReturnType<typeof setTimeout> | undefined;
   const agent = createClinMeshUiAgent({ within: () => alive ? root() : null,
     beforeAction(step, element) {
+      capture?.disarm();
       const field = fieldKey(element, step.label || step.ref)!;
       const focus = document.activeElement;
       const adopted = accepted?.ref === step.ref && accepted.action === step.action && JSON.stringify(accepted.args) === JSON.stringify(step.args);
@@ -46,7 +49,7 @@ export function createAssistantSurface(root: () => HTMLElement | null, edited: S
     requestApproval(message, { signal }) {
       if (signal.aborted || !alive) return false;
       return new Promise<boolean>(resolve => {
-        const answer = (value: boolean) => { signal.removeEventListener('abort', abort); state.setState({ approval: undefined }); resolve(value && alive && !signal.aborted); };
+        const answer = (value: boolean) => { signal.removeEventListener('abort', abort); state.setState({ approval: undefined }); if (value && alive && !signal.aborted) capture?.approve(); resolve(value && alive && !signal.aborted); };
         const abort = () => answer(false);
         state.getState().approval?.answer(false); signal.addEventListener('abort', abort, { once: true });
         state.setState({ approval: { id: crypto.randomUUID(), message, answer } });
@@ -64,7 +67,7 @@ export function createAssistantSurface(root: () => HTMLElement | null, edited: S
         if (change.source === 'agent') { state.setState(current => ({ unread: current.unread + 1 })); return; }
         if (['keyboard', 'pen', 'mouse', 'touch', 'virtual'].includes(change.source)) { mark(fieldKey(element, change.label || change.ref)!); protectedFields(); }
       });
-      function humanIntent() { agentTarget = undefined; protectedFields(); }
+      function humanIntent() { agentTarget = undefined; capture?.disarm(); protectedFields(); }
       function input(event: Event) { if (event.target instanceof Element && root()?.contains(event.target) && (event.isTrusted || !agentOwnsFocus(event.target))) { const key = fieldKey(event.target); if (key) { mark(key); protectedFields(); } } }
       function editList(event: Event) { humanIntent(); if (event.target instanceof Element && event.target.closest('button') && event.target.closest('[data-assistant-list]') && !event.target.closest('[data-agent-confirm]')) input(event); }
       document.addEventListener('pointerdown', editList, true);
@@ -79,9 +82,18 @@ export function createAssistantSurface(root: () => HTMLElement | null, edited: S
       const { ref, action, args } = suggestion;
       try { const result = await agent.act({ steps: [{ ref, action, args }] }); if (result.ok) remove(suggestion.field); } finally { accepted = undefined; }
     },
-    async call(request: BrowserRequest, signal: AbortSignal) {
+    async call(request: BrowserRequest, signal: AbortSignal, confirmation?: { binding: AssistantBinding; token: string }) {
       if (!alive || !root() || signal.aborted) return { error: 'ASSISTANT_BINDING_CHANGED' };
-      if (request.tool === 'ui_act') { const { ok, error } = await agent.act(request.args, { signal }); return { ok, ...(error && { error }) }; }
+      if (request.tool === 'ui_act') {
+        const commands = confirmation && captureAssistantCommands(confirmation.binding, confirmation.token);
+        capture = commands;
+        try {
+          const { ok, error } = await agent.act(request.args, { signal });
+          const reviewRequired = await commands?.finish();
+          return { ok, ...(error && { error }), ...(reviewRequired && { reviewRequired }) };
+        } catch (error) { await commands?.finish(); throw error; }
+        finally { if (capture === commands) capture = undefined; }
+      }
       const result = request.tool === 'ui_snapshot' ? agent.snapshot() : await agent.query(request.args);
       return Array.isArray(result) ? result.slice(0, 48).map(({ ref, label, component, actions, items, confirm, value }) => ({ ref, label, component, actions, items: items?.slice(0, 12), confirm, value })) : result;
     },

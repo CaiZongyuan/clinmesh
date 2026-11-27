@@ -1,4 +1,4 @@
-import type { Model, StreamFunction } from '@earendil-works/pi-ai';
+import type { Model, StreamFunction, TranscriptContext } from '@earendil-works/pi-ai';
 import { createModels, createProvider } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage, fauxToolCall, type FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
@@ -36,7 +36,7 @@ export const mockClinician: FauxResponseFactory = transcript => {
   return fauxAssistantMessage('**Review the draft** against the consultation and signed reports.');
 };
 
-export function clinicianModels(config: AgentProvider, mock: FauxResponseFactory, signal: AbortSignal, emit: (frame: AssistantFrame) => void, authorize: () => Promise<void>) {
+export function clinicianModels(config: AgentProvider, mock: FauxResponseFactory, signal: AbortSignal, emit: (frame: AssistantFrame) => void, authorize: (transcript: TranscriptContext) => Promise<void>) {
   const models = createModels();
   let failure: CoreError | undefined;
   const stream: StreamFunction = (_, transcript, options) => {
@@ -44,7 +44,7 @@ export function clinicianModels(config: AgentProvider, mock: FauxResponseFactory
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), 60000);
     async function generate() {
-      await authorize();
+      await authorize(transcript);
       const request = upstream(config, mock);
       const signals = [deadline.signal, signal, ...(options?.signal ? [options.signal] : [])];
       let status = 0;

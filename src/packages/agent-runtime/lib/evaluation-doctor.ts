@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { fauxAssistantMessage, fauxToolCall, type FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux';
-import { createRegistry, type ToolRegistration } from '@earendil-works/pi-durable';
+import { createRegistry, hook, ToolTask, type ToolRegistration } from '@earendil-works/pi-durable';
 import { z } from 'zod';
 import { CoreError } from '../../platform';
 import type { StorePort, StoreScope } from '../../store';
@@ -57,12 +57,32 @@ const mockDoctor: FauxResponseFactory = transcript => {
   return fauxAssistantMessage('Encounter reviewed.');
 };
 
-export async function runEvaluationDoctor(store: StorePort, at: StoreScope, sessionId: string, config: AgentProvider, presentation: EvaluationPresentation, maxTurns: number, execute: (action: EvaluationAction) => Promise<unknown>, signal: AbortSignal, enabled: ReadonlySet<string>, reads: ToolRegistration[]) {
+export async function runEvaluationDoctor(store: StorePort, at: StoreScope, sessionId: string, config: AgentProvider, presentation: EvaluationPresentation, maxTurns: number, execute: (action: EvaluationAction, delivered: ReadonlySet<string>) => Promise<unknown>, signal: AbortSignal, enabled: ReadonlySet<string>, reads: ToolRegistration[], rejected: (name: string, fields: string[], code: string) => void) {
   const context = BACKGROUND_CONTEXT;
   let turns = 0;
-  const model = clinicianModels(config, mockDoctor, signal, () => {}, async () => { if (signal.aborted) throw new CoreError(409, 'EVALUATION_STOPPED'); turns++; });
+  const delivered = new Set<string>();
+  const visibleReport = z.object({ report: z.object({ id: z.uuidv7(), version: z.int().positive() }) });
+  const model = clinicianModels(config, mockDoctor, signal, () => {}, async transcript => {
+    if (signal.aborted) throw new CoreError(409, 'EVALUATION_STOPPED');
+    turns++;
+    for (const message of transcript.messages) {
+      if (message.role !== 'toolResult' || message.toolName !== 'read_report' || message.isError) continue;
+      const text = message.content.find(block => block.type === 'text')?.text;
+      try { const parsed = visibleReport.safeParse(JSON.parse(text ?? 'null')); if (parsed.success) delivered.add(`${parsed.data.report.id}/${parsed.data.report.version}`); } catch {}
+    }
+  });
   const registry = createRegistry();
-  registry.install({ name: 'evaluation', tools: [...reads, ...Object.entries(tools).filter(([name]) => enabled.has(name)).map(([name, schema]) => clinicianTool(name, descriptions[name as keyof typeof tools], schema, async args => execute({ name, args } as EvaluationAction), true))] });
+  const offered = [...reads, ...Object.entries(tools).filter(([name]) => enabled.has(name)).map(([name, schema]) => clinicianTool(name, descriptions[name as keyof typeof tools], schema, async args => execute({ name, args } as EvaluationAction, delivered), true))];
+  registry.install({ name: 'evaluation', tools: offered, hooks: [hook(ToolTask, { afterTool(call, result) {
+    const reason = result.diagnostics?.find(diagnostic => ['invalid_arguments', 'tool_unavailable'].includes(diagnostic.code ?? ''));
+    if (reason) {
+      const known = offered.some(tool => tool.name === call.name);
+      const schema = Object.hasOwn(tools, call.name) ? tools[call.name as keyof typeof tools] : undefined;
+      const fields = schema ? Object.keys(call.arguments).filter(key => Object.hasOwn(schema.shape, key)) : [];
+      rejected(known ? call.name : 'unavailable_tool', fields, reason.code === 'invalid_arguments' ? 'INVALID_TOOL_ARGUMENTS' : 'TOOL_UNAVAILABLE');
+    }
+    return result;
+  } })] });
   const harness = await openDurableAgentSession(store, at, sessionId, 'clinician', { models: model.models, registry, settings: { retry: { enabled: false }, compaction: { enabled: false } } });
   try {
     const doctor = await harness.root(context, { agent: { model: { provider: clinicianModel.provider, modelId: clinicianModel.id }, maxTurns, instructions: 'You are the tested clinician in an isolated synthetic Evaluation Run. Use the provided tools to ask the patient, choose actual investigations, confirm a diagnosis, decide medication, sign the complete record and finish the encounter. Use only visible facts, catalog entries and returned reports.' } });

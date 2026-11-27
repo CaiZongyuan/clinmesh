@@ -22,7 +22,6 @@ export async function evaluationStudies(store: StorePort, at: StoreScope, encoun
       return { kind, id, code: catalog.code, codeSystem: catalog.code_system, name: service.display.en };
     })));
   }
-  const reviewed = new Set<string>();
   const located = new Map<string, Kind>();
   async function locate(reportId: string, reportVersion: number) {
     const kind = located.get(reportId);
@@ -60,11 +59,10 @@ export async function evaluationStudies(store: StorePort, at: StoreScope, encoun
     },
     async report(reportId: string, reportVersion: number) {
       const { report, kind } = await locate(reportId, reportVersion);
-      reviewed.add(`${reportId}/${reportVersion}`);
       return { kind, report, reviewMode: 'requireFirstFrame' in report && report.requireFirstFrame ? 'frames-unavailable' : 'text' };
     },
-    async acknowledge(reportId: string, reportVersion: number, mode: 'text' | 'frames-unavailable') {
-      if (!reviewed.has(`${reportId}/${reportVersion}`)) throw new CoreError(409, 'REPORT_REVIEW_REQUIRED');
+    async acknowledge(reportId: string, reportVersion: number, mode: 'text' | 'frames-unavailable', delivered: ReadonlySet<string>) {
+      if (!delivered.has(`${reportId}/${reportVersion}`)) throw new CoreError(409, 'REPORT_REVIEW_REQUIRED');
       const { order, kind } = await locate(reportId, reportVersion);
       return call(`${kind}.acknowledge`, reportId, order.version, { reportVersion, ...(kind !== 'lab' && { mode }) });
     },
