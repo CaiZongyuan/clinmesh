@@ -1,14 +1,16 @@
 import { z } from 'zod';
+import { v5 } from 'uuid';
 import { canonicalJson } from './json';
 import { exportPiSession, piImage, restorePiSession, type PiImage } from './pi';
 import { createReader, createRepository, readEntity, writeEntity } from './repository';
-import { billingEntities, entityNames, epoch as epochFields, pharmacyEntities, tables, uuid, workspace as workspaceFields, type TableDefinition } from './schema';
+import { billingEntities, entityNames, epoch as epochFields, pharmacyEntities, tables, uuid, workspace as workspaceFields, type EntityRow, type TableDefinition } from './schema';
 import type { SqlConnection } from './sqlite';
 
-const format = 'clinmesh.snapshot.v4';
+const format = 'clinmesh.snapshot.v5';
+const firstTableByVersion = { 'clinmesh.snapshot.v1': 'encounter_triage', 'clinmesh.snapshot.v2': billingEntities[0], 'clinmesh.snapshot.v3': 'patient_reply_runs', 'clinmesh.snapshot.v4': pharmacyEntities[0] } as const;
 const record = z.record(z.string(), z.json());
 const snapshotSchema = z.strictObject({
-  format: z.enum(['clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', format]), workspaceId: uuid,
+  format: z.enum(['clinmesh.snapshot.v1', 'clinmesh.snapshot.v2', 'clinmesh.snapshot.v3', 'clinmesh.snapshot.v4', format]), workspaceId: uuid,
   tables: z.array(z.strictObject({ name: z.string(), rows: z.array(record) })),
   pi: z.array(piImage), sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
@@ -27,14 +29,41 @@ export async function seal(content: SnapshotContent): Promise<LogicalSnapshot> {
 export async function verifySnapshot(input: unknown) {
   const { sha256, ...content } = snapshotSchema.parse(input);
   if ((await seal(content)).sha256 !== sha256) throw new StoreSnapshotError('Snapshot digest mismatch');
-  const missing: string[] = [];
-  if (content.format === 'clinmesh.snapshot.v1') missing.push('encounter_triage');
-  if (content.format === 'clinmesh.snapshot.v1' || content.format === 'clinmesh.snapshot.v2') missing.push(...billingEntities);
-  if (content.format !== format) missing.push(...pharmacyEntities);
-  const expected = ['workspaces', 'workspace_epochs', ...entityNames.filter(name => !missing.includes(name))];
+  const count = content.format === format ? entityNames.length : entityNames.indexOf(firstTableByVersion[content.format]);
+  const expected = ['workspaces', 'workspace_epochs', ...entityNames.slice(0, count)];
   if (content.tables.length !== expected.length || content.tables.some((table, index) => table.name !== expected[index])) throw new StoreSnapshotError('Incomplete or unordered snapshot tables');
-  const upgraded: SnapshotContent = { ...content, format, tables: [...content.tables, ...missing.map(name => ({ name, rows: [] }))] };
-  return { content: upgraded, sourceFormat: content.format };
+  const upgraded: SnapshotContent = { ...content, format, tables: [...content.tables, ...entityNames.slice(count).map(name => ({ name, rows: [] }))] };
+  return { content: upgraded, sourceFormat: content.format, sourceDigest: sha256 };
+}
+
+type Quarantine = EntityRow<'inventory_lot_quarantines'>;
+type InventoryProvenance = Pick<Quarantine, 'source_version' | 'source_sha256'>;
+
+export function verifyInventoryLots(db: SqlConnection, provenance?: InventoryProvenance) {
+  const reader = createReader(db, () => {});
+  const added: SnapshotContent['tables'][number]['rows'] = [];
+  const groups = db.all(`SELECT lot.workspace_id, lot.epoch, lot.id, COALESCE(SUM(movement.quantity_delta), 0) AS balance
+    FROM inventory_lots lot LEFT JOIN inventory_movements movement ON movement.workspace_id = lot.workspace_id AND movement.epoch = lot.epoch AND movement.lot_id = lot.id
+    GROUP BY lot.workspace_id, lot.epoch, lot.id HAVING COALESCE(SUM(movement.quantity_delta), 0) < 0 OR EXISTS
+      (SELECT 1 FROM inventory_lot_quarantines held WHERE held.workspace_id = lot.workspace_id AND held.epoch = lot.epoch AND held.id = lot.id)
+    ORDER BY lot.workspace_id, lot.epoch, lot.id`);
+  for (const group of groups) {
+    const at = { workspaceId: uuid.parse(group.workspace_id), epoch: uuid.parse(group.epoch) };
+    const id = uuid.parse(group.id);
+    const balance = z.int().parse(group.balance);
+    const movements = reader.list(at, 'inventory_movements', { lot_id: id });
+    const fingerprint = v5(canonicalJson({ ...at, id, movements }), v5.URL);
+    const held = reader.get(at, 'inventory_lot_quarantines', id);
+    if (held) {
+      if (held.quantity_at_migration !== balance || held.ledger_fingerprint !== fingerprint || held.source_version.startsWith('clinmesh.snapshot.') !== Boolean(held.source_sha256)) throw new StoreSnapshotError(`Invalid inventory quarantine for lot ${id}`);
+    } else {
+      if (!provenance) throw new StoreSnapshotError(`Unverified negative inventory in lot ${id}`);
+      const marker = { id, ...provenance, quantity_at_migration: balance, ledger_fingerprint: fingerprint };
+      writeEntity(db, at, 'inventory_lot_quarantines', marker);
+      added.push({ workspace_id: at.workspaceId, epoch: at.epoch, ...marker });
+    }
+  }
+  return added;
 }
 
 export function capture(db: SqlConnection, workspaceId: string): SnapshotContent {
@@ -65,7 +94,7 @@ export function capture(db: SqlConnection, workspaceId: string): SnapshotContent
   return { format, workspaceId, tables: data, pi };
 }
 
-export async function restore(db: SqlConnection, { content, sourceFormat }: Awaited<ReturnType<typeof verifySnapshot>>): Promise<void> {
+export async function restore(db: SqlConnection, { content, sourceFormat, sourceDigest }: Awaited<ReturnType<typeof verifySnapshot>>): Promise<void> {
   if (db.all('SELECT id FROM workspaces LIMIT 1').length) throw new StoreSnapshotError('Snapshot target must be empty');
   const tx = createRepository(db, () => {});
   const { workspaceId } = content;
@@ -96,9 +125,6 @@ export async function restore(db: SqlConnection, { content, sourceFormat }: Awai
       WHERE revision.workspace_id = ? AND revision.epoch = ? GROUP BY revision.id
       HAVING COUNT(member.id) NOT BETWEEN 1 AND 8 OR SUM(member.is_primary) <> 1 LIMIT 1`, at.workspaceId, at.epoch);
     if (invalid.length) throw new StoreSnapshotError('Incomplete confirmed diagnosis revision');
-    const [negative] = db.all(`SELECT lot_id FROM inventory_movements WHERE workspace_id = ? AND epoch = ?
-      GROUP BY lot_id HAVING SUM(quantity_delta) < 0 LIMIT 1`, at.workspaceId, at.epoch);
-    if (negative) throw new StoreSnapshotError(`${sourceFormat}: negative inventory in lot ${negative.lot_id}`);
     const [inconsistent] = db.all(`SELECT rx.id FROM prescriptions rx JOIN prescription_signatures signature
       ON signature.workspace_id = rx.workspace_id AND signature.epoch = rx.epoch AND signature.prescription_id = rx.id
       WHERE rx.workspace_id = ? AND rx.epoch = ? AND (
@@ -107,6 +133,8 @@ export async function restore(db: SqlConnection, { content, sourceFormat }: Awai
         OR rx.status NOT IN ('signed', 'withdrawn', 'dispensed') OR rx.version <> CASE WHEN rx.status = 'signed' THEN 1 ELSE 2 END) LIMIT 1`, at.workspaceId, at.epoch);
     if (inconsistent) throw new StoreSnapshotError(`Prescription state disagrees with its events: ${inconsistent.id}`);
   }
+  const migrated = verifyInventoryLots(db, sourceFormat === format ? undefined : { source_version: sourceFormat, source_sha256: sourceDigest });
+  if (migrated.length) recordsByTable.get('inventory_lot_quarantines')!.push(...migrated);
   for (const image of content.pi) await restorePiSession(db, workspaceId, image);
   if (canonicalJson(capture(db, workspaceId)) !== canonicalJson(content)) throw new StoreSnapshotError('Noncanonical snapshot content');
 }

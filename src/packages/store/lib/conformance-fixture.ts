@@ -13,7 +13,7 @@ export const receipt = { id: fixtureId(13), idempotency_key: 'test-command', ope
 
 export function seedConformance(tx: StoreTx): string[] {
   const names = ['workspaces', 'workspace_epochs', 'case_truths', 'command_receipts', 'diagnosis_revisions', 'diagnosis_confirmations'];
-  function add<Name extends Exclude<PublicEntity, 'command_receipts' | 'diagnosis_revisions' | 'diagnosis_confirmations'>>(name: Name, row: EntityRow<NoInfer<Name>>) {
+  function add<Name extends Exclude<PublicEntity, 'command_receipts' | 'diagnosis_revisions' | 'diagnosis_confirmations' | 'inventory_lot_quarantines'>>(name: Name, row: EntityRow<NoInfer<Name>>) {
     tx.insert(at, name, row);
     if (!names.includes(name)) names.push(name);
   }
@@ -51,6 +51,9 @@ export function seedConformance(tx: StoreTx): string[] {
   add('pi_sessions', { id: fixtureId(71), agent: 'clinician', encounter_id: null });
   add('consultations', { id: fixtureId(21), encounter_id, reply_pending: false, version: 1 });
   add('consultation_turns', { id: fixtureId(22), consultation_id: fixtureId(21), ordinal: 1, speaker: 'patient', channel: 'voice', content: 'Synthetic turn', ...times });
+  add('consultation_turns', { id: fixtureId(102), consultation_id: fixtureId(21), ordinal: 2, speaker: 'clinician', channel: 'text', content: 'Synthetic question', ...times });
+  add('patient_reply_runs', { id: fixtureId(102), session_id: fixtureId(70), attempt: 1, status: 'stopped', error_code: null, provider: 'mock', model: 'scripted-patient', endpoint_hash: '0'.repeat(64), effort: 'off', version: 2 });
+  add('agent_model_calls', { id: fixtureId(103), session_id: fixtureId(70), question_id: fixtureId(102), provider: 'mock', model: 'scripted-patient', status: 'interrupted', input_tokens: 0, output_tokens: 0, cache_read: 0, cache_write: 0, duration_ms: 0, recorded_at, version: 2 });
   add('clinical_record_drafts', { id: fixtureId(23), encounter_id, fields: { summary: 'Draft' }, version: 1 });
   add('clinical_record_revisions', { id: fixtureId(25), encounter_id, fields: { summary: 'First' }, signed_by: practitioner_role, ...firstRevision, ...times });
   add('clinical_record_revisions', { id: fixtureId(24), encounter_id, fields: { summary: 'Correction' }, signed_by: practitioner_role, revision: 2, previous_revision_id: fixtureId(25), ...times });

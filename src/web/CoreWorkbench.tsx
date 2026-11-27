@@ -7,17 +7,21 @@ import { summarySchema } from '../packages/patient-visit';
 import { sessionSchema } from '../packages/platform';
 import { Badge, Button, Dialog, Field, InlineConfirmBar, Menu, Select, WorkspaceCardLayout, useThemeFont } from '../packages/ui-kit';
 import { EncounterPanel, type WorkbenchPanels } from './EncounterPanel';
+import { ModelSettings } from './ModelSettings';
+import { useModelSettings } from './model-preferences';
 import { createEpochDrafts, type EncounterDrafts } from './encounter-drafts';
 import { builtinStations } from './builtin-panels';
 import { api, ApiError, currentSession, errorMessage, scopeKey, sessionKey, words, workspaceKey, write, type Intent, type Language, type Session } from './workbench-api';
 
-const useView = create<{ epoch: string; encounterId: string; queue: boolean }>(() => ({ epoch: '', encounterId: '', queue: true }));
+const useView = create<{ queue: boolean }>(() => ({ queue: true }));
 type Props = { workspace: WorkspaceView; language: Language; languageSelect: ReactNode; panels?: WorkbenchPanels; draftsFor?: (id: string) => EncounterDrafts };
 export function CoreWorkbench({ workspace, language, languageSelect, panels, draftsFor: ownerDrafts }: Props) {
   const draftsFor = useMemo(() => ownerDrafts ?? createEpochDrafts(), [ownerDrafts, workspace.workspaceId, workspace.epoch]);
   const text = words(language);
   const client = useQueryClient();
   const selection = useView();
+  const selectionKey = `clinmesh.encounter.${workspace.workspaceId}.${workspace.epoch}`;
+  const [selectedId, setSelectedId] = useState(() => z.uuidv7().safeParse(sessionStorage.getItem(selectionKey)).data);
   const [resetPack, setResetPack] = useState(workspace.manifest.packId);
   const style = useThemeFont();
   const stations = Object.entries(builtinStations).filter(([name]) => workspace.operations.some(operation => operation.name === name));
@@ -28,10 +32,10 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels, dra
   const Station = stations.find(([name]) => name === selected.value)?.[1].component;
   const listKey = scopeKey(workspace, 'encounters');
   const encounters = useQuery({ queryKey: listKey, enabled: !Station, queryFn: ({ signal }) => api('/api/his/encounters', z.array(summarySchema), { signal }) });
-  const encounterId = (selection.epoch === workspace.epoch && selection.encounterId) || encounters.data?.at(-1)?.id || '';
+  const encounterId = selectedId && (!encounters.data || encounters.data.some(item => item.id === selectedId)) ? selectedId : encounters.data?.at(-1)?.id ?? '';
   const detailKey = scopeKey(workspace, encounterId, 'clinical');
   const detail = useQuery({ queryKey: detailKey, enabled: !Station && Boolean(encounterId), queryFn: ({ signal }) => api(`/api/his/encounters/${encounterId}`, encounterViewSchema, { signal }) });
-  const selectEncounter = (id: string) => useView.setState({ epoch: workspace.epoch, encounterId: id });
+  function selectEncounter(id: string) { sessionStorage.setItem(selectionKey, id); setSelectedId(id); }
   const refresh = (key: string[]) => client.invalidateQueries({ queryKey: key, exact: true });
   const sameEpoch = (sent: Session, current = client.getQueryData<Session | null>(sessionKey)) => current?.workspaceId === sent.workspaceId && current.epoch === sent.epoch;
   const change = useMutation({ mutationFn: (intent: Intent) => write(workspace, intent),
@@ -84,12 +88,12 @@ export function CoreWorkbench({ workspace, language, languageSelect, panels, dra
     <span className="current-patient">{displayName}</span><div className="topbar-controls">
     {stationOptions.length > 1 && <Field label={text('Workbench', '工作台')}><Select options={stationOptions} value={selected.value} onValueChange={value => { if (value) setPreference({ role: workspace.roleId, value }); }}/></Field>}
     <Menu label={`${text('Role', '岗位')} · ${role.name[language]}`} items={workspace.roles.map(item => ({ value: item.id, label: item.name[language] }))} onAction={roleId => { if (roleId !== role.id) change.mutate({ name: 'workspace.role', version: workspace.sessionVersion, fields: { roleId } }); }}/>
-    <Dialog title={text('Workspace settings', '工作台设置')} triggers={[workspace.manifest.name[language]]} close={text('Close settings', '关闭设置')}>{preferences}</Dialog></div>
+    <ModelSettings language={language}/><Dialog title={text('Workspace settings', '工作台设置')} triggers={[workspace.manifest.name[language]]} close={text('Close settings', '关闭设置')}>{preferences}</Dialog></div>
   </>} queue={!Station && <section className="workbench-queue"><h2>{text('Fixed cases', '固定病例')}</h2>{workspace.cases.map(item => <div key={item.id}>
     <strong>{item.demographics.name}</strong><span>{item.encounterClass === 'outpatient' ? text('Outpatient', '门诊') : text('Inpatient', '住院')}</span>
     <Button disabled={change.isPending || !allowed('encounter.start')} onClick={() => change.mutate({ name: 'encounter.start', targetId: item.id, version: 0, fields: { language } })}>{text('Start', '开诊')} · {item.demographics.name}</Button>
   </div>)}<h2>{text('Encounters', '已开就诊')}</h2>{encounters.data?.map(item => <Button key={item.id} aria-current={item.id === encounterId ? 'true' : undefined} onClick={() => selectEncounter(item.id)}>{item.name} · {item.id.slice(-6)} · {item.status === 'active' ? text('Active', '进行中') : text('Completed', '已完诊')}</Button>)}</section>}>
-    {change.isError && <p role="alert">{errorMessage(change.error, language)}</p>}
+    {change.isError && <div role="alert"><p>{errorMessage(change.error, language)}</p>{change.error.message.startsWith('LLM_') && <Button onClick={() => useModelSettings.setState({ open: true })}>{text('Configure connection', '配置连接')}</Button>}</div>}
     {encounters.isError && <p role="alert">{errorMessage(encounters.error, language)}</p>}
     {Station ? <Station workspace={workspace} language={language} submit={intent => change.mutateAsync(intent)}/> : detail.isError ? <p role="alert">{errorMessage(detail.error, language)}</p> : detail.data ? <EncounterPanel key={detail.data.id} encounter={detail.data} workspace={workspace} language={language} busy={change.isPending} submit={intent => change.mutateAsync(intent)} panels={panels} drafts={draftsFor(detail.data.id)}/> :
     <section className="workbench-empty"><Badge tone="info">{workspace.manifest.name[language]}</Badge><h1>{text('Outpatient workbench', '门诊工作台')}</h1><p>{text('Start a fixed case from the queue to open its encounter.', '从病例队列选择固定病例开诊。')}</p></section>}

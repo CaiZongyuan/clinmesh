@@ -33,7 +33,7 @@ function stockDate(reader: StoreReader, at: StoreScope, virtualTime: string) {
 function availableLots(reader: StoreReader, at: StoreScope, orderId: string, date: string) {
   const item = reader.get(at, 'clinical_orders', orderId)!;
   return reader.list(at, 'inventory_lots', { catalog_item_id: item.catalog_item_id }).flatMap(lot => {
-    if (lot.expiry_date < date) return [];
+    if (lot.expiry_date < date || reader.get(at, 'inventory_lot_quarantines', lot.id)) return [];
     const available = reader.list(at, 'inventory_movements', { lot_id: lot.id }).reduce((total, movement) => total + movement.quantity_delta, 0);
     return available > 0 ? [{ lotId: lot.id, lotNumber: lot.lot_number, expiryDate: lot.expiry_date, unit: lot.unit, available }] : [];
   }).sort((first, second) => first.expiryDate.localeCompare(second.expiryDate) || first.lotNumber.localeCompare(second.lotNumber));

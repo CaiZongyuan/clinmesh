@@ -19,7 +19,7 @@ export class StorePrivateCaseTruthError extends Error {
 const privateAccess = z.strictObject({ purpose: z.enum(['simulation', 'completed-debrief']), encounterId: uuid });
 type PrivateAccess = z.infer<typeof privateAccess>;
 const removable = ['patients', 'clinical_record_drafts', 'diagnosis_drafts'] as const;
-const dedicatedWrites = ['command_receipts', 'diagnosis_revisions', 'diagnosis_confirmations'] as const;
+const dedicatedWrites = ['command_receipts', 'diagnosis_revisions', 'diagnosis_confirmations', 'inventory_lot_quarantines'] as const;
 type InsertableEntity = Exclude<PublicEntity, (typeof dedicatedWrites)[number]>;
 type DiagnosisMember = Omit<EntityRow<'diagnosis_confirmations'>, 'revision_id'>;
 
@@ -80,6 +80,7 @@ export function writeEntity(db: SqlConnection, location: StoreScope, name: Entit
   }
   const sql = `INSERT INTO ${name} (${keys.join(', ')})`;
   const placeholders = keys.map(() => '?').join(', ');
+  if (checkStock && name === 'inventory_movements' && db.all(`SELECT 1 FROM inventory_lot_quarantines WHERE ${isolation} AND id = ?`, at.workspaceId, at.epoch, uuid.parse(row.lot_id)).length) throw Error('Inventory lot quarantined');
   if (checkStock && name === 'inventory_movements' && Number(row.quantity_delta) < 0) {
     const available = `SELECT COALESCE(SUM(quantity_delta), 0) FROM inventory_movements WHERE ${isolation} AND lot_id = ?`;
     const applied = db.all(`${sql} SELECT ${placeholders} WHERE (${available}) >= ? RETURNING id`, ...values, at.workspaceId, at.epoch, uuid.parse(row.lot_id), -Number(row.quantity_delta));

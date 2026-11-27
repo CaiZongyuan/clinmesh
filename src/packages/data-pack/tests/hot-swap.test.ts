@@ -91,6 +91,8 @@ it('rejects installing a new hospital declaring the medication decision gate wit
     delete custom.knowledge!.pharmacy;
     const install = () => store.withTransaction(tx => installHospitalDataPack(tx, { ...initial, expectedEpoch: at.epoch }, custom));
     await expect(install()).rejects.toMatchObject({ code: 'INVALID_PACK', message: 'INVALID_PACK (knowledge.pharmacy)' });
+    custom.manifest.policies.completionGates = custom.manifest.policies.completionGates.filter(gate => gate !== 'medication-decision');
+    await expect(install()).rejects.toMatchObject({ code: 'INVALID_PACK', message: 'INVALID_PACK (knowledge.pharmacy)' });
     expect(await store.exportLogicalSnapshot(workspaceId)).toEqual(before);
     custom.manifest.enabledModules = custom.manifest.enabledModules.filter(id => id !== 'mod-pharmacy');
     await expect(install()).resolves.toMatchObject({ workspaceId });

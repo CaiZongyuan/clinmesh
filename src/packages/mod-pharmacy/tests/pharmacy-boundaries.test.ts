@@ -6,7 +6,7 @@ import { installHospitalDataPack } from '../../data-pack';
 import { canonicalJson, createNodeSqliteStore, type LogicalSnapshot } from '../../store';
 import { sha256 } from '../../platform';
 import { createPharmacyModule, dispenseQueueSchema } from '../index';
-import { configuredPharmacy } from './configured-pharmacy';
+import { configuredPharmacy, pharmacyClient } from './configured-pharmacy';
 
 const dose = { codeSystem: 'urn:clinmesh:general:drug', code: 'amoxicillin', dose: 500, routeCode: 'PO', timesPerDay: 3, days: 30, quantity: 129 };
 const receipt = z.object({ prescriptionId: z.uuidv7() });
@@ -41,7 +41,7 @@ async function rehash(snapshot: LogicalSnapshot) {
   return { ...snapshot, sha256: await sha256(canonicalJson({ format, workspaceId, tables, pi })) };
 }
 
-it('rejects an invalid lot, direction or prescription projection in a correctly signed v3 snapshot and leaves the target empty', async () => {
+it('rejects an invalid lot, direction or prescription projection in a resealed current snapshot and leaves the target empty', async () => {
   const { store, session, at } = await configuredPharmacy(() => {});
   const target = createNodeSqliteStore({ dbPath: ':memory:' });
   try {
@@ -65,6 +65,37 @@ it('rejects an invalid lot, direction or prescription projection in a correctly 
     await target.importLogicalSnapshot(snapshot);
     expect(await target.exportLogicalSnapshot(at.workspaceId)).toEqual(snapshot);
   } finally { await Promise.all([store.close(), target.close()]); }
+});
+
+it('quarantines a legacy lot deficit, dispenses from healthy stock and rejects altered quarantine evidence on restore', async () => {
+  const { store, at, ticket } = await configuredPharmacy(() => {});
+  const restored = createNodeSqliteStore({ dbPath: ':memory:' });
+  const target = createNodeSqliteStore({ dbPath: ':memory:' });
+  try {
+    const legacy = await store.exportLogicalSnapshot(at.workspaceId);
+    legacy.format = 'clinmesh.snapshot.v4';
+    legacy.tables = legacy.tables.slice(0, legacy.tables.findIndex(table => table.name === 'prescription_signatures'));
+    const amoxicillin = legacy.tables.find(table => table.name === 'catalog_items')!.rows.find(row => row.code === 'amoxicillin')!;
+    const held = legacy.tables.find(table => table.name === 'inventory_lots')!.rows.find(row => row.catalog_item_id === amoxicillin.id && row.lot_number === 'GEN-A')!;
+    legacy.tables.find(table => table.name === 'inventory_movements')!.rows.find(row => row.lot_id === held.id)!.quantity_delta = -3;
+    await restored.importLogicalSnapshot(await rehash(legacy));
+    const lotId = z.uuidv7().parse(held.id);
+    await expect(restored.withTransaction(tx => tx.insert(at, 'inventory_movements', { id: v7(), lot_id: lotId, quantity_delta: 4, reason: 'Synthetic receipt', virtual_at: '2026-11-20T00:00:00Z', recorded_at: '2026-11-20T00:00:00Z' }))).rejects.toThrow('quarantined');
+    const { session } = await pharmacyClient(restored, ticket);
+    const path = await session.start('Jordan Vale', 'J18.9');
+    const { prescriptionId } = receipt.parse(await session.applied(session.command(`${path}/prescriptions`, 5, { lines: [{ ...dose, quantity: 5 }] })));
+    await session.applied(session.command(`${path}/complete`, 6));
+    await session.role('pharmacist');
+    const line = dispenseQueueSchema.parse(await session.get('/api/his/pharmacy/queue'))[0]!.lines[0]!;
+    expect(line.lots.map(lot => lot.lotNumber)).toEqual(['GEN-B']);
+    const dispense = `/api/his/prescriptions/${prescriptionId}/dispense`;
+    expect(await (await session.command(dispense, 1, { lots: [{ orderId: line.orderId, lotId, quantity: 5 }] })).json()).toEqual({ code: 'PHARMACY_LOT_MISMATCH' });
+    expect(await session.applied(session.command(dispense, 1))).toMatchObject({ allocations: [{ lotNumber: 'GEN-B', quantity: 5 }] });
+    const altered = await restored.exportLogicalSnapshot(at.workspaceId);
+    altered.tables.find(table => table.name === 'inventory_movements')!.rows.find(row => row.lot_id === held.id)!.reason = 'Changed after migration';
+    await expect(target.importLogicalSnapshot(await rehash(altered))).rejects.toThrow('Invalid inventory quarantine');
+    expect(await target.read(reader => reader.getWorkspace(at.workspaceId))).toBeUndefined();
+  } finally { await Promise.all([store.close(), restored.close(), target.close()]); }
 });
 
 it.each(['global-general', 'cn-cardiology'] as const)('restores the frozen medication gate of an existing %s 1.0.0 Epoch', async packId => {

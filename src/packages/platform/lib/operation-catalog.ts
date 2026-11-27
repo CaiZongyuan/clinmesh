@@ -4,7 +4,7 @@ import { authorize, commandEnvelope, executeCommand, resolveActor, type Actor, t
 import { CoreError, type Credential } from './visitor-gate';
 
 export type ReadContext = { reader: StoreReader; actor: Actor; targetId: string };
-type Call = { store: StorePort; credential: Credential; targetId: string; body(): Promise<unknown> };
+type Call = { store: StorePort; credential: Credential; targetId: string; body(): Promise<unknown>; providerHeaders?: Headers };
 type Result = z.core.util.JSONType;
 type Definition = Route & { input: z.ZodType; output: z.ZodType; invoke(call: Call): Promise<Result> };
 
@@ -34,11 +34,11 @@ export class OperationCatalog {
   }
 
   command<Fields extends z.ZodRawShape, Output extends Result, Prepared = undefined>(route: Route, fields: Fields, output: z.ZodType<Output>,
-    apply: (context: CommandContext, input: z.output<z.ZodObject<Fields>>, prepared: Prepared) => Output | Promise<Output>,
+    apply: (context: CommandContext, input: z.output<z.ZodObject<Fields>>, prepared: Prepared, providerHeaders?: Headers) => Output | Promise<Output>,
     disclosure?: { firstOutput: z.ZodType<Result>; prepare(actor: Actor, input: z.output<z.ZodObject<Fields>>): Promise<{ value: Prepared; firstResponse: Record<string, string> }> }) {
     route = { ...route, moduleId: this.moduleId ?? route.moduleId };
     const input = commandEnvelope.extend(fields).strict();
-    this.add({ ...route, input, output: disclosure ? z.union([disclosure.firstOutput, output]) : output, async invoke({ store, credential, targetId, body }) {
+    this.add({ ...route, input, output: disclosure ? z.union([disclosure.firstOutput, output]) : output, async invoke({ store, credential, targetId, body, providerHeaders }) {
       const actor = await store.read(reader => resolveActor(reader, credential, new Date().toISOString()));
       authorize(actor, route);
       const parsed = input.parse(await body());
@@ -46,7 +46,7 @@ export class OperationCatalog {
       const prepared = await disclosure?.prepare(actor, args);
       let firstResponse: Result | undefined;
       const execution = await executeCommand(store, credential, route, targetId, parsed as z.infer<typeof commandEnvelope>, async context => {
-        const receipt = output.parse(await apply(context, args, prepared?.value as Prepared));
+        const receipt = output.parse(await apply(context, args, prepared?.value as Prepared, providerHeaders));
         if (disclosure && prepared) firstResponse = disclosure.firstOutput.parse({ ...z.record(z.string(), z.json()).parse(receipt), ...prepared.firstResponse });
         return receipt;
       });

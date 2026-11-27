@@ -5,10 +5,10 @@ import { Tabs as SdkTabs, TabsList, TabsPanel, TabsTab } from '@ui-sdk/react/tab
 import { createToaster, Toast, ToastAction, ToastClose, ToastDescription, ToastRegion, ToastTitle, type Toaster } from '@ui-sdk/react/toast';
 import { createContext, useContext, useEffect, useState, type ComponentProps, type ReactNode } from 'react';
 
-export function Dialog({ title, triggers, children, close, keepMounted = triggers.length > 1 }: {
+export function Dialog({ title, triggers, children, close, keepMounted = triggers.length > 1, ...control }: {
   title: string; triggers: string[]; children: ReactNode; close: string; keepMounted?: boolean;
-}) {
-  return <SdkDialog>
+} & Pick<ComponentProps<typeof SdkDialog>, 'open' | 'onOpenChange'>) {
+  return <SdkDialog {...control}>
     {triggers.map(label => <DialogTrigger key={label}>{label}</DialogTrigger>)}
     <DialogBackdrop />
     <DialogContent keepMounted={keepMounted}>

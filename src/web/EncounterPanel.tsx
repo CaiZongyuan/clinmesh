@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, type ComponentType, type ReactNode } from 'react';
 import { z } from 'zod';
-import { currentRecordFields, debriefSchema, type EncounterView, type WorkspaceView } from '../packages/clinical-core';
+import { currentRecordFields, debriefSchema, type EncounterView } from '../packages/clinical-core';
 import { Badge, Button, Card, ConfirmActionButton, DetailDrawer, Dialog, Field, Select, Tabs, Textarea } from '../packages/ui-kit';
-import { api, errorMessage, scopeKey, words, type Intent, type Language } from './workbench-api';
+import { api, errorMessage, scopeKey, words, type WorkbenchPanelProps, type Language } from './workbench-api';
 import { createEncounterDrafts, type EncounterDrafts } from './encounter-drafts';
+import { PatientReply } from './PatientReply';
 
-export type WorkbenchPanelProps = { encounter: EncounterView; workspace: WorkspaceView; language: Language; submit(intent: Intent): Promise<unknown> };
+export type { WorkbenchPanelProps } from './workbench-api';
 export type WorkbenchPanels = Readonly<Record<string, ComponentType<WorkbenchPanelProps>>>;
 type Props = WorkbenchPanelProps & { busy: boolean; panels?: WorkbenchPanels };
 type Diagnosis = EncounterView['diagnoses'][number];
@@ -36,7 +37,8 @@ function Consultation(props: Props) {
   </li>)}</ol>
     {encounter.status === 'active' && <><Field label={text('Question for the patient', '向患者提问')}><Textarea value={message} disabled={!canAsk} onValueChange={setMessage}/></Field>
       <Button disabled={props.busy || !canAsk || !message.trim()} onClick={() => run(command(props, 'consultation.question', { content: message, channel: 'text' }), () => setMessage(''))}>{text('Send question', '发送问题')}</Button>
-      {encounter.replyPending && <p role="status">{text('Awaiting the patient reply. Record and diagnosis drafts remain available.', '正在等候患者回复，可继续编辑病历和诊断草稿。')}</p>}</>}
+      {encounter.replyPending && <p role="status">{text('Awaiting the patient reply. Record and diagnosis drafts remain available.', '正在等候患者回复，可继续编辑病历和诊断草稿。')}</p>}
+      <PatientReply {...props} editable={allowed(props, 'consultation.question')}/></>}
   </div>;
 }
 

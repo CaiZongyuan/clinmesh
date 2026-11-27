@@ -4,8 +4,8 @@ import { pharmacySession } from '../../../../scripts/testing/pharmacy-session';
 import { createApp } from '../../../server/app';
 import { createWorkspaceApp } from '../../../server/workspace';
 import { installHospitalDataPack, parseHospitalDataPack, type HospitalDataPack } from '../../data-pack';
-import { createVisitorGate } from '../../platform';
-import { createNodeSqliteStore } from '../../store';
+import { createVisitorGate, type Ticket } from '../../platform';
+import { createNodeSqliteStore, type StorePort } from '../../store';
 import { createPharmacyModule } from '../index';
 
 export async function configuredPharmacy(configure: (pack: HospitalDataPack) => void) {
@@ -21,6 +21,11 @@ export async function configuredPharmacy(configure: (pack: HospitalDataPack) => 
     tx.insert(scope, 'visitor_sessions', { id: ticket.id, practitioner_role: 'intake', version: 1, revoked: false, expires_at: ticket.expiresAt });
     return scope;
   });
+  return { store, at, ticket, ...await pharmacyClient(store, ticket) };
+}
+
+export async function pharmacyClient(store: StorePort, ticket: Ticket) {
+  const module = createPharmacyModule();
   const settings = { loadSigningSecret: () => store.visitorSigningSecret() };
   const workspace = createWorkspaceApp(store, settings, [module]);
   const api = createApp('node', settings, (incoming, credential, entering) => workspace.fetch(incoming, { credential, entering }), [module]);
@@ -30,5 +35,5 @@ export async function configuredPharmacy(configure: (pack: HospitalDataPack) => 
     headers.set('cookie', cookie);
     return Promise.resolve(api.request(path, { ...init, headers }));
   };
-  return { store, at, fetchApi, session: await pharmacySession(fetchApi, cookie) };
+  return { fetchApi, session: await pharmacySession(fetchApi, cookie) };
 }

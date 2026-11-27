@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { permitsProviderKey } from '../packages/agent-protocol';
 import { CoreError, createVisitorGate, ModuleRegistry, type ClinMeshModule, type Credential, type GateSettings, type OperationCatalog, type RuntimeHealth } from '../packages/platform';
 import { handleError } from './workspace';
 
@@ -27,6 +28,7 @@ export function createApp(runtime: RuntimeHealth['runtime'], settings: GateSetti
       return result;
     }
     const credential = await gate.authenticate(context.req.header('cookie'), context.req.header('authorization'));
+    if (request.headers.has('X-ClinMesh-LLM-Api-Key') && !permitsProviderKey(origin)) throw new CoreError(400, 'LLM_HTTPS_REQUIRED');
     checkOrigin();
     const response = await dispatch(request, credential, false);
     const result = new Response(response.body, response);
