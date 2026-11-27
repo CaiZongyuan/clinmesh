@@ -17,6 +17,7 @@ import {
   computePromptCardKnowledgeDiff,
   filterPromptCardsBeforeDisplay,
   markStalePromptCardsForLedger,
+  mergePhenotypeIntoRecognitionCard,
 } from './clinical-prompt-cards.ts'
 import { evaluateKnowledgeSnapshotForPatient } from './knowledge-claims.ts'
 import { validateAndParseDiseasePack } from './disease-pack.ts'
@@ -1394,5 +1395,38 @@ describe('ClinicalPromptCard core engine', () => {
       renal: { status: 'creatinine-missing' },
     })
     expect(filtered.visibleCards.some(c => c.category === 'recognition')).toBe(true)
+  })
+
+  it('merges phenotype candidate evidence and suggested workup into the same-pack recognition card (AC29, AC30)', () => {
+    const ref = (recordId: string) => ({ factId: `fact-${recordId}`, itemCode: '13457-7', recordId, recordType: 'Observation', recordVersion: '1' })
+    const recognition = makeCard({
+      basedOnFactVersions: [ref('ldl-1')],
+      cardId: 'encounter-open:recognition:fh-pack:fh-clue',
+      category: 'recognition',
+      detail: '识别线索摘要；建议转诊评估',
+      indicator: 'warning',
+      knowledgeStatus: 'published',
+      packId: 'fh-pack',
+      summary: '家族性高胆固醇血症线索',
+    })
+    const phenotype = makeCard({
+      basedOnFactVersions: [ref('ldl-1'), ref('ldl-2')],
+      cardId: 'encounter-open:phenotype-candidate:fh',
+      category: 'phenotype-candidate',
+      detail: '跨时间表型识别发现疑似线索：2023 年 LDL-C 5.2。建议复核与确认检查：基因检测',
+      knowledgeStatus: 'auto-verified',
+      packId: 'fh-pack',
+      suggestions: [{ actionKind: 'review-differential', id: 'review-phenotype-fh', isDraftOnly: true, itemCodes: ['GENE-FH'], labelZh: '复核表型线索及建议检查' }],
+      trialBadgeZh: '试用版',
+      trialDisclaimerZh: SIMULATION_TRIAL_DISCLAIMER_ZH,
+    })
+    const merged = mergePhenotypeIntoRecognitionCard(recognition, phenotype)
+    expect(merged.cardId).toBe(recognition.cardId)
+    expect(merged.category).toBe('recognition')
+    expect(merged.detail).toContain('识别线索摘要')
+    expect(merged.detail).toContain('基因检测')
+    expect(merged.basedOnFactVersions.map(r => r.recordId)).toEqual(['ldl-1', 'ldl-2'])
+    expect(merged.suggestions.map(s => s.id)).toEqual(['review-phenotype-fh'])
+    expect(merged.trialBadgeZh).toBe('试用版')
   })
 })

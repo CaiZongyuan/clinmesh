@@ -828,13 +828,16 @@ describe('DSAP FH Recognition Pack (AC29) & Cross-Time Phenotype Matcher HTTP (A
       expect(recognitionCard!.blockingTier).toBe('none')
       expect(recognitionCard!.deliveryMode).toBe('display')
 
-      const phenotypeCard = promptBundle.cards.find(
-        c => c.category === 'phenotype-candidate' && c.packId === 'familial-hypercholesterolemia',
-      )
-      expect(phenotypeCard).toBeDefined()
-      expect(phenotypeCard!.blockingTier).toBe('none')
-      expect(phenotypeCard!.deliveryMode).toBe('display')
-      expect(phenotypeCard!.suggestions.every(s => s.isDraftOnly)).toBe(true)
+      // 识别卡与表型候选卡合并为同一处提示，不出两条内容重叠的卡
+      expect(promptBundle.cards.filter(c => c.packId === 'familial-hypercholesterolemia')).toHaveLength(1)
+      expect(promptBundle.cards.some(c => c.category === 'phenotype-candidate')).toBe(false)
+      expect(recognitionCard!.detail).toContain('跨时间表型识别发现疑似')
+      expect(recognitionCard!.detail).toContain(fhCandidate.recommendedWorkupZh[0]!)
+      expect(recognitionCard!.basedOnFactVersions.length).toBeGreaterThan(0)
+      expect(recognitionCard!.suggestions.length).toBeGreaterThan(0)
+      expect(recognitionCard!.suggestions.every(s => s.isDraftOnly)).toBe(true)
+      expect(recognitionCard!.knowledgeStatus).toBe('auto-verified')
+      expect(recognitionCard!.trialBadgeZh).toBe('试用版')
     }
     expect(llmCallCount).toBe(0)
   }, 60_000)

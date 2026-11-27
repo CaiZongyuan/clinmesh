@@ -32,6 +32,7 @@ import {
   computePromptCardKnowledgeDiff,
   filterPromptCardsBeforeDisplay,
   markStalePromptCardsForLedger,
+  mergePhenotypeIntoRecognitionCard,
   type EvaluatedPackForPromptBuild,
   type PromptMedicationDescriptor,
 } from '@clinmesh/core/clinical-prompt-cards'
@@ -916,6 +917,14 @@ export class ClinicalPromptCardService {
     })
 
     const combined = [...input.cards]
+    const mergePhenotypeIntoRecognition = (candidateCard: ClinicalPromptCard): boolean => {
+      const index = combined.findIndex(card => (
+        card.category === 'recognition' && card.packId === candidateCard.packId && card.timing === candidateCard.timing
+      ))
+      if (index < 0) return false
+      combined[index] = mergePhenotypeIntoRecognitionCard(combined[index]!, candidateCard)
+      return true
+    }
     const seenCardIds = new Set(combined.map(card => card.cardId))
     const packEntryById = new Map(input.evaluatedPacks.map(item => [item.effective.pack.manifest.id, item]))
     for (const candidateCard of matchResult.promptCards) {
@@ -935,6 +944,7 @@ export class ClinicalPromptCardService {
         }
       }
       seenCardIds.add(candidateCard.cardId)
+      if (candidateCard.packId !== null && mergePhenotypeIntoRecognition(candidateCard)) continue
       combined.push(candidateCard)
     }
     return combined

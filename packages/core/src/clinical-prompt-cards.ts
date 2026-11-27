@@ -1147,6 +1147,29 @@ function claimToPromptCard(
 }
 
 /** 按指定触发时机与只读临床事实总账构建统一 ClinicalPromptCard 集合（零模型调用）。 */
+/** 把同包表型候选卡的依据事实、建议检查与跨时间线索并入识别卡，二者合成一条提示。 */
+export function mergePhenotypeIntoRecognitionCard(
+  recognition: ClinicalPromptCard,
+  phenotype: ClinicalPromptCard,
+): ClinicalPromptCard {
+  const factsByKey = new Map<string, ClinicalPromptFactVersionRef>()
+  for (const ref of [...recognition.basedOnFactVersions, ...phenotype.basedOnFactVersions]) {
+    factsByKey.set(`${ref.factId}|${ref.recordVersion}`, ref)
+  }
+  const trial = phenotype.knowledgeStatus === 'auto-verified' || recognition.knowledgeStatus === 'auto-verified'
+  return clinicalPromptCardSchema.parse({
+    ...recognition,
+    basedOnFactVersions: [...factsByKey.values()].slice(0, 64),
+    detail: `${recognition.detail}。${phenotype.detail}`,
+    indicator: recognition.indicator === 'warning' || phenotype.indicator === 'warning' ? 'warning' : recognition.indicator,
+    knowledgeStatus: trial ? 'auto-verified' : recognition.knowledgeStatus,
+    overrideReasons: [...new Set([...recognition.overrideReasons, ...phenotype.overrideReasons])],
+    suggestions: [...recognition.suggestions, ...phenotype.suggestions].slice(0, 16),
+    trialBadgeZh: trial ? '试用版' : recognition.trialBadgeZh,
+    trialDisclaimerZh: trial ? SIMULATION_TRIAL_DISCLAIMER_ZH : recognition.trialDisclaimerZh,
+  })
+}
+
 function buildRecognitionPromptCard(input: {
   activeRiskTags: readonly ClinicalPromptRiskTag[]
   effective: EffectiveDiseasePack
