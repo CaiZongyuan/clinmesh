@@ -1,6 +1,10 @@
 # 合成教学包来源
 
-两套 `pack.json` 完整内置于服务端，安装过程离线可用。病例身份、教学阈值、院内价格、医保属性与支付参数均为固定模拟数据。`guidelineTopics` 中的 `physicalPage` 按 PDF 文件第一页从 1 计。引文核验使用原件，跨行断词按连续文字转写。
+各 `pack.json` 完整内置于服务端，安装过程离线可用。病例身份、教学阈值、院内价格、医保属性与支付参数均为固定模拟数据。`guidelineTopics` 中的 `physicalPage` 按 PDF 文件第一页从 1 计。引文核验使用原件，跨行断词按连续文字转写。
+
+## 影像病理教学门诊
+
+`diagnostic-teaching` 内含一例合成术后随访病例。胸部 CT 的两帧和脂肪组织的一帧均为数学图形绘制的教学示意。胸片与病理更正版本使用纯文本。Vite 开发服务启动和前端构建时，`scripts/prepare-teaching-frames.ts` 通过 Node 标准库离线生成三张 PNG 到 `assets/clinical-public/clinical-frames/`，再按数据包中已签发报告的引用供浏览器加载。
 
 ## 综合门诊
 

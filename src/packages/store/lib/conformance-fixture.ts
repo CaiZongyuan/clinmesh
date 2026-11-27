@@ -87,6 +87,7 @@ export function seedConformance(tx: StoreTx): string[] {
   add('inpatient_transfers', { id: fixtureId(42), admission_id, from_ward: 'ward-a', to_ward: 'ward-b', ...times });
   add('order_executions', { id: fixtureId(43), order_id, practitioner_role, outcome: 'completed', ...times });
   add('lab_requests', { id: fixtureId(103), order_id, stages: ['inpatient', 'initial'] });
+  add('study_requests', { id: fixtureId(104), order_id, stages: ['initial'], prior_surgery_id: 'teaching-specimen' });
   add('surgery_requests', { id: surgery_request_id, order_id, procedure_item_id: catalog_item_id, status: 'planned', version: 1 });
   add('surgery_executions', { id: fixtureId(45), surgery_request_id, outcome: 'completed', ...times });
   add('material_reservations', { id: fixtureId(46), surgery_request_id, lot_id, quantity: 1, status: 'reserved', version: 1 });

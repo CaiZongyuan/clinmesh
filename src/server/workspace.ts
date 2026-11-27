@@ -89,7 +89,7 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     const credential = context.env.credential;
     const replyOperation = ['consultation.question', 'consultation.retry', 'consultation.stop'].includes(entry.name);
     const providerHeaders = replyOperation ? context.req.raw.headers : undefined;
-    const result = await entry.invoke({ store, credential, targetId, body: () => context.req.json(), providerHeaders });
+    const result = await entry.invoke({ store, credential, targetId, params: context.req.param(), body: () => context.req.json(), providerHeaders });
     if (providerHeaders) {
       const { epoch } = z.object({ epoch: z.uuidv7() }).parse(await context.req.json());
       await patients.admitted(entry.name, result, { workspaceId: credential.ticket.workspaceId, epoch }, targetId, providerHeaders);

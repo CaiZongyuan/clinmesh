@@ -21,4 +21,5 @@ export const encounterViewSchema = visitSchema.extend({ age: z.int(), template: 
   draftVersion: z.int().nonnegative(), fields: noteFields, retiredFields: z.record(z.string(), z.object({ signed: z.string().nullable(), saved: z.string().nullable() })),
   diagnoses: z.array(diagnosisMember), recordRevisions: z.array(recordRevision), diagnosisRevisions: z.array(diagnosisRevision), completion: completionSchema });
 export type EncounterView = z.infer<typeof encounterViewSchema>;
-export const debriefSchema = z.object({ caseTruth: caseTruthSchema.extend({ tags: z.array(z.string()) }), recordRevisions: z.array(recordRevision), diagnosisRevisions: z.array(diagnosisRevision) });
+const debriefResult = caseTruthSchema.shape.results.element.omit({ images: true }).strip();
+export const debriefSchema = z.object({ caseTruth: caseTruthSchema.extend({ results: z.array(debriefResult), tags: z.array(z.string()) }), recordRevisions: z.array(recordRevision), diagnosisRevisions: z.array(diagnosisRevision) });

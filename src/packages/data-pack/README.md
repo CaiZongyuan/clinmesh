@@ -6,7 +6,7 @@
 
 从本包唯一入口 `src/packages/data-pack/index.ts` 导入 `parseHospitalDataPack(raw)`。它接受内存中的对象、JSON 或 YAML 文本，编译成功后返回深度冻结的数据包。对于外部受信任来源，可以将调用方取得的 HTTP 响应正文传入同一入口。YAML bundle 使用普通映射和序列。装载错误包含稳定的 `code` 与字段位置。`PERSONA_TRUTH_LEAK` 表示 Patient Persona 含本次未知诊断的名称、别名或精确编码。已知既往诊断按完整的 `codeSystem` 和 `code` 匹配。
 
-服务端从 `src/server/builtin-data-packs.ts` 导入 `BUILTIN_DATA_PACKS`。它通过静态 JSON 导入携带两套已编译的完整 bundle，供本地 Node 和 Workers 使用。该注册表与编译后的完整数据含私有 Case Truth，使用范围为受信任服务端。`findCatalogItem(pack, kind, coding)` 使用装载时建立的索引，以目录类别、URI 与编码查找条目。
+服务端从 `src/server/builtin-data-packs.ts` 导入 `BUILTIN_DATA_PACKS`。它通过静态 JSON 导入内置的临床数据包，供本地 Node 和 Workers 使用。该注册表与编译后的完整数据含私有 Case Truth，使用范围为受信任服务端。`findCatalogItem(pack, kind, coding)` 使用装载时建立的索引，以目录类别、URI 与编码查找条目。
 
 Persona 检查在每项隐藏诊断所属的编码体系中，从左到右识别已登记的完整编码。同一位置优先匹配最长编码，并继续检查后续文本。已知子码和含标点的既往编码可以照录，单独出现的隐藏编码仍触发拒绝。
 
