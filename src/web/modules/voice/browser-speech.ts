@@ -5,7 +5,7 @@ interface Recognition {
   onspeechstart: (() => void) | null; onend: (() => void) | null; onerror: ((event: { error: string }) => void) | null;
   start(): void; stop(): void; abort(): void;
 }
-export type MicEvents = { speech(): void; partial(text: string): void; final(text: string): void; end(error?: Error): void };
+export type MicEvents = { ready(): void; speech(): void; partial(text: string): void; final(text: string): void; end(error?: Error): void };
 export function browserMic(lang: string, events: MicEvents, signal: AbortSignal) {
   const host: Window & { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition } = window;
   const Constructor = host.SpeechRecognition ?? host.webkitSpeechRecognition;
@@ -28,6 +28,7 @@ export function browserMic(lang: string, events: MicEvents, signal: AbortSignal)
   recognition.onend = () => { signal.removeEventListener('abort', cancel); events.end(); };
   signal.addEventListener('abort', cancel, { once: true });
   recognition.start();
+  events.ready();
   return () => recognition.stop();
 }
 

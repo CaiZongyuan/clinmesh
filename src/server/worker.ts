@@ -15,7 +15,7 @@ declare const CLINMESH_LOOPBACK_WRANGLER: boolean;
 export class WorkspaceDurableObject<Env = unknown> extends DurableObject<Env> {
   protected readonly store = createDurableObjectSqliteStore(this.ctx.storage);
   protected readonly builtinDataPacks = BUILTIN_DATA_PACKS;
-  private readonly workspace = createWorkspaceApp(this.store, gateSettings(this.env as WorkerEnvironment), hostModules((this.env as WorkerEnvironment).CLINMESH_VOICE_ENABLED), this.env as WorkerEnvironment, task => this.ctx.waitUntil(task), (_, connect) => {
+  private readonly workspace = createWorkspaceApp(this.store, gateSettings(this.env as WorkerEnvironment), hostModules((this.env as WorkerEnvironment).CLINMESH_VOICE_ENABLED), this.env as WorkerEnvironment, task => this.ctx.waitUntil(task), (_, connect, protocol) => {
     const pair = new WebSocketPair();
     const socket = pair[1];
     socket.binaryType = 'arraybuffer';
@@ -24,7 +24,7 @@ export class WorkspaceDurableObject<Env = unknown> extends DurableObject<Env> {
     socket.addEventListener('message', event => connection.receive(event.data));
     socket.addEventListener('close', connection.close);
     socket.addEventListener('error', connection.close);
-    return new Response(null, { status: 101, webSocket: pair[0] });
+    return new Response(null, { status: 101, webSocket: pair[0], headers: protocol ? { 'Sec-WebSocket-Protocol': protocol } : undefined });
   }, {
     start: (launch, request) => (this.env as WorkerEnvironment).WORKSPACE_DO.getByName(launch.runId).startEvaluation(launch, request),
     read: runId => (this.env as WorkerEnvironment).WORKSPACE_DO.getByName(runId).readEvaluation(runId),

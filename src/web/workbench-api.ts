@@ -47,6 +47,7 @@ const messages: Record<string, [string, string]> = {
   VOICE_AUTH_FAILED: ['Bailian rejected the voice key. Check Voice settings.', '百炼拒绝了语音密钥，请检查语音设置。'],
   VOICE_RATE_LIMITED: ['Bailian voice quota or rate limit reached.', '百炼语音额度或请求速率已达上限。'],
   VOICE_MIC_UNAVAILABLE: ['Microphone unavailable. Check microphone permission and input device.', '麦克风不可用，请检查录音权限和输入设备。'],
+  VOICE_MIC_NOT_READY: ['The microphone was still opening. Hold again until the live indicator appears.', '麦克风尚在开启，请重新按住直至出现采集指示。'],
   VOICE_BROWSER_STT_UNAVAILABLE: ['This browser does not provide speech recognition. Select Bailian in Voice settings.', '当前浏览器不支持语音识别，请在语音设置中选择百炼。'],
   VOICE_BROWSER_TTS_UNAVAILABLE: ['Speech playback is unavailable in this browser.', '当前浏览器不支持语音播报。'],
   VOICE_BROWSER_STT_FAILED: ['Browser speech recognition failed. Check permission and connection.', '浏览器语音识别失败，请检查权限及网络连接。'],

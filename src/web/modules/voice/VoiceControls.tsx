@@ -50,7 +50,7 @@ function MainMic({ desk, language, encounter, busy, ask, recover }: Consultation
   }, [desk, lang, latestPatient]);
   useEffect(() => () => { desk.mute('consultation'); desk.interrupt(); }, [desk]);
   return <section aria-label={text('Consultation voice', '诊室语音')}><div className="cm-actions voice-actions">
-    <Badge tone={active ? 'success' : 'warning'}>{active ? text('Consultation mic live', '诊室主麦采集中') : text('Consultation mic muted', '诊室主麦已静音')}</Badge>
+    <Badge tone={active && state.ready ? 'success' : 'warning'}>{active ? state.ready ? text('Consultation mic live', '诊室主麦采集中') : text('Opening consultation mic', '正在开启诊室主麦') : text('Consultation mic muted', '诊室主麦已静音')}</Badge>
     <span>{state.settings.engine === 'browser' ? 'Browser Web Speech' : text('Bailian', '百炼')}</span>
     {active ? <Button onClick={() => desk.release('consultation')}>{text('Mute consultation mic', '静音诊室主麦')}</Button> : <ConfirmActionButton confirmation={text('Start recording clinician questions?', '开始录制医生问诊？')} disabled={state.mic === 'assistant'} onClick={() => desk.start('consultation', lang, utterance => setFinals(queue => [...queue, utterance]))}>{text('Start consultation mic', '开启诊室主麦')}</ConfirmActionButton>}
     <Button disabled={!state.playing} onClick={desk.interrupt}>{text('Interrupt patient audio', '打断患者播报')}</Button><VoiceSettings desk={desk} language={language}/>
@@ -72,7 +72,7 @@ function AssistantMic({ desk, language, onText }: Controls & { onText(text: stri
     onKeyDown={event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); if (!event.repeat) start(); } }} onKeyUp={event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); release(); } }} onBlur={release}
     onClick={(event, details) => { if (details.source === 'agent' || event.detail === 0) { if (active) release(); else start(); } }}>
     {text('Hold to dictate to assistant', '按住向助手说话')}</Button>
-    {active && <p role="status">{state.finishing ? text('Finishing assistant dictation', '正在完成助手转写') : text('Assistant mic live', '助手麦采集中')} {state.partial}</p>}
+    {active && <p role="status">{state.finishing ? text('Finishing assistant dictation', '正在完成助手转写') : state.ready ? text('Assistant mic live', '助手麦采集中') : text('Opening assistant mic', '正在开启助手麦')} {state.partial}</p>}
     {state.errorChannel === 'assistant' && state.error && <p role="alert">{errorMessage(Error(state.error), language)}</p>}
   </div>;
 }

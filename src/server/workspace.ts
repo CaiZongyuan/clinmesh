@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { ClinicianAssistant, PatientRuntime, registerPatientOperations, type AgentEnvironment } from '../packages/agent-runtime';
 import { permitsProviderKey } from '../packages/agent-protocol';
-import { openVoiceSession, voiceBinding, voiceModule, type BailianConnect, type VoiceSocket } from '../packages/mod-voice';
+import { openVoiceSession, voiceBinding, voiceHandshake, voiceModule, type BailianConnect, type VoiceSocket } from '../packages/mod-voice';
 import { v7 } from 'uuid';
 import { z } from 'zod';
 import { installHospitalDataPack, readHospitalDataPack } from '../packages/data-pack';
@@ -21,7 +21,7 @@ export function handleError(error: Error) {
 }
 
 type SocketConnection = { receive(data: unknown): void; close(): void };
-export type UpgradeSocket = (request: Request, connect: (socket: VoiceSocket) => SocketConnection) => Response | Promise<Response>;
+export type UpgradeSocket = (request: Request, connect: (socket: VoiceSocket) => SocketConnection, protocol?: string) => Response | Promise<Response>;
 export function createWorkspaceApp(store: StorePort, settings: GateSettings, modules: readonly ClinMeshModule<OperationCatalog>[] = [], environment: AgentEnvironment & { BAILIAN_TOKEN?: string } = {}, background?: (task: Promise<void>) => void, upgrade?: UpgradeSocket, evaluations?: EvaluationHost, connectVoice?: BailianConnect) {
   const app = new Hono<{ Bindings: { credential: Credential; entering: boolean; upgrade?: UpgradeSocket } }>();
   const registry = new ModuleRegistry(modules);
@@ -38,7 +38,8 @@ export function createWorkspaceApp(store: StorePort, settings: GateSettings, mod
     if (!permitsProviderKey(new URL(context.req.url))) throw new CoreError(400, 'VOICE_HTTPS_REQUIRED');
     const open = context.env.upgrade ?? upgrade;
     if (!connectVoice || !open || context.req.header('upgrade')?.toLowerCase() !== 'websocket') return context.json({ code: 'WEBSOCKET_REQUIRED' }, 426);
-    return open(context.req.raw, socket => openVoiceSession(socket, connectVoice, environment.BAILIAN_TOKEN));
+    const handshake = voiceHandshake(context.req.header('sec-websocket-protocol'));
+    return open(context.req.raw, socket => openVoiceSession(socket, connectVoice, handshake.token ?? environment.BAILIAN_TOKEN), handshake.protocol);
   });
   app.post('/api/auth/visitor/enter', async context => {
     if (!context.env.entering) throw new CoreError(401, 'VISITOR_AUTH_REQUIRED');

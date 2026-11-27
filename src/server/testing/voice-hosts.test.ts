@@ -25,29 +25,37 @@ async function setup(origin: string) {
   expect((await command('/api/workspace/role', 1, { roleId: 'family-clinician' })).status).toBe(200);
   return { workspace, path, cookie, read, initialStatus };
 }
-function exchange(url: string, cookie: string, first: object) {
+function exchange(url: string, cookie: string, first: object, token?: string) {
   const origin = new URL(url).origin;
-  const socket = new WebSocket(url.replace('http:', 'ws:'), { headers: { cookie }, origin });
+  const protocols = token ? ['clinmesh.voice.v1', 'byok.' + Buffer.from(token).toString('base64url')] : [];
+  const socket = new WebSocket(url.replace('http:', 'ws:'), protocols, { headers: { cookie }, origin });
   socket.binaryType = 'arraybuffer';
   const frames: unknown[] = [];
-  socket.once('open', () => socket.send(JSON.stringify(first)));
+  socket.once('open', () => { socket.send(JSON.stringify({ type: 'hello', protocol_version: 1 })); socket.send(JSON.stringify(first)); });
+  let inCall = false;
   socket.on('message', (data, binary) => {
     if (binary && data instanceof ArrayBuffer) { const bytes = new DataView(data); frames.push([bytes.byteLength, bytes.getUint32(4, true), bytes.getUint32(40, true)]); return; }
     const frame = JSON.parse(data.toString()); frames.push(frame);
-    if (frame.type === 'listening') socket.send(new Int16Array(1600).fill(-1600));
-    if (frame.type === 'final') socket.send(JSON.stringify({ type: 'finish' }));
+    if (frame.type === 'status' && frame.status === 'listening') { inCall = true; socket.send(new Int16Array(1600).fill(-1600)); }
+    if (frame.type === 'transcript') socket.send(JSON.stringify({ type: 'end_call' }));
+    if (inCall && frame.type === 'status' && frame.status === 'idle') socket.close();
   });
-  return once(socket, 'close').then(() => frames);
+  return once(socket, 'close').then(() => { expect(socket.protocol).toBe(token ? 'clinmesh.voice.v1' : ''); return frames; });
 }
 async function exercise(origin: string) {
   const { workspace, path, cookie, read, initialStatus } = await setup(origin);
   expect(workspace.enabledModules).toContain('mod-voice');
   expect(initialStatus).toBe(403); expect((await read()).status).toBe(426);
-  expect(await exchange(origin + path, cookie, { type: 'listen', token: visitorKey })).toEqual([
-    { type: 'listening' }, { type: 'partial', text: 'A teaching' }, { type: 'final', text: 'A teaching question.' }, { type: 'done' },
+  const welcome = [{ type: 'welcome', protocol_version: 1 }, { type: 'status', status: 'idle' }];
+  expect(await exchange(origin + path, cookie, { type: 'start_call', preferred_format: 'wav' }, visitorKey)).toEqual([...welcome,
+    { type: 'status', status: 'listening' }, { type: 'transcript_interim', text: 'A teaching' }, { type: 'transcript', role: 'user', text: 'A teaching question.' }, { type: 'status', status: 'idle' },
   ]);
-  expect(await exchange(origin + path, cookie, { type: 'speak', text: 'A teaching reply.' })).toEqual([[46, 38, 2], { type: 'done' }]);
-  expect(await exchange(origin + path, cookie, { type: 'speak', token: visitorKey, text: 'A teaching reply.' })).toEqual([{ type: 'error', code: 'VOICE_AUTH_FAILED' }]);
+  expect(await exchange(origin + path, cookie, { type: 'speak', text: 'A teaching reply.' })).toEqual([...welcome, [46, 38, 2], { type: 'done' }]);
+  expect(await exchange(origin + path, cookie, { type: 'speak', text: 'A teaching reply.' }, visitorKey)).toEqual([...welcome, { type: 'error', message: 'VOICE_AUTH_FAILED' }]);
+  expect(await exchange(origin + path, cookie, { type: 'speak', token: visitorKey, text: 'A teaching reply.' })).toEqual([...welcome, { type: 'error', message: 'VOICE_INVALID_FRAME' }]);
+  const reversed = new WebSocket((origin + path).replace('http:', 'ws:'), ['byok.' + Buffer.from(visitorKey).toString('base64url'), 'clinmesh.voice.v1'], { headers: { cookie }, origin });
+  const [, denied] = await once(reversed, 'unexpected-response');
+  expect(denied.statusCode).toBe(400); expect(denied.headers['sec-websocket-protocol']).toBeUndefined(); denied.destroy();
   return workspace.workspaceId;
 }
 

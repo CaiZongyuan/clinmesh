@@ -1,15 +1,15 @@
 import { permitsProviderKey } from '../../../packages/agent-protocol';
-import { voiceServerFrame } from '../../../packages/mod-voice';
+import { voiceProtocols, voiceServerFrame } from '../../../packages/mod-voice';
 import type { MicEvents } from './browser-speech';
 import { capturePcm } from './media';
 
 export type Binding = { epoch: string; encounterId: string };
-function connect(binding: Binding, first: object, signal: AbortSignal, receive: (frame: ReturnType<typeof voiceServerFrame.parse> | ArrayBuffer) => void, end: (error?: Error) => void) {
+function connect(binding: Binding, token: string, first: object, signal: AbortSignal, receive: (frame: ReturnType<typeof voiceServerFrame.parse> | ArrayBuffer) => void, end: (error?: Error) => void) {
   const url = new URL('/api/voice/session', location.href);
   if (!permitsProviderKey(url)) throw Error('VOICE_HTTPS_REQUIRED');
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.search = new URLSearchParams(binding).toString();
-  const socket = new WebSocket(url);
+  const socket = new WebSocket(url, voiceProtocols(token));
   socket.binaryType = 'arraybuffer';
   let settled = false;
   const close = () => { if (socket.readyState < WebSocket.CLOSING) socket.close(); };
@@ -26,7 +26,7 @@ function connect(binding: Binding, first: object, signal: AbortSignal, receive: 
     try {
       if (event.data instanceof ArrayBuffer) { receive(event.data); return; }
       const frame = voiceServerFrame.parse(JSON.parse(event.data));
-      if (frame.type === 'error') finish(Error(frame.code));
+      if (frame.type === 'error') finish(Error(frame.message));
       else if (frame.type === 'done') finish();
       else receive(frame);
     } catch { finish(Error('VOICE_INVALID_RESPONSE')); }
@@ -35,24 +35,30 @@ function connect(binding: Binding, first: object, signal: AbortSignal, receive: 
 }
 
 export function bailianMic(binding: Binding, token: string, context: AudioContext, events: MicEvents, signal: AbortSignal) {
-  let capture: Promise<() => Promise<void>> | undefined;
-  let finishing = false;
-  const socket = connect(binding, { type: 'listen', token: token || undefined }, signal, frame => {
+  const buffered: ArrayBuffer[] = [];
+  let queuedBytes = 0, listening = false, drained = false;
+  const socket = connect(binding, token, { type: 'start_call' }, signal, frame => {
     if (frame instanceof ArrayBuffer) throw Error();
-    if (frame.type === 'partial') events.partial(frame.text);
-    if (frame.type === 'final') events.final(frame.text);
-    if (frame.type !== 'listening') return;
-    if (finishing) { socket.send(JSON.stringify({ type: 'finish' })); return; }
-    capture = capturePcm(context, signal, (pcm, speech) => {
-      if (speech) events.speech();
-      if (socket.bufferedAmount > 320000) { events.end(Error('VOICE_AUDIO_BACKLOG')); return; }
-      if (socket.readyState === WebSocket.OPEN) socket.send(pcm);
-    });
-    void capture.catch(() => { if (!signal.aborted) events.end(Error('VOICE_MIC_UNAVAILABLE')); });
+    if (frame.type === 'transcript_interim') events.partial(frame.text);
+    if (frame.type === 'transcript') events.final(frame.text);
+    if (frame.type !== 'status') return;
+    if (frame.status === 'idle') { if (listening && drained) events.end(); return; }
+    listening = true;
+    for (const pcm of buffered) socket.send(pcm);
+    buffered.length = 0; queuedBytes = 0;
+    if (drained) finishCall();
   }, events.end);
+  const finishCall = () => { if (!signal.aborted && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'end_call' })); };
+  const capture = capturePcm(context, signal, (pcm, speech) => {
+    if (signal.aborted || drained) return;
+    if (speech) events.speech();
+    if (pcm.byteLength + queuedBytes + socket.bufferedAmount > 320000) { events.end(Error('VOICE_AUDIO_BACKLOG')); return; }
+    if (listening) socket.send(pcm);
+    else { queuedBytes += pcm.byteLength; buffered.push(pcm); }
+  });
+  void capture.ready.then(() => { if (!signal.aborted) events.ready(); }, () => { if (!signal.aborted) events.end(Error('VOICE_MIC_UNAVAILABLE')); });
   return () => {
-    finishing = true;
-    if (capture) void capture.then(async stop => { await stop(); if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'finish' })); }).catch(() => {});
+    void capture.finish().then(() => { drained = true; if (listening) finishCall(); }, error => events.end(error));
   };
 }
 
@@ -60,7 +66,8 @@ export async function bailianSpeak(binding: Binding, token: string, text: string
   const chunks: ArrayBuffer[] = [];
   let length = 0;
   await new Promise<void>((resolve, reject) => {
-    connect(binding, { type: 'speak', token: token || undefined, text }, signal, frame => {
+    connect(binding, token, { type: 'speak', text }, signal, frame => {
+      if (!(frame instanceof ArrayBuffer) && (frame.type === 'welcome' || frame.type === 'status')) return;
       if (!(frame instanceof ArrayBuffer) || (length += frame.byteLength) > 8 * 1024 * 1024) throw Error();
       chunks.push(frame);
     }, error => error ? reject(error) : resolve());

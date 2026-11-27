@@ -88,17 +88,17 @@ it('sends consultation voice to the Patient Agent and Ambient, interrupts playba
   }, true);
 }, 40_000);
 
-it('sends the visitor key only in the first Bailian frame, tears down the physical track on mic handoff, and displays provider failures', async () => {
+it('offers BYOK only in the handshake and drains a short private utterance captured before network readiness', async () => {
   const stop = vi.fn(), message = vi.fn(), closeContext = vi.fn(async () => {});
   const streams: { port: { onmessage?: (event: { data: unknown }) => void } }[] = [];
   const getUserMedia = vi.fn(async () => ({ getTracks: () => [{ stop }] }));
   vi.stubGlobal('navigator', Object.assign(Object.create(navigator), { mediaDevices: { getUserMedia } }));
   vi.stubGlobal('AudioContext', class { state = 'running'; audioWorklet = { addModule: async () => {} }; createMediaStreamSource() { return { connect() {}, disconnect() {} }; } close = closeContext; });
-  vi.stubGlobal('AudioWorkletNode', class { port = { onmessage: undefined, close() {} }; constructor() { streams.push(this); } disconnect() {} });
+  vi.stubGlobal('AudioWorkletNode', class { port = { onmessage: undefined as ((event: { data: unknown }) => void) | undefined, close() {}, postMessage: () => this.port.onmessage?.({ data: 'finished' }) }; constructor() { streams.push(this); } disconnect() {} });
   class BrowserSocket {
     static OPEN = 1; static CLOSING = 2; static sockets: BrowserSocket[] = [];
     readyState = 1; bufferedAmount = 0; send = vi.fn(); close = vi.fn(); onopen?: () => void; onmessage?: (event: { data: string }) => void;
-    constructor(readonly url: URL) { BrowserSocket.sockets.push(this); }
+    constructor(readonly url: URL, readonly protocols: string[]) { BrowserSocket.sockets.push(this); }
     frame(frame: object) { this.onmessage?.({ data: JSON.stringify(frame) }); }
   }
   vi.stubGlobal('WebSocket', BrowserSocket);
@@ -108,15 +108,27 @@ it('sends the visitor key only in the first Bailian frame, tears down the physic
     desk.start('consultation', 'en-US', message);
     const main = BrowserSocket.sockets[0]!;
     expect(main.url.search).not.toContain('synthetic-private-voice'); main.onopen?.();
-    expect(main.send.mock.calls).toEqual([[JSON.stringify({ type: 'listen', token: 'synthetic-private-voice' })]]);
-    main.frame({ type: 'listening' }); await waitFor(() => expect(streams).toHaveLength(1));
+    expect(main.protocols).toEqual(['clinmesh.voice.v1', 'byok.c3ludGhldGljLXByaXZhdGUtdm9pY2U']);
+    expect(main.send.mock.calls).toEqual([[JSON.stringify({ type: 'start_call' })]]);
+    await waitFor(() => expect(streams).toHaveLength(1));
+    main.frame({ type: 'status', status: 'listening' });
     const pcm = new Int16Array(1600).buffer;
     streams[0]!.port.onmessage?.({ data: { pcm, speech: true } }); expect(main.send).toHaveBeenLastCalledWith(pcm);
     const assistant = vi.fn(); desk.start('assistant', 'en-US', assistant); expect(stop).toHaveBeenCalled(); expect(main.close).toHaveBeenCalledOnce();
-    main.frame({ type: 'final', text: 'late transcript' }); expect(message).not.toHaveBeenCalled();
-    BrowserSocket.sockets[1]!.frame({ type: 'error', code: 'VOICE_UNCONFIGURED' });
+    main.frame({ type: 'transcript', role: 'user', text: 'late transcript' }); expect(message).not.toHaveBeenCalled();
+    const privateSocket = BrowserSocket.sockets[1]!;
+    await waitFor(() => expect(streams).toHaveLength(2));
+    const pressed = new Int16Array(128).fill(9).buffer, afterRelease = new Int16Array(128).fill(17).buffer;
+    streams[1]!.port.onmessage?.({ data: { pcm: pressed, speech: true } });
+    desk.release('assistant'); expect(stop).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
+    streams[1]!.port.onmessage?.({ data: { pcm: afterRelease, speech: true } });
+    privateSocket.onopen?.(); privateSocket.frame({ type: 'status', status: 'listening' });
+    await waitFor(() => expect(privateSocket.send.mock.calls).toEqual([[JSON.stringify({ type: 'start_call' })], [pressed], [JSON.stringify({ type: 'end_call' })]]));
+    privateSocket.frame({ type: 'transcript', role: 'user', text: 'Private' }); privateSocket.frame({ type: 'status', status: 'idle' });
+    expect(assistant.mock.calls).toEqual([['Private']]); expect(message).not.toHaveBeenCalled();
+    desk.start('assistant', 'en-US', assistant); BrowserSocket.sockets[2]!.frame({ type: 'error', message: 'VOICE_UNCONFIGURED' });
     expect(desk.state.getState()).toMatchObject({ mic: undefined, error: 'VOICE_UNCONFIGURED' });
-    expect(assistant).not.toHaveBeenCalled();
   } finally { desk.close(); }
   expect(closeContext).toHaveBeenCalledOnce();
 });

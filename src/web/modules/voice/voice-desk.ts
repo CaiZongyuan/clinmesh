@@ -8,10 +8,10 @@ const storageKey = 'clinmesh.voice.v1';
 type Preferences = z.infer<typeof preferences>;
 function read() { try { return preferences.parse(JSON.parse(localStorage.getItem(storageKey) ?? '{}')); } catch { return preferences.parse({}); } }
 type Channel = 'consultation' | 'assistant';
-type State = { settings: Preferences; mic?: Channel; finishing: boolean; partial: string; playing: boolean; error?: string; errorChannel?: Channel };
+type State = { settings: Preferences; mic?: Channel; ready: boolean; finishing: boolean; partial: string; playing: boolean; error?: string; errorChannel?: Channel };
 
 export function createVoiceDesk(binding: Binding) {
-  const state = createStore<State>(() => ({ settings: read(), partial: '', finishing: false, playing: false }));
+  const state = createStore<State>(() => ({ settings: read(), partial: '', ready: false, finishing: false, playing: false }));
   let capture: AbortController | undefined, playback: AbortController | undefined, context: AudioContext | undefined;
   let drain: (() => void) | undefined, drainTimeout: ReturnType<typeof setTimeout> | undefined;
   const fail = (error: unknown, errorChannel: Channel = 'consultation') => state.setState({ errorChannel, error: error instanceof Error && /^VOICE_[A-Z_]+$/.test(error.message) ? error.message : 'VOICE_MEDIA_FAILED' });
@@ -26,7 +26,7 @@ export function createVoiceDesk(binding: Binding) {
     if (channel && state.getState().mic !== channel) return;
     const old = capture;
     capture = undefined; drain = undefined; clearTimeout(drainTimeout); old?.abort();
-    state.setState({ mic: undefined, partial: '', finishing: false });
+    state.setState({ mic: undefined, partial: '', ready: false, finishing: false });
   }
   function start(channel: Channel, lang: string, final: (text: string) => void) {
     mute(); interrupt();
@@ -36,6 +36,7 @@ export function createVoiceDesk(binding: Binding) {
     const { engine, token } = state.getState().settings;
     const secret = (text: string) => Boolean(token && text.includes(token));
     const events: MicEvents = {
+      ready() { if (capture === control) state.setState({ ready: true }); },
       speech() { if (capture === control && playback) interrupt(); },
       partial(text) { if (capture === control && !secret(text)) { if (text) events.speech(); state.setState({ partial: text }); } },
       final(text) {
