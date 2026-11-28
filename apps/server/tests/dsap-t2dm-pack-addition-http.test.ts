@@ -20,7 +20,10 @@ import {
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import { DiseasePackRegistry, computeDiseasePackFingerprint } from '../src/application/disease-pack-runtime-service.ts'
+import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
+import { listGuidelineTopicDefinitions } from '../src/application/guideline-topic-registry.ts'
 import { listHospitalGeneralLabPanels } from '../src/application/order-set-template-registry.ts'
+import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import { findHardcodedPackIdViolations } from '../../../scripts/verify-no-hardcoded-pack-ids.ts'
 import {
   createPciPaymentDrgFixture,
@@ -255,6 +258,47 @@ describe('DSAP Slice S13: Standalone Pure-JSON T2DM Renal Care Pack Addition (#5
   it('AC3b, AC10, AC13 & AC15: activates T2DM pack without CAD, shows side-by-side multi-pack cards for CAD+T2DM, keeps ortho at 0 packs with general panels, and passes all exams with 0 LLM calls', async () => {
     const prepared = await preparePciPaymentDrgFixture()
     cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))
+    const guidelineDbPath = join(prepared.directory, 'guidelines.sqlite')
+    const bySource = new Map<string, { pages: Map<number, Set<string>>; sha256: string; sourceId: string; title: string; version: string }>()
+    for (const definition of listGuidelineTopicDefinitions()) {
+      for (const ref of definition.references) {
+        const key = `${ref.sourceId}#${ref.version}#${ref.sha256}`
+        let entry = bySource.get(key)
+        if (entry === undefined) {
+          entry = { pages: new Map(), sha256: ref.sha256, sourceId: ref.sourceId, title: ref.title, version: ref.version }
+          bySource.set(key, entry)
+        }
+        const fragments = entry.pages.get(ref.page) ?? new Set<string>()
+        for (const fragment of ref.fragments) fragments.add(fragment)
+        entry.pages.set(ref.page, fragments)
+      }
+    }
+    const documents: GuidelineDocument[] = [...bySource.values()].map(entry => ({
+      passages: [...entry.pages.entries()].sort(([a], [b]) => a - b).map(([page, fragments]) => ({
+        locator: `PDF 物理第 ${page} 页`,
+        text: [...fragments].join('\n'),
+      })),
+      source: {
+        documentType: 'guideline',
+        format: 'pdf',
+        id: entry.sourceId,
+        license: { id: 'CC0', url: 'https://example.test/license', usage: 'open' },
+        population: 'adult',
+        publisher: '合成测试机构',
+        scope: '仅用于合成测试验证',
+        sha256: entry.sha256,
+        specialty: 'cardiology',
+        status: 'active',
+        title: entry.title,
+        topics: [],
+        url: `https://example.test/${entry.sourceId}`,
+        version: entry.version,
+      },
+    }))
+    const writer = new GuidelineCorpus({ databasePath: guidelineDbPath })
+    cleanups.push(async () => writer.close())
+    writer.importDocuments(documents)
+    prepared.options.guidelineDatabasePath = guidelineDbPath
     const fixture = await createPciPaymentDrgFixture(prepared)
     cleanups.push(() => fixture.runtime.close())
 

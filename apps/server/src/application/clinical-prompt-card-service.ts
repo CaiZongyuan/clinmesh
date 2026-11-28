@@ -631,7 +631,7 @@ export class ClinicalPromptCardService {
     const population = resolvePatientGuidelinePopulation(birthDate, asOf)
     return (anchor: KnowledgeAnchorCitation) => {
       if (this.#guidelines === undefined) {
-        return { passageText: anchor.quoteFragment, valid: true }
+        return { reason: 'guideline-corpus-unavailable', valid: false }
       }
       const read = this.#guidelines.readReferences(
         [{ page: anchor.page, sha256: anchor.sha256, sourceId: anchor.sourceId, version: anchor.version }],

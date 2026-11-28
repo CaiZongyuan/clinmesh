@@ -13,6 +13,7 @@ import {
 import { clinicalFactLedgerSchema } from '@clinmesh/contracts/clinical-fact-ledger'
 import {
   clinicalPromptBundleSchema,
+  clinicalPromptCardSchema,
   clinicalPromptDismissResponseSchema,
 } from '@clinmesh/contracts/clinical-prompt-cards'
 import { clinicalQualityCheckSchema } from '@clinmesh/contracts/clinical-quality'
@@ -1116,5 +1117,83 @@ describe('DSAP Slice S8: Timing Hooks, Unified ClinicalPromptCard, Historical Re
     )
     expect(historicalPrompts.historicalReplay?.asOf).toBe(beforeLabIso)
     expect(historicalPrompts.blockedRecords.filter(b => b.blockedReason === 'red-line-violation')).toEqual([])
+  })
+
+  it('rejects knowledge claims and cited prompt cards when the guideline corpus is unavailable', async () => {
+    const { fixture } = await setupFixture({ withGuidelineCorpus: false })
+    const visit = await createOutpatientVisit(fixture, '稳定性冠心病复诊', 'male')
+    const { epoch, virtualTime, workspaceId } = currentScope(fixture)
+    fixture.runtime.fhir.create({ epoch, workspaceId }, {
+      clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+      code: { coding: [{ code: 'I25.103', display: '冠状动脉粥样硬化性心脏病', system: 'http://hl7.org/fhir/sid/icd-10' }], text: '冠状动脉粥样硬化性心脏病' },
+      encounter: { reference: `Encounter/${visit.encounterId}` },
+      id: `cond-no-corpus-${randomUUID()}`,
+      recordedDate: virtualTime,
+      resourceType: 'Condition',
+      subject: { reference: `Patient/${visit.patientId}` },
+    })
+
+    // Without a guideline corpus, cited claims from coronary-cad must NOT pass self-verification into visible cards
+    const prompts = await fixture.read(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/clinical-prompts?timing=encounter-open`,
+      clinicalPromptBundleSchema,
+    )
+    expect(prompts.cards.filter(c => c.source.claimId !== undefined || c.source.citation !== undefined)).toEqual([])
+
+    // Direct safety filter on a cited card also fails closed with guideline-corpus-unavailable
+    const doctorCookie = await fixture.login('doctor')
+    const doctorActor = (await fixture.runtime.identity.resolveSessionContext(new Headers({ cookie: doctorCookie }))).actor
+    const filtered = fixture.runtime.workflow.promptCards.filterCandidateCardsForSubject({
+      cards: [clinicalPromptCardSchema.parse({
+        basedOnFactVersions: [],
+        blockingTier: 'none',
+        cardId: 'card-cited-without-corpus',
+        category: 'guideline-advice',
+        deliveryMode: 'display',
+        detail: '未经语料库校验的伪造引用条款',
+        indicator: 'info',
+        knowledgeSnapshotVersion: '2026.08.v1',
+        knowledgeStatus: 'published',
+        overrideReasons: [],
+        packId: 'coronary-cad',
+        packVersion: '1.0.0',
+        riskTags: [],
+        sideBySideGroupKey: null,
+        source: {
+          citation: {
+            locator: 'PDF 物理第 999 页',
+            page: 999,
+            quoteFragment: '完全不存在的伪造指南原文',
+            sha256: '0000000000000000000000000000000000000000000000000000000000000000',
+            sourceId: 'nonexistent-source',
+            title: '不存在的指南',
+            version: '9999',
+          },
+          label: '不存在的指南',
+        },
+        suggestions: [],
+        summary: '伪造引用卡片',
+        timing: 'encounter-open',
+        trialBadgeZh: null,
+        trialDisclaimerZh: null,
+      })],
+      context: doctorActor,
+      recordAudit: false,
+      subject: {
+        id: visit.caseId,
+        kind: 'outpatient',
+        patientId: visit.patientId,
+      },
+      timing: 'encounter-open',
+    })
+    expect(filtered.visibleCards).toEqual([])
+    expect(filtered.blockedRecords).toEqual([
+      expect.objectContaining({
+        blockedReason: 'invalid-citation',
+        cardId: 'card-cited-without-corpus',
+        ruleId: 'safety:invalid-citation:guideline-corpus-unavailable',
+      }),
+    ])
   })
 })
