@@ -1,0 +1,28 @@
+{
+  "readinessTasks": [
+    {
+      "criticalItems": [
+        {
+          "alternateItemCodes": ["14682-9", "1700404A"],
+          "category": "laboratory",
+          "itemCode": "2160-0",
+          "labelZh": "血清肌酐 / eGFR",
+          "maxAgeDays": 90
+        }
+      ],
+      "relevantCategories": ["diagnosis", "medication"],
+      "relevantItemCodes": ["2160-0", "4548-4"],
+      "secondaryItems": [
+        {
+          "alternateItemCodes": ["1500904A"],
+          "category": "laboratory",
+          "itemCode": "4548-4",
+          "labelZh": "糖化血红蛋白 (HbA1c)",
+          "maxAgeDays": 90
+        }
+      ],
+      "taskId": "t2dm-renal-medication",
+      "titleZh": "2 型糖尿病肾功能降糖药调整"
+    }
+  ]
+}

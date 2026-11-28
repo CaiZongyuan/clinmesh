@@ -1,5 +1,6 @@
 import { globSync, readFileSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
+import { findHardcodedPackIdViolations } from './verify-no-hardcoded-pack-ids.ts'
 
 const root = resolve(import.meta.dirname, '..')
 const errors: string[] = []
@@ -51,6 +52,12 @@ for (const rule of rules) {
     const content = readFileSync(resolve(root, path), 'utf8')
     if (rule.forbidden.test(content)) errors.push(`${path}: ${rule.message}`)
   }
+}
+
+for (const violation of findHardcodedPackIdViolations(root)) {
+  errors.push(
+    `${violation.path}:${violation.line}: forbidden hardcoded disease pack ID '${violation.packId}' in non-test platform/application code`,
+  )
 }
 
 if (errors.length === 0) {

@@ -1,0 +1,56 @@
+{
+  "stages": [
+    {
+      "entryCondition": {
+        "category": "diagnosis",
+        "itemCodePattern": "^(?:E11|44054006)",
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "initial-renal-glycemic-eval",
+      "order": 1,
+      "orderSetIds": [],
+      "questionnaireItemCodes": [
+        "t2dm-hypoglycemia-history",
+        "heart-failure-decompensation-symptom"
+      ],
+      "taskIds": ["t2dm-renal-medication"],
+      "titleEn": "Initial T2DM Renal & Glycemic Evaluation",
+      "titleZh": "2 型糖尿病首诊肾功与降糖评估期",
+      "topicIds": ["t2dm-renal-medication"]
+    },
+    {
+      "entryCondition": {
+        "kind": "allOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:E11|44054006)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^N18",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          }
+        ]
+      },
+      "id": "inpatient-renal-adjustment",
+      "order": 2,
+      "orderSetIds": [],
+      "questionnaireItemCodes": [
+        "t2dm-hypoglycemia-history",
+        "heart-failure-decompensation-symptom"
+      ],
+      "taskIds": ["t2dm-renal-medication"],
+      "titleEn": "Inpatient Renal Dose Adjustment",
+      "titleZh": "合并肾功能减退降糖药物调整期",
+      "topicIds": ["t2dm-renal-medication"]
+    }
+  ]
+}

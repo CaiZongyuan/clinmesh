@@ -15,7 +15,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { ApiClientError } from './api-client.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { indicationLabel } from './doctor/laboratory-page.tsx'
-import { laboratoryGenerationErrorMessage } from './laboratory-generation-error.ts'
+import { goldenCaseUnprepopulatedErrorMessage, laboratoryGenerationErrorMessage } from './laboratory-generation-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { canReviewInvestigationAction, investigationActionEntries, investigationActionName, investigationActionUnavailable,
   sameInvestigationActionSnapshot, useInvestigationActionDrafts, type InvestigationAction, type InvestigationActionFacts, type InvestigationActionSnapshot } from './inpatient-investigation-action-drafts.ts'
@@ -67,8 +67,10 @@ function ActionList({ admission, session, locale, write, data, surgeries, refres
     {snapshot.request.surgeryExecutionId ? <span>{t('术后复查 · ', 'Postoperative recheck · ')}{surgeries?.find(item => item.id === snapshot.request.surgeryExecutionId)?.actualProcedure.coding.display ?? t('已关联手术', 'Linked procedure')}</span> : null}
     <span>{t('申请指征：', 'Indication: ')}{snapshot.kind === 'laboratory'
       ? indicationLabel(snapshot.request.indicationCode, getWorkspaceMessages(locale)) : snapshot.request.indication}</span>
-    {snapshot.request.generationError ? <span>{snapshot.kind === 'laboratory' ? laboratoryGenerationErrorMessage(snapshot.request.generationError.code, locale)
-      : t('本次检查未取得结果，未生成报告；请核查后重试或取消申请。', 'No result or report was produced. Review the request, then retry or cancel it.')}</span> : null}
+    {snapshot.request.generationError ? <span>{snapshot.kind === 'laboratory'
+      ? laboratoryGenerationErrorMessage(snapshot.request.generationError.code, locale, snapshot.request.generationError.message)
+      : (goldenCaseUnprepopulatedErrorMessage(snapshot.request.generationError.code, locale, snapshot.request.generationError.message)
+          ?? t('本次检查未取得结果，未生成报告；请核查后重试或取消申请。', 'No result or report was produced. Review the request, then retry or cancel it.'))}</span> : null}
     {cancel ? <span>{t('取消理由：不再需要', 'Cancellation reason: no longer needed')}</span> : null}
   </div>
   const select = (snapshots: InvestigationActionSnapshot[], checked: boolean) => {

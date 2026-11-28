@@ -1,10 +1,9 @@
 import { agentToolInputSchemas, clinicalOverrideToolParameters, doctorCaseSectionSchema } from '@clinmesh/contracts/agent'
+import { ASYNC_CLINICAL_PROMPT_TIMINGS, SYNC_CLINICAL_PROMPT_TIMINGS } from '@clinmesh/contracts/clinical-prompt-cards'
 import { medicationRouteSchema } from '@clinmesh/contracts/medication-safety'
-import { guidelineTopicIds } from '@clinmesh/contracts/guideline-topics'
 import {
   doctorQueueViewStatusGroups
 } from '@clinmesh/contracts/his'
-import { outpatientOrderSetTemplateIds } from '@clinmesh/contracts/order-set-templates'
 import {
   newIdempotencyKey,
   previewStructuredClinicalDocumentSign
@@ -12,6 +11,8 @@ import {
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import type { DoctorCaseModel } from './doctor-case-model.tsx'
 import { doctorCaseSectionTabElementIds, doctorString, requireDoctorDetail, revisitDraftInputSchema, usesStructuredClinicalDocument } from './doctor-case-support.tsx'
+
+const slugPattern = '^[a-z0-9-]{1,64}$'
 
 type Context = Pick<DoctorCaseModel,
   | 'onQueueViewChange'
@@ -78,9 +79,18 @@ export function doctorWorkspaceAgentActions({
       ['source', 'entryId'],
     ),
     'outpatient.clinical-scores.read': docRead('Read deterministic clinical scores (eGFR, CrCl, GRACE, TIMI, PRECISE-DAPT, ASCVD LDL-C) and missing inputs for the current case.'),
+    'outpatient.clinical-fact-ledger.read': docRead(
+      'Read on-demand clinical fact ledger (all 8 categories, quality flags, conflicts, external unverified items, point-in-time asOf filter) for the current case.',
+      {
+        asOf: { type: 'string' },
+        itemCodes: { type: 'string' },
+        categories: { type: 'string' },
+        includeSuperseded: { type: 'boolean' },
+      },
+    ),
     'outpatient.guideline-topics.read': docRead(
       'Read verified guideline topic excerpts, limitations, and current patient indicator gaps without model calls.',
-      { topicId: { type: 'string', enum: guidelineTopicIds } },
+      { topicId: { type: 'string', pattern: slugPattern } },
     ),
     'outpatient.clinical-quality.read': docRead(
       'Run read-only two-tier clinical quality preflight (red lines and alerts) for outpatient-prescription or outpatient-completion.',
@@ -89,7 +99,31 @@ export function doctorWorkspaceAgentActions({
     ),
     'outpatient.order-set-drafts.read': docRead(
       'Read version-bound outpatient order-set candidate drafts screened against allergies, eGFR, and triage vitals without issuing orders.',
-      { templateId: { type: 'string', enum: outpatientOrderSetTemplateIds } },
+      { templateId: { type: 'string', pattern: slugPattern } },
+    ),
+    'outpatient.disease-packs.read': docRead(
+      'Read active/available declarative disease packs, matched stages, task readiness, and tool policies for the current outpatient case.',
+    ),
+    'outpatient.disease-pack-task-facts.read': docRead(
+      'Read task-scoped clinical fact ledger and readiness checks for a specific disease pack and task.',
+      {
+        packId: { type: 'string', pattern: slugPattern },
+        taskId: { type: 'string', maxLength: 64 },
+      },
+      ['packId', 'taskId'],
+    ),
+    'outpatient.clinical-prompts.read': docRead(
+      'Read unified ClinicalPromptCard cards (encounter-open, order-draft-select, order-sign, encounter-complete, report-arrived) after deterministic pre-display safety filtering and optional historical knowledge replay (0 LLM calls).',
+      {
+        asOf: { type: 'string' },
+        candidateMedicationClasses: { type: 'string' },
+        catalogItemId: { type: 'string' },
+        includeDismissed: { type: 'boolean' },
+        includeSilent: { type: 'boolean' },
+        reevaluateWithLatestKnowledge: { type: 'boolean' },
+        selectedTemplateId: { type: 'string' },
+        timing: { type: 'string', enum: [...SYNC_CLINICAL_PROMPT_TIMINGS, ...ASYNC_CLINICAL_PROMPT_TIMINGS] },
+      },
     ),
     'outpatient.case.select': {
       description: 'Select caseId from loaded queue.items; switch to its waiting or active tab.',

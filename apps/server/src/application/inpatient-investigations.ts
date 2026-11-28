@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ClinicalQualityReceipt } from '@clinmesh/contracts/clinical-quality'
 import { inpatientInvestigationAcknowledgeInputSchema, inpatientInvestigationActionInputSchema, inpatientInvestigationIssueInputSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema, inpatientInvestigationCatalogSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { resolveLaboratorySpecimenContainer } from '@clinmesh/core/laboratory-specimen-container'
 import type { ImagingExamCode } from '@clinmesh/contracts/imaging'
@@ -118,23 +119,25 @@ export class InpatientInvestigations {
         : [{ reference: { reference: `Procedure/${input.surgeryExecutionId}` } }]
       let requestId:string
       let effects:Array<{kind:'created'|'updated';reference:string;versionId:string}>
+      let clinicalQuality: ClinicalQualityReceipt | undefined
+      const overrideOption = input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride }
       if(input.selection.kind==='examination') {
         const draft=this.workflow.examination.state(context,input.admissionId)
         const saved=this.workflow.examination.applySaveDraft(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:draft.draftVersion,expectedVersions:versions,idempotencyKey,indication:input.selection.indication,serviceId:input.selection.serviceId})
-        const issued=this.workflow.examination.applyIssue(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,readyExamCodes:new Set(['ecg-12-lead','tte']),...(supportingInfo===undefined?{}:{supportingInfo})})
-        requestId=issued.data.request.id;effects=issued.effects
+        const issued=this.workflow.examination.applyIssue(transaction,{...overrideOption,context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,readyExamCodes:new Set(['ecg-12-lead','tte']),...(supportingInfo===undefined?{}:{supportingInfo})})
+        requestId=issued.data.request.id;effects=issued.effects;clinicalQuality=issued.clinicalQuality
       } else if(input.selection.kind==='imaging') {
         const draft=this.workflow.imaging.state(context,input.admissionId)
         const saved=this.workflow.imaging.applySaveDraft(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:draft.draftVersion,expectedVersions:versions,idempotencyKey,
           indication:input.selection.indication,serviceId:input.selection.serviceId})
-        const issued=this.workflow.imaging.applyIssue(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,readyExamCodes:ready,...(supportingInfo===undefined?{}:{supportingInfo})})
-        requestId=issued.data.request.id;effects=issued.effects
+        const issued=this.workflow.imaging.applyIssue(transaction,{...overrideOption,context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,readyExamCodes:ready,...(supportingInfo===undefined?{}:{supportingInfo})})
+        requestId=issued.data.request.id;effects=issued.effects;clinicalQuality=issued.clinicalQuality
       } else {
         const current=z.object({version:z.number()}).optional().parse(this.owner.database.driver.prepare('SELECT version FROM laboratory_request_state WHERE workspace_id=? AND epoch=? AND case_id=?').get(context.workspaceId,context.epoch,input.admissionId))
         const saved=this.workflow.applySaveLaboratoryRequestDraft(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:current?.version??0,expectedVersions:versions,idempotencyKey,
           catalogItemId:input.selection.catalogItemId,indicationCode:input.selection.indicationCode})
-        const issued=this.workflow.applyIssueLaboratoryRequest(transaction,{context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,...(supportingInfo===undefined?{}:{supportingInfo})})
-        requestId=issued.data.request.id;effects=issued.effects
+        const issued=this.workflow.applyIssueLaboratoryRequest(transaction,{...overrideOption,context,encounterId:input.admissionId,expectedDraftVersion:saved.data.draftVersion,expectedVersions:versions,idempotencyKey,...(supportingInfo===undefined?{}:{supportingInfo})})
+        requestId=issued.data.request.id;effects=issued.effects;clinicalQuality=issued.clinicalQuality
       }
       const stored=z.object({config_json:z.string()}).parse(this.owner.database.driver.prepare('SELECT config_json FROM hospital_service_catalog WHERE workspace_id=? AND epoch=? AND service_id=?').get(context.workspaceId,context.epoch,available.id))
       const config: unknown = JSON.parse(stored.config_json)
@@ -158,7 +161,7 @@ export class InpatientInvestigations {
           'INSERT INTO inpatient_postoperative_investigation(workspace_id,epoch,admission_id,request_id,surgery_execution_id) VALUES(?,?,?,?,?)',
         ).run(context.workspaceId, context.epoch, input.admissionId, requestId, input.surgeryExecutionId)
       }
-      return {data:this.read(context,input.admissionId),effects}
+      return {data:this.read(context,input.admissionId),effects,...(clinicalQuality===undefined?{}:{clinicalQuality})}
     })
   }
   action(context: ActorContext, raw: unknown, idempotencyKey: string, action: 'send'|'cancel'|'retry') {

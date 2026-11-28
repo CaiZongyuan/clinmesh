@@ -163,7 +163,10 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
       })) }))
     return { admissionId: registered.id, patientId: patient.id, path, encounterVersion: diagnosis.data.encounterVersion }
   }
-  async function preparePciAdmission(materialIds = ['hospital-material-pci-stent', 'hospital-material-pci-balloon', 'hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter']) {
+  async function preparePciAdmission(
+    materialIds = ['hospital-material-pci-stent', 'hospital-material-pci-balloon', 'hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter'],
+    prepareOptions?: { baselineCreatinineUmolL?: number },
+  ) {
     const { epoch } = await read('admin', '/api/sim/v1/scenario-runs/current', scenarioStateSchema)
     await parsePciResponse(inpatientPciDataResponseSchema, await request('admin', '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: epoch }))
     const source = (await parsePciResponse(pciCaseSourceResponseSchema, await request('admin', '/api/sim/v1/synthetic-cases/pci/prepare', { expectedEpoch: epoch }))).data
@@ -181,6 +184,22 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     await parsePciResponse(inpatientPaymentResponseSchema, await request('cashier', `${admissionPath}/payments/confirm`, { previewId: deposit.previewId, commitToken: deposit.commitToken }))
     const stay = { admissionId: started.admissionId, patientId: started.patientId, path: admissionPath, encounterVersion: diagnosis.encounterVersion,
       sourceCaseId: source.case.caseId, sourceCaseRevision: source.case.revision }
+    if (prepareOptions?.baselineCreatinineUmolL !== undefined) {
+      const wsRow = runtime.database.driver.prepare(
+        'SELECT workspace_id FROM scenario_epoch_state WHERE epoch = ? LIMIT 1',
+      ).get(epoch) as { workspace_id: string }
+      runtime.fhir.create({ epoch, workspaceId: wsRow.workspace_id }, {
+        category: [{ coding: [{ code: 'laboratory', system: 'http://terminology.hl7.org/CodeSystem/observation-category' }] }],
+        code: { coding: [{ code: '2160-0', display: '血清肌酐', system: 'http://loinc.org' }], text: '血清肌酐' },
+        effectiveDateTime: '2026-08-24T08:30:00+08:00',
+        encounter: { reference: `Encounter/${started.admissionId}` },
+        id: randomUUID(),
+        resourceType: 'Observation',
+        status: 'final',
+        subject: { reference: `Patient/${started.patientId}` },
+        valueQuantity: { code: 'umol/L', system: 'http://unitsofmeasure.org', unit: 'umol/L', value: prepareOptions.baselineCreatinineUmolL },
+      })
+    }
     const path = stay.path
     const catalog = await read('inpatient-doctor', '/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema)
     const procedure = catalog.procedures.find(item => item.coding.code === '36.0700')!

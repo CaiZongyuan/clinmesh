@@ -263,7 +263,7 @@ it('报告选型草稿保存丢回执后刷新恢复原参数，不重复保存'
 
 it('指南重评丢回执后刷新只恢复原请求，回执不携带旧原文', async () => {
   const original = { operation: 'inpatient.guideline-advice.request' as const, input: { admissionId: 'synthetic-admission', requestId: 'synthetic-plan', expectedVersion: 1, expectedFingerprint: 'a'.repeat(64) } }
-  const output = { ...response, data: { admissionId: 'synthetic-admission', requestId: 'synthetic-plan', taskId: 'synthetic-guideline-task', version: 2,
+  const output = { ...response, data: { admissionId: 'synthetic-admission', requestId: 'synthetic-plan', taskId: 'synthetic-guideline-task', topicId: 'synthetic-guideline-topic', version: 2,
     fingerprint: 'a'.repeat(64), status: 'queued', message: '正在准备指南参考意见。', missing: [], failureCode: null, result: null } }
   const posts: Array<{ path: string; key: string | null; body: unknown }> = []
   let receiptKey: string | null = null

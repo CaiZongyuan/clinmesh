@@ -1285,12 +1285,16 @@ it('keeps clinical risk assessment, nursing vitals, and deterministic clinical s
   for (const [skill, path, id] of [
     [doctorSkill, 'catalog order-set-templates list', 'catalog.order-set-templates.list'],
     [doctorSkill, 'doctor case clinical-scores get', 'doctor.case.clinical-scores.read'],
+    [doctorSkill, 'doctor case clinical-fact-ledger get', 'doctor.case.clinical-fact-ledger.read'],
+    [doctorSkill, 'doctor case clinical-fact-verification record', 'doctor.case.clinical-fact-verification.record'],
     [doctorSkill, 'doctor case guideline-topics get', 'doctor.case.guideline-topics.read'],
     [doctorSkill, 'doctor case order-set-drafts get', 'doctor.case.order-set-drafts.read'],
     [doctorSkill, 'encounter risk-assessment record', 'encounter.risk-assessment.record'],
     [inpatientSkill, 'inpatient record-vital-signs', 'inpatient.vital-signs.record'],
     [inpatientSkill, 'inpatient record-risk-assessment', 'inpatient.risk-assessment.record'],
     [inpatientSkill, 'inpatient clinical-scores', 'inpatient.clinical-scores.read'],
+    [inpatientSkill, 'inpatient clinical-fact-ledger', 'inpatient.clinical-fact-ledger.read'],
+    [inpatientSkill, 'inpatient clinical-fact-verification record', 'inpatient.clinical-fact-verification.record'],
     [inpatientSkill, 'inpatient guideline-topics', 'inpatient.guideline-topics.read'],
     [inpatientSkill, 'inpatient order-set-drafts', 'inpatient.order-set-drafts.read'],
   ] as const) {
@@ -1336,5 +1340,62 @@ it('keeps clinical risk assessment, nursing vitals, and deterministic clinical s
   for (const skill of [doctorSkill, inpatientSkill]) {
     expect(skill).toContain('packageInsert')
     expect(skill).toContain('合成教学参考，非真实上市产品法定说明书')
+  }
+})
+
+it('认人隔离区 CLI 与 Skill 保留管理员/登记员边界及审计合同', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const registrationSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-registration/SKILL.md'), 'utf8')
+  const administratorSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-administrator/SKILL.md'), 'utf8')
+
+  const listLine = commandLines(registrationSkill).find(item => item.startsWith('clinmesh identity-quarantine list'))
+  expect(listLine).toBeDefined()
+  expect(inspectExample(program, listLine!).operation).toMatchObject({
+    id: 'identity-quarantine.list',
+    mode: 'query',
+    roles: ['administrator', 'registrar'],
+    skill: 'clinmesh-registration',
+  })
+
+  const confirmLine = commandLines(registrationSkill).find(item => item.startsWith('clinmesh identity-quarantine confirm-merge '))
+  expect(confirmLine).toBeDefined()
+  const confirmOp = inspectExample(program, confirmLine!).operation!
+  expect(confirmOp.id).toBe('identity-quarantine.confirm-merge')
+  expect(confirmOp.roles).toEqual(['administrator', 'registrar'])
+  expect(confirmOp.requirements).toEqual({ expectedVersions: false, idempotency: 'required' })
+
+  const mergeJson = registrationSkill
+    .slice(registrationSkill.indexOf('identity-quarantine confirm-merge'))
+    .match(/```json\n([^]*?)\n```/)
+  expect(mergeJson).toBeDefined()
+  expect(confirmOp.input.parse(JSON.parse(mergeJson![1]!))).toMatchObject({
+    candidateId: 'cand-1',
+    decision: 'confirm-merge',
+    targetPatientId: 'patient-1',
+  })
+  expect(administratorSkill).toContain('../clinmesh-registration/SKILL.md')
+})
+
+it('keeps concept vocabulary and disease-pack knowledge read-only Skill examples aligned with contracts', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const doctorSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  const inpatientSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+
+  for (const [skill, path, id] of [
+    [doctorSkill, 'catalog concept-vocabulary get', 'catalog.concept-vocabulary.read'],
+    [doctorSkill, 'doctor case disease-packs knowledge', 'doctor.case.disease-pack-knowledge.read'],
+    [inpatientSkill, 'inpatient disease-packs knowledge', 'inpatient.disease-pack-knowledge.read'],
+  ] as const) {
+    const line = commandLines(skill).find(item => item.startsWith(`clinmesh ${path} `))
+    expect(line, path).toBeDefined()
+    expect(inspectExample(program, line!).operation?.id).toBe(id)
+  }
+
+  for (const skill of [doctorSkill, inpatientSkill]) {
+    expect(skill).toContain('KNOWLEDGE_SNAPSHOT_NOT_FOUND')
+    expect(skill).toContain('试用版')
+    expect(skill).toContain('未经医生检查，仅用于仿真')
+    expect(skill).toContain('--recheck-latest')
+    expect(skill).toContain('--include-retired')
   }
 })

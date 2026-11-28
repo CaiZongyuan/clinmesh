@@ -14,6 +14,7 @@ import {
   type ApiConflict,
   type LaboratoryRequestCatalogItemId,
 } from '@clinmesh/contracts/his'
+import type { ClinicalOverrideInput, ClinicalQualityReceipt } from '@clinmesh/contracts/clinical-quality'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
 import { referenceConceptSnapshotSchema } from '@clinmesh/contracts/reference-data'
 import type { InvestigationResultContent } from '@clinmesh/contracts/scenario'
@@ -28,6 +29,7 @@ import {
   ExpectedVersionConflictError,
   provenanceAgents,
   type ActorContext,
+  type CommandEffect,
   type CommandResponse,
   type CommandTransaction,
 } from './command-executor.ts'
@@ -273,6 +275,20 @@ export function completedCaseInterpretation(code: string | undefined): string | 
 }
 
 export interface OutpatientLaboratoryHost {
+  enforceOrderIndication?(input: {
+    asOf: string
+    candidateCodes?: readonly string[] | undefined
+    catalogItemId?: string | undefined
+    caseId: string
+    clinicalOverride?: ClinicalOverrideInput | undefined
+    context: ActorContext
+    itemCode: string
+    operation: string
+    orderDisplay?: string | undefined
+    orderKind: 'imaging' | 'examination' | 'laboratory'
+    patientId: string
+    subjectReference: string
+  }): { effects: CommandEffect[]; receipt?: ClinicalQualityReceipt }
   reportPublished(
     transaction: CommandTransaction,
     context: ActorContext,
@@ -485,14 +501,6 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
       ? this.#context.outpatientBilling.priceForPublishedLaboratory({ id: selection.catalog.item_id, version: selection.catalog.version, priceFen: selection.catalog.price_fen })
       : this.#context.outpatientBilling.priceForLaboratory(laboratoryService)
     const now = this.#context.virtualTime(input.context)
-    if (laboratoryService !== undefined) {
-      this.#assertAdultLaboratoryServiceApplicable(
-        input.context,
-        outpatientCase.patient_id,
-        laboratoryService,
-        now,
-      )
-    }
     if (laboratoryService === undefined) {
       this.#assertInvestigationGenerationSupported(
         input.context,
@@ -504,6 +512,12 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
       this.#assertLaboratoryServiceGenerationSupported(
         input.context,
         outpatientCase.case_id,
+      )
+      this.#assertAdultLaboratoryServiceApplicable(
+        input.context,
+        outpatientCase.patient_id,
+        laboratoryService,
+        now,
       )
     }
     if (!catalogConfig.allowedIndicationCodes.includes(input.indicationCode)) {
@@ -696,6 +710,7 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
   }
 
   issueLaboratoryRequest(input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedDraftVersion: number
@@ -708,6 +723,7 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
+        ...(input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride }),
         encounterId: input.encounterId,
         expectedDraftVersion: input.expectedDraftVersion,
       },
@@ -717,6 +733,7 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
   }
 
   applyIssueLaboratoryRequest(transaction: CommandTransaction, input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedDraftVersion: number
@@ -766,14 +783,6 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
       ? undefined
       : laboratoryServiceSnapshotSchema.parse(JSON.parse(state.draft_service_snapshot_json))
     const now = this.#context.virtualTime(input.context)
-    if (laboratoryService !== undefined) {
-      this.#assertAdultLaboratoryServiceApplicable(
-        input.context,
-        outpatientCase.patient_id,
-        laboratoryService,
-        now,
-      )
-    }
     const { catalog, config: catalogConfig } = this.#laboratorySelectionFromSnapshot(
       input.context,
       state.draft_catalog_item_id,
@@ -804,6 +813,12 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
         input.context,
         outpatientCase.case_id,
       )
+      this.#assertAdultLaboratoryServiceApplicable(
+        input.context,
+        outpatientCase.patient_id,
+        laboratoryService,
+        now,
+      )
     }
     if (!catalogConfig.allowedIndicationCodes.includes(state.draft_indication_code)) {
       throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
@@ -812,6 +827,26 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
     if (catalogConfig.contraindicatedAllergyCodes.some(code => allergyCodes.has(code))) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request is contraindicated')
     }
+    const quality = this.#host.enforceOrderIndication?.({
+      asOf: now,
+      candidateCodes: [
+        referenceConcept.code,
+        catalog.code,
+        catalog.item_id,
+        state.draft_catalog_item_id,
+        ...(laboratoryService === undefined ? [] : [laboratoryService.localCode, laboratoryService.referenceConcept.code]),
+      ],
+      catalogItemId: state.draft_catalog_item_id,
+      caseId: outpatientCase.case_id,
+      clinicalOverride: input.clinicalOverride,
+      context: input.context,
+      itemCode: referenceConcept.code,
+      operation: 'laboratory-request.issue',
+      orderDisplay: catalog.name_zh,
+      orderKind: 'laboratory',
+      patientId: outpatientCase.patient_id,
+      subjectReference: `Encounter/${input.encounterId}`,
+    }) ?? { effects: [] }
     const requestId = uuidv7()
     const serviceRequestId = uuidv7()
     const taskId = uuidv7()
@@ -939,7 +974,8 @@ export class OutpatientLaboratoryService implements OutpatientLaboratoryTransact
         kind: 'created' as const,
         reference: `${resource.resourceType}/${resource.id}`,
         versionId: resource.meta?.versionId ?? '1',
-      })), ...(charge?.effects ?? [])],
+      })), ...(charge?.effects ?? []), ...quality.effects],
+      ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
     }
   }
 

@@ -527,9 +527,26 @@ export class InpatientSurgery {
       if (assistant && assistant.id === surgeon.id) {
         throw new InpatientError('INPATIENT_SURGERY_PRACTITIONER_CONFLICT', '主刀医师与第一助手不能为同一人', 400)
       }
-      const quality = pciSelectionProcedureCodes.includes(item.coding.code)
+      const indicationCheck = this.owner.workflow.clinicalQuality.checkOrderIndication({
+        asOf: now,
+        candidateCodes: [item.coding.code, item.id],
+        catalogItemId: item.id,
+        context,
+        gate: 'inpatient-pci-plan',
+        itemCode: item.coding.code,
+        orderDisplay: item.coding.display,
+        orderKind: 'procedure',
+        subject: { id: admission.id, kind: 'inpatient', patientId: admission.patientId },
+      })
+      const pciCheck = pciSelectionProcedureCodes.includes(item.coding.code)
+        ? this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admission.id)
+        : undefined
+      const combinedCheck = pciCheck === undefined
+        ? indicationCheck
+        : this.owner.workflow.clinicalQuality.mergeChecks(pciCheck, indicationCheck)
+      const quality = combinedCheck.redLines.length > 0 || combinedCheck.alerts.length > 0 || pciSelectionProcedureCodes.includes(item.coding.code)
         ? this.owner.workflow.clinicalQuality.enforce(context, {
-            check: this.owner.workflow.clinicalQuality.inpatientPciPlan(this.owner, context, admission.id),
+            check: combinedCheck,
             operation: 'inpatient.surgery.request',
             override: input.clinicalOverride,
             patientId: admission.patientId,

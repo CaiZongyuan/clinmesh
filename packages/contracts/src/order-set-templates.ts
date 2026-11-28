@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { clinicalScoreMissingInputSchema, clinicalScoreSourceReferenceSchema } from './clinical-scores.ts'
+import { packSourceSummarySchema } from './pack-source.ts'
 import { preopOrderPolicySchema } from './inpatient-surgery.ts'
 import { outpatientInvestigationPriceSchema } from './investigation-billing.ts'
 import { medicationFrequencySchema, medicationRouteSchema } from './medication-safety.ts'
@@ -20,10 +21,14 @@ export const postoperativeOrderSetTemplateIds = [
   'pci-postop-standard',
   'general-surgery-postop-standard',
 ] as const
-export const orderSetTemplateIdSchema = z.enum(orderSetTemplateIds)
+/**
+ * 专病包动态注册组套模板；合同层保留开放 slug，不枚举具体病种模板 ID。
+ */
+export const orderSetTemplateIdSchema = z.string().regex(/^[a-z0-9-]{1,64}$/)
 export type OrderSetTemplateId = z.infer<typeof orderSetTemplateIdSchema>
 
-const scope = z.enum(['outpatient', 'inpatient'])
+export const orderSetScopeSchema = z.enum(['outpatient', 'inpatient'])
+const scope = orderSetScopeSchema
 export type OrderSetScope = z.infer<typeof scope>
 
 const itemKind = z.enum(['laboratory', 'examination', 'medication', 'service'])
@@ -44,16 +49,17 @@ const examCode = z.enum(['ecg-12-lead', 'tte'])
 const duration = z.enum(['long', 'temporary'])
 const vitalSource = z.enum(['triage', 'inpatient-nursing'])
 
-const rule = strict({
+export const orderSetScreeningRuleSchema = strict({
   action: z.enum(['exclude', 'caution']),
   comparator: z.enum(['below', 'at-least', 'required']),
   input: z.enum(['pulseBpm', 'systolicMmHg', 'egfr', 'weightKg']),
   rationaleZh: text(240),
   threshold: num.positive().nullable(),
 }).refine(r => (r.comparator === 'required') === (r.threshold === null))
+const rule = orderSetScreeningRuleSchema
 export type OrderSetScreeningRule = z.infer<typeof rule>
 
-const option = z.discriminatedUnion('kind', [
+export const orderSetTemplateOptionSchema = z.discriminatedUnion('kind', [
   strict({ kind: z.literal('laboratory'), referenceCode: text(64), referenceSystem: z.url() }),
   strict({ examCode, indication: text(500), kind: z.literal('examination') }),
   strict({
@@ -75,6 +81,7 @@ const option = z.discriminatedUnion('kind', [
     serviceId: id,
   }),
 ])
+const option = orderSetTemplateOptionSchema
 export type OrderSetTemplateOption = z.infer<typeof option>
 
 const title = text(160)
@@ -204,6 +211,8 @@ const draft = strict({
   counts: strict({ excluded: nonnegInt, needsReview: nonnegInt, ready: nonnegInt, skipped: nonnegInt.default(0), unavailable: nonnegInt }),
   fingerprint: sha256,
   items: z.array(draftItem).min(1).max(16),
+  packId: slug.optional(),
+  packVersion: text(64).optional(),
   template: draftTemplate,
 })
 export type OrderSetDraft = z.infer<typeof draft>
@@ -226,9 +235,12 @@ const facts = strict({
 export type OrderSetPatientFacts = z.infer<typeof facts>
 
 export const orderSetDraftBundleSchema = strict({
-  drafts: z.array(draft).min(0).max(orderSetTemplateIds.length),
+  drafts: z.array(draft).min(0).max(64),
   evaluatedAt: isoTime,
+  packId: slug.optional(),
+  packVersion: text(64).optional(),
   patientFacts: facts,
+  sourcePacks: z.array(packSourceSummarySchema).max(32).optional(),
   target: z.discriminatedUnion('scope', [
     strict({ caseId: id, encounterId: id, encounterVersion: ver, scope: z.literal('outpatient') }),
     strict({
@@ -247,7 +259,7 @@ export type OrderSetDraftBundle = z.infer<typeof orderSetDraftBundleSchema>
 export const orderSetTemplateListQuerySchema = strict({ scope: scope.optional() })
 export type OrderSetTemplateListQuery = z.infer<typeof orderSetTemplateListQuerySchema>
 
-export const orderSetTemplateListSchema = strict({ items: z.array(orderSetTemplateSchema).min(1).max(orderSetTemplateIds.length) })
+export const orderSetTemplateListSchema = strict({ items: z.array(orderSetTemplateSchema).min(1).max(64) })
 export type OrderSetTemplateList = z.infer<typeof orderSetTemplateListSchema>
 
 const keyId = z.string().min(1).max(64)

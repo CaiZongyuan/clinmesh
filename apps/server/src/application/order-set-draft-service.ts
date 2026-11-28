@@ -6,7 +6,6 @@ import type {
   OrderSetPatientFacts,
   OrderSetReason,
   OrderSetScope,
-  OrderSetTemplate,
   OrderSetTemplateId,
   OrderSetTemplateItem,
   OrderSetTemplateList,
@@ -34,14 +33,21 @@ import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ClinicalScoreService } from './clinical-score-service.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
+import type { DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
 import type { ExaminationRequestService } from './examination-request-service.ts'
 import { resolveCatalogMedicationRoutes } from './inpatient-medication-config.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { laboratoryOutpatientPrice } from './outpatient-investigation-billing.ts'
 import type { OutpatientWorkflowContext } from './outpatient-workflow-context.ts'
-import { orderSetTemplate, orderSetTemplates } from './order-set-template-registry.ts'
+import {
+  getOrderSetTemplateEntry,
+  listOrderSetTemplates,
+  listRegisteredOrderSetEntries,
+  type RegisteredOrderSetTemplateEntry,
+} from './order-set-template-registry.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { WorkflowError } from './workflow-error.ts'
+import { type PackSourceSummary } from '@clinmesh/contracts/guideline-topics'
 
 type Resolution = {
   candidate: OrderSetCandidate
@@ -104,6 +110,7 @@ export class OrderSetDraftService {
   readonly #clinicalScores: ClinicalScoreService
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
+  readonly #diseasePacks: DiseasePackRuntimeService | undefined
   readonly #examination: ExaminationRequestService
   readonly #fhir: FhirRepository
   readonly #outpatient: OutpatientWorkflowContext
@@ -112,6 +119,7 @@ export class OrderSetDraftService {
     clinicalScores: ClinicalScoreService
     commands: CommandExecutor
     database: ClinMeshDatabase
+    diseasePacks?: DiseasePackRuntimeService
     examination: ExaminationRequestService
     fhir: FhirRepository
     outpatientContext: OutpatientWorkflowContext
@@ -119,6 +127,7 @@ export class OrderSetDraftService {
     this.#clinicalScores = options.clinicalScores
     this.#commands = options.commands
     this.#database = options.database
+    this.#diseasePacks = options.diseasePacks
     this.#examination = options.examination
     this.#fhir = options.fhir
     this.#outpatient = options.outpatientContext
@@ -130,7 +139,8 @@ export class OrderSetDraftService {
       if (!['administrator', 'outpatient-doctor', 'inpatient-doctor'].includes(context.roleCode)) {
         throw new WorkflowError('ROLE_NOT_ALLOWED', '当前岗位无权读取专病组套模板定义')
       }
-      const items = scope === undefined ? [...orderSetTemplates] : orderSetTemplates.filter(template => template.scopes.includes(scope))
+      const all = listOrderSetTemplates(this.#diseasePacks?.registry)
+      const items = scope === undefined ? [...all] : all.filter(template => template.scopes.includes(scope))
       this.#commands.auditRead(context, 'catalog.order-set-templates.list', auditInput, 'success')
       return { items }
     } catch (error) {
@@ -144,10 +154,21 @@ export class OrderSetDraftService {
     try {
       this.#outpatient.requireDoctorCase(context, caseId)
       this.#outpatient.assertCaseResponsibility(context, caseId)
-      const templates = this.#templates('outpatient', templateId, reason => new WorkflowError('WORKFLOW_CONFLICT', reason, undefined, 'ORDER_SET_SCOPE_NOT_APPLICABLE'))
       const row = z.object({ encounter_id: z.string(), patient_id: z.string() }).parse(this.#database.driver.prepare(`
         SELECT encounter_id, patient_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?
       `).get(context.workspaceId, context.epoch, caseId))
+      const evaluatedAt = this.#outpatient.virtualTime(context)
+      const activeRuntime = this.#diseasePacks?.activeRuntimeSummaryForSubject(
+        context,
+        { id: caseId, kind: 'outpatient', patientId: row.patient_id },
+        evaluatedAt,
+      )
+      const entries = this.#templates(
+        'outpatient',
+        templateId,
+        reason => new WorkflowError('WORKFLOW_CONFLICT', reason, undefined, 'ORDER_SET_SCOPE_NOT_APPLICABLE'),
+        activeRuntime,
+      )
       const scores = this.#clinicalScores.outpatientSnapshot(context, caseId)
       const vitals = scores.vitalSigns
       const facts = this.#facts(
@@ -157,9 +178,9 @@ export class OrderSetDraftService {
         'triage',
         vitals?.weightKg === undefined ? undefined : { ...vitals, weightKg: vitals.weightKg },
       )
-      const bundle = this.#bundle(templates, 'outpatient', facts, this.#outpatientCatalog(context), {
+      const bundle = this.#bundle(entries, 'outpatient', facts, this.#outpatientCatalog(context), {
         caseId, encounterId: row.encounter_id, encounterVersion: scores.encounterVersion, scope: 'outpatient',
-      }, this.#outpatient.virtualTime(context))
+      }, evaluatedAt, undefined, undefined, activeRuntime, templateId !== undefined)
       this.#commands.auditRead(context, 'doctor.case.order-set-drafts.read', auditInput, 'success')
       return bundle
     } catch (error) {
@@ -207,7 +228,13 @@ export class OrderSetDraftService {
           procedureDisplay: execution.actualProcedure.coding.display,
         }
       }
-      const templates = this.#inpatientTemplates(templateId, surgeryContext)
+      const evaluatedAt = inpatient.virtualTime(context)
+      const activeRuntime = this.#diseasePacks?.activeRuntimeSummaryForSubject(
+        context,
+        { id: admissionId, kind: 'inpatient', patientId: binding.patientId },
+        evaluatedAt,
+      )
+      const entries = this.#inpatientTemplates(templateId, surgeryContext, activeRuntime)
       const scores = this.#clinicalScores.inpatientSnapshot(inpatient, context, admissionId)
       const weighted = this.#clinicalScores.latestInpatientVitalSignsWithWeight(context, admissionId)
       const facts = this.#facts(
@@ -232,14 +259,16 @@ export class OrderSetDraftService {
             }),
       }
       const bundle = this.#bundle(
-        templates,
+        entries,
         'inpatient',
         facts,
         this.#inpatientCatalog(inpatient, context),
         target,
-        inpatient.virtualTime(context),
+        evaluatedAt,
         this.#hydrationCautions(inpatient, context, admissionId, scores),
         deduplication,
+        activeRuntime,
+        templateId !== undefined,
       )
       inpatient.commands.auditRead(context, 'inpatient.order-set-drafts.read', auditInput, 'success')
       return bundle
@@ -316,38 +345,58 @@ export class OrderSetDraftService {
   #inpatientTemplates(
     templateId: OrderSetTemplateId | undefined,
     surgeryContext: { procedureCode: string; procedureDisplay: string } | undefined,
-  ): OrderSetTemplate[] {
+    activeRuntime?: { allowedPackOrderSetIds: readonly string[]; hasStageScopeRestriction: boolean },
+  ): RegisteredOrderSetTemplateEntry[] {
     if (templateId === undefined) {
-      return orderSetTemplates.filter(template =>
-        template.scopes.includes('inpatient')
+      const allowedPackIds = activeRuntime?.hasStageScopeRestriction === true
+        ? new Set(activeRuntime.allowedPackOrderSetIds)
+        : undefined
+      return listRegisteredOrderSetEntries(this.#diseasePacks?.registry).filter(entry =>
+        entry.template.scopes.includes('inpatient')
+        && (entry.ownerPack === undefined || allowedPackIds === undefined || allowedPackIds.has(entry.template.id))
         && (surgeryContext === undefined
-          ? template.applicableProcedureCodes === undefined
-          : template.applicableProcedureCodes?.includes(surgeryContext.procedureCode) === true))
+          ? entry.template.applicableProcedureCodes === undefined
+          : entry.template.applicableProcedureCodes?.includes(surgeryContext.procedureCode) === true))
     }
-    const [template] = this.#templates(
+    const [entry] = this.#templates(
       'inpatient',
       templateId,
       reason => new InpatientError('ORDER_SET_SCOPE_NOT_APPLICABLE', reason),
+      activeRuntime,
     )
-    if (template!.applicableProcedureCodes !== undefined) {
+    const template = entry!.template
+    if (template.applicableProcedureCodes !== undefined) {
       if (surgeryContext === undefined) {
-        throw new InpatientError('ORDER_SET_SCOPE_NOT_APPLICABLE', `术后组套 ${template!.titleZh} 须绑定适用术式的已完成手术`)
+        throw new InpatientError('ORDER_SET_SCOPE_NOT_APPLICABLE', `术后组套 ${template.titleZh} 须绑定适用术式的已完成手术`)
       }
-      if (!template!.applicableProcedureCodes.includes(surgeryContext.procedureCode)) {
+      if (!template.applicableProcedureCodes.includes(surgeryContext.procedureCode)) {
         throw new InpatientError(
           'ORDER_SET_SCOPE_NOT_APPLICABLE',
-          `术后组套 ${template!.titleZh} 不适用于已完成术式 ${surgeryContext.procedureDisplay}（${surgeryContext.procedureCode}）`,
+          `术后组套 ${template.titleZh} 不适用于已完成术式 ${surgeryContext.procedureDisplay}（${surgeryContext.procedureCode}）`,
         )
       }
     }
-    return [template!]
+    return [entry!]
   }
 
-  #templates(scope: OrderSetScope, templateId: OrderSetTemplateId | undefined, conflict: (reason: string) => Error): OrderSetTemplate[] {
-    if (templateId === undefined) return orderSetTemplates.filter(template => template.scopes.includes(scope))
-    const template = orderSetTemplate(templateId)
-    if (!template.scopes.includes(scope)) throw conflict(`组套 ${template.titleZh} 不适用于${scope === 'outpatient' ? '门诊' : '住院'}`)
-    return [template]
+  #templates(
+    scope: OrderSetScope,
+    templateId: OrderSetTemplateId | undefined,
+    conflict: (reason: string) => Error,
+    activeRuntime?: { allowedPackOrderSetIds: readonly string[]; hasStageScopeRestriction: boolean },
+  ): RegisteredOrderSetTemplateEntry[] {
+    if (templateId === undefined) {
+      const allowedPackIds = activeRuntime?.hasStageScopeRestriction === true
+        ? new Set(activeRuntime.allowedPackOrderSetIds)
+        : undefined
+      return listRegisteredOrderSetEntries(this.#diseasePacks?.registry).filter(entry => (
+        entry.template.scopes.includes(scope)
+        && (entry.ownerPack === undefined || allowedPackIds === undefined || allowedPackIds.has(entry.template.id))
+      ))
+    }
+    const entry = getOrderSetTemplateEntry(templateId, this.#diseasePacks?.registry)
+    if (!entry.template.scopes.includes(scope)) throw conflict(`组套 ${entry.template.titleZh} 不适用于${scope === 'outpatient' ? '门诊' : '住院'}`)
+    return [entry]
   }
 
   #facts(
@@ -443,7 +492,7 @@ export class OrderSetDraftService {
   }
 
   #bundle(
-    templates: OrderSetTemplate[],
+    entries: readonly RegisteredOrderSetTemplateEntry[],
     scope: OrderSetScope,
     facts: OrderSetPatientFacts,
     catalog: CatalogResolver,
@@ -451,6 +500,8 @@ export class OrderSetDraftService {
     evaluatedAt: string,
     hydrationCautions: readonly OrderSetReason[] = [],
     deduplication?: ActiveDeduplicationContext,
+    activeRuntime?: { primaryPack?: PackSourceSummary | undefined; sourcePacks: readonly PackSourceSummary[] },
+    explicitTemplateRequested = false,
   ): OrderSetDraftBundle {
     const vitals = facts.vitalSigns.status === 'present' ? facts.vitalSigns : undefined
     const screening: OrderSetScreeningFacts = {
@@ -461,7 +512,8 @@ export class OrderSetDraftService {
       systolicMmHg: vitals === undefined ? null : { reference: vitals.reference, value: vitals.systolicMmHg },
       weightKg: facts.weight.status === 'present' ? { reference: facts.weight.reference, value: facts.weight.weightKg } : null,
     }
-    const drafts = templates.map((template): OrderSetDraft => {
+    const drafts = entries.map((entry): OrderSetDraft => {
+      const template = entry.template
       const applyDedupe = deduplication !== undefined && (deduplication.alwaysApply || template.applicableProcedureCodes !== undefined)
       const items = template.items.filter(item => item.scopes.includes(scope))
         .map(item => evaluateItem(
@@ -484,10 +536,41 @@ export class OrderSetDraftService {
         },
         fingerprint: canonicalJsonHash({ facts, items, target, template: { fingerprint: template.fingerprint, id: template.id, version: template.version } }),
         items,
+        ...(entry.ownerPack === undefined
+          ? {}
+          : {
+              packId: entry.ownerPack.packId,
+              packVersion: entry.ownerPack.packVersion,
+            }),
         template: templateSummary,
       }
     })
-    return { drafts, evaluatedAt, patientFacts: facts, target }
+    const derivedSourcePacks = new Map<string, PackSourceSummary>()
+    for (const sp of activeRuntime?.sourcePacks ?? []) {
+      derivedSourcePacks.set(sp.packId, sp)
+    }
+    if (derivedSourcePacks.size === 0 && explicitTemplateRequested) {
+      for (const entry of entries) {
+        if (entry.ownerPack !== undefined) {
+          derivedSourcePacks.set(entry.ownerPack.packId, entry.ownerPack)
+        }
+      }
+    }
+    const sourcePacks = [...derivedSourcePacks.values()]
+    const primaryPack = activeRuntime?.primaryPack ?? sourcePacks[0]
+    return {
+      drafts,
+      evaluatedAt,
+      ...(primaryPack === undefined
+        ? {}
+        : {
+            packId: primaryPack.packId,
+            packVersion: primaryPack.packVersion,
+          }),
+      patientFacts: facts,
+      ...(sourcePacks.length === 0 ? {} : { sourcePacks }),
+      target,
+    }
   }
 
   #outpatientCatalog(context: ActorContext): CatalogResolver {

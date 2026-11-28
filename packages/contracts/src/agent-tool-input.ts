@@ -1,11 +1,14 @@
 import { z } from 'zod'
+import { clinicalPromptReadQuerySchema } from './clinical-prompt-cards.ts'
 import { clinicalOverrideInputSchema, clinicalOverrideReasonSchema, clinicalQualityAlertCodeSchema, outpatientClinicalQualityInputSchema } from './clinical-quality.ts'
+import { clinicalFactLedgerFilterQuerySchema } from './clinical-fact-ledger.ts'
+import { diseasePackSlugSchema } from './disease-pack.ts'
 import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema } from './doctor-history.ts'
 import { guidelineTopicQuerySchema } from './guideline-topics.ts'
 import { inpatientOrderActionInputSchema } from './inpatient-clinical.ts'
 import { inpatientInvestigationAcknowledgeInputSchema } from './inpatient-investigations.ts'
 import { medicationFrequencySchema, medicationRouteSchema } from './medication-safety.ts'
-import { inpatientOrderSetDraftQuerySchema, outpatientOrderSetTemplateIds } from './order-set-templates.ts'
+import { inpatientOrderSetDraftQuerySchema, orderSetDraftQuerySchema } from './order-set-templates.ts'
 import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
@@ -153,9 +156,13 @@ export const agentToolInputSchemas = Object.freeze({
   'inpatient.surgery.read': emptyInputSchema,
   'inpatient.angiography-reports.read': emptyInputSchema,
   'inpatient.clinical-scores.read': emptyInputSchema,
+  'inpatient.clinical-fact-ledger.read': clinicalFactLedgerFilterQuerySchema,
   'inpatient.guideline-topics.read': guidelineTopicQuerySchema,
   'inpatient.clinical-quality.read': inpatientClinicalQualityToolInputSchema,
   'inpatient.order-set-drafts.read': inpatientOrderSetDraftQuerySchema,
+  'inpatient.disease-packs.read': emptyInputSchema,
+  'inpatient.disease-pack-task-facts.read': z.object({ packId: diseasePackSlugSchema, taskId: boundedIdSchema }).strict(),
+  'inpatient.clinical-prompts.read': clinicalPromptReadQuerySchema,
   'inpatient.order.verify.propose': inpatientOrderActionInputSchema.omit({ admissionId: true }),
   'inpatient.report.acknowledge.propose': inpatientInvestigationAcknowledgeInputSchema.omit({ admissionId: true }),
   'inpatient.payment.draft.set': z.object({ tenders: paymentTendersSchema }).strict(),
@@ -191,9 +198,13 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.history.search': doctorCaseHistoryInputSchema,
   'outpatient.history.read': doctorCaseHistoryDetailInputSchema,
   'outpatient.clinical-scores.read': emptyInputSchema,
+  'outpatient.clinical-fact-ledger.read': clinicalFactLedgerFilterQuerySchema,
   'outpatient.guideline-topics.read': guidelineTopicQuerySchema,
   'outpatient.clinical-quality.read': outpatientClinicalQualityInputSchema.omit({ encounterId: true }),
-  'outpatient.order-set-drafts.read': z.object({ templateId: z.enum(outpatientOrderSetTemplateIds).optional() }).strict(),
+  'outpatient.order-set-drafts.read': orderSetDraftQuerySchema,
+  'outpatient.disease-packs.read': emptyInputSchema,
+  'outpatient.disease-pack-task-facts.read': z.object({ packId: diseasePackSlugSchema, taskId: boundedIdSchema }).strict(),
+  'outpatient.clinical-prompts.read': clinicalPromptReadQuerySchema,
   'outpatient.case.select': caseIdInputSchema,
   'outpatient.section.select': z.object({
     /** 同时定位这条功能检查申请的结构化文字报告；只与 `laboratory` 栏目一起使用。 */

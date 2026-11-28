@@ -1,7 +1,7 @@
 import { InpatientInvestigationSend } from './inpatient-investigation-send.tsx'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { InpatientItemRow } from './inpatient-layout.tsx'
-import { laboratoryGenerationErrorMessage } from './laboratory-generation-error.ts'
+import { goldenCaseUnprepopulatedErrorMessage, laboratoryGenerationErrorMessage } from './laboratory-generation-error.ts'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { z } from 'zod'
 import { PlusIcon } from 'lucide-react'
@@ -72,7 +72,7 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
           <span><strong>{t('造影发现（结构化报告）：', 'Angiography findings (structured report): ')}</strong>{request.report.findings}</span>
           {onOpenStage ? <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs text-info" onClick={() => onOpenStage('surgery')}>{t('已带入手术选型 ›', 'Copied to surgery selection ›')}</Button> : null}
         </div> : null}
-        {request.generationError?<p>{kind==='laboratory'?laboratoryGenerationErrorMessage(request.generationError.code,locale):(request.generationError.code==='INVESTIGATION_UNSUPPORTED'||request.generationError.code==='INVESTIGATION_TRUTH_INCOMPATIBLE')?t('本次检查无法生成相容结果，不支持重试；请取消或调整该申请。','This examination cannot produce a compatible result and cannot be retried; cancel or revise the request.'):t('本次检查没有取得结果，未生成报告。可以重试，或取消该申请。','This examination produced no result and no report. Retry or cancel the request.')}</p>:null}
+        {request.generationError?<p>{kind==='laboratory'?laboratoryGenerationErrorMessage(request.generationError.code,locale,request.generationError.message):(goldenCaseUnprepopulatedErrorMessage(request.generationError.code,locale,request.generationError.message)??((request.generationError.code==='INVESTIGATION_UNSUPPORTED'||request.generationError.code==='INVESTIGATION_TRUTH_INCOMPATIBLE')?t('本次检查无法生成相容结果，不支持重试；请取消或调整该申请。','This examination cannot produce a compatible result and cannot be retried; cancel or revise the request.'):t('本次检查没有取得结果，未生成报告。可以重试，或取消该申请。','This examination produced no result and no report. Retry or cancel the request.')))}</p>:null}
         {doctor && request.report && request.status === 'reported' ? <div className="min-w-0 overflow-x-auto"><InpatientReportBody report={request.report} locale={locale} /></div> : null}
         {!doctor ? request.previousReports.map(report=><details className="clinmesh-inpatient-disclosure" key={report.diagnosticReportId}><summary>{t('既往报告修订','Previous report revision')} {report.revisionNumber}</summary><InpatientReportBody locale={locale} report={report}/></details>) : null}
         {!doctor && request.report?<details className="clinmesh-inpatient-disclosure"><summary>{t('查看完整报告', 'View full report')}</summary><div className="min-w-0 overflow-x-auto">

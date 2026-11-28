@@ -44,3 +44,18 @@ clinmesh command receipt get --operation-id admin.authored-case-pack.prepare --i
 ```
 
 传输结果未知时保留原键与原输入先查询 `admin.authored-case-pack.prepare` 回执。`AUTHORED_CASE_PACK_EPOCH_CONFLICT` 表示受信上下文的 `epoch` 已变化，刷新上下文核对当前轮次后再决定新意图；`AUTHORED_CASE_PACK_PERSONA_RUNNING`（409）表示仍有运行中或已选修订病例的排队生成任务，待原任务全部结束后沿原键与原输入恢复；历史未选用病例仅有排队任务时，准备会原子终止这些旧任务并记为 `failed / PERSONA_JOB_SUPERSEDED`，已人工修订或已消费病例保持原选用与绑定。
+
+本院跨系统辅检来源（例如第二套 LIS）批量接入后的认人隔离区审阅与人工并档入口位于 [登记工作流](../clinmesh-registration/SKILL.md#本院跨系统患者认人隔离区)，管理员与登记员均可在核对出生日期与身份证件后确认合并或拒绝为不同患者；未达完整批次或仍待审阅的记录不会进入临床事实台账、Agent 摘要或评分计算。
+
+## 专病包回归考卷与上线激活门禁（AC10 / AC26）
+
+管理员可使用纯机器离线回归考卷与 7 类公共陷阱套件验证任意专病包（零模型调用、零 `Case Truth` 泄漏），并在上线激活前强制执行机器门禁（主观草稿评分 `agent-output-scorer` 不参与上线门禁决策）：
+
+```bash
+clinmesh admin disease-packs exam-run
+clinmesh admin disease-packs exam-run --pack-id coronary-cad
+clinmesh admin disease-packs activate --pack-id <pack-id> --idempotency-key <key>
+clinmesh command receipt get --operation-id admin.disease-packs.activate --idempotency-key <key>
+```
+
+`admin.disease-packs.exam.run` 返回标准化评估报告（`migrationDiffCount`、`packAdditionAudit`、`coronaryRegressionPassed`、`sourceSystemAgnostic`、五层归因 `failureSummaryByLayer`：`data-normalization` / `terminology-mapping` / `knowledge` / `agent-safety` / `workflow` 以及 `activationGateSummary`）。`admin.disease-packs.activate` 仅在目标专病包通过机器回归阈值、7 类公共陷阱全部通过且既有已激活专病包零回归时放行激活；任意一项未达标时返回 `409 DSAP_EXAM_GATE_FAILED` 并附五层失败归因详情。

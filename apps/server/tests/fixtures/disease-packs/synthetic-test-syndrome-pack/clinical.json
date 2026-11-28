@@ -1,0 +1,206 @@
+{
+  "confusablePacks": [
+    {
+      "differentialHintZh": "注意鉴别急性心外源性胸痛",
+      "packId": "synthetic-differential-pack"
+    }
+  ],
+  "exitCriteria": [
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodes": ["I25.1", "I25.103", "SYN-DX-01"],
+        "kind": "fact",
+        "presence": "absent",
+        "requireEligible": true
+      },
+      "descriptionZh": "已排除目标诊断时退出专病路径",
+      "id": "ruled-out-syndrome"
+    }
+  ],
+  "formulaRefs": [
+    {
+      "formulaId": "ckd-epi-2021",
+      "version": 1
+    },
+    {
+      "formulaId": "grace-acs",
+      "version": 1
+    }
+  ],
+  "guidelineTopics": [
+    {
+      "conclusionKinds": [
+        "synthetic-baseline-risk",
+        "synthetic-renal-threshold",
+        "synthetic-followup-plan"
+      ],
+      "generationRule": "合成测试原件 v1 · Synthetic Only：仅依据合成指南片段与总账事实生成基线与肾功能评估建议。",
+      "id": "synthetic-syndrome-baseline-guidance",
+      "limitations": [
+        "合成测试原件 v1 · Synthetic Only：仅用于平台动态载入与格式验证，不代表真实临床指南。"
+      ],
+      "matchTerms": ["合成测试综合征", "SYN-DX-01", "肌酐评估"],
+      "navigation": "合成测试原件 v1 · Synthetic Only：核对基线肾功能、禁用药物红线与跨就诊随访指标。",
+      "references": [
+        {
+          "fragments": ["In patients undergoing PCI, DES should be used in preference to BMS"],
+          "page": 35,
+          "sha256": "9843131ad84f9a261ceb8857025e656a067496472edabfb6bd2b6297f2c5ff0e",
+          "sourceId": "coronary-10-2021",
+          "title": "合成测试原件 v1 · Synthetic Only",
+          "version": "2021"
+        }
+      ],
+      "specialty": "synthetic-medicine",
+      "titleEn": "Synthetic Test Syndrome Baseline Guidance (Synthetic Only)",
+      "titleZh": "合成测试综合征基线指导（合成测试原件 v1 · Synthetic Only）",
+      "version": "1.0.0"
+    }
+  ],
+  "indicationRules": [
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodes": ["I25.1", "I25.103", "SYN-DX-01"],
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "creatinine-workup-indication",
+      "itemCodePattern": "^2160-0$",
+      "orderKind": "laboratory",
+      "rationaleZh": "评估术前肾功能与水化阈值"
+    },
+    {
+      "condition": {
+        "category": "diagnosis",
+        "itemCodes": ["SYN-DX-01", "I25.103"],
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "synthetic-advanced-imaging-indication",
+      "itemCodePattern": "^SYN-ADVANCED-IMAGING$",
+      "orderKind": "imaging",
+      "rationaleZh": "合成高级影像检查须具备目标综合征或确诊冠脉病变指征"
+    }
+  ],
+  "orderSets": [
+    {
+      "id": "cad-admission-baseline",
+      "items": [
+        {
+          "activeMedicationConflictCodes": ["METFORMIN-01"],
+          "catalogBindingCode": "CAT-CREAT-01",
+          "channel": "laboratory",
+          "key": "renal-panel",
+          "kind": "laboratory",
+          "panelServiceCodes": ["2160-0"],
+          "titleZh": "基线肾功能检测组合"
+        }
+      ],
+      "scopes": ["outpatient", "inpatient"],
+      "titleEn": "Baseline Assessment Order Set",
+      "titleZh": "合成基线检查组套"
+    }
+  ],
+  "pointScales": [
+    {
+      "criteria": [
+        {
+          "condition": {
+            "category": "laboratory",
+            "itemCodes": ["2160-0"],
+            "kind": "fact",
+            "minValue": 133,
+            "presence": "present",
+            "requireEligible": true
+          },
+          "id": "creatinine-elevated",
+          "labelZh": "血清肌酐 >= 133 umol/L",
+          "points": 2
+        }
+      ],
+      "guidelineCitation": {
+        "locator": "第 3 页表 1",
+        "sourceTitle": "合成测试专病管理共识",
+        "version": "2026.1"
+      },
+      "id": "synthetic-renal-risk-scale",
+      "riskBands": [
+        { "labelZh": "低风险", "maxScore": 1, "minScore": 0 },
+        { "labelZh": "高风险", "maxScore": null, "minScore": 2 }
+      ],
+      "titleZh": "合成肾功能风险量表"
+    }
+  ],
+  "qualityTightenings": {
+    "examPassThreshold": 0.85,
+    "redLineRules": [
+      {
+        "conditionSummary": "肾功能不全禁止直接开立高肾毒性药物",
+        "id": "renal-red-line",
+        "itemCode": "2160-0"
+      }
+    ],
+    "validityOverrides": [
+      {
+        "itemCode": "2160-0",
+        "maxValidityDays": 14
+      }
+    ]
+  },
+  "questionnaireItems": [
+    {
+      "code": "smoking-status",
+      "labelZh": "吸烟状态",
+      "options": ["never", "former", "current"],
+      "valueType": "enum"
+    }
+  ],
+  "riskTags": [
+    {
+      "condition": {
+        "category": "laboratory",
+        "itemCodes": ["2160-0"],
+        "kind": "fact",
+        "minValue": 133,
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "renal-risk-warning",
+      "labelZh": "肾功能异常警示",
+      "severity": "warning"
+    }
+  ],
+  "ruleOutChecklist": [
+    {
+      "actionHintZh": "核查鉴别诊断与肾功基线",
+      "id": "rule-out-check",
+      "targetConditionCodes": ["SYN-DIFF-1"],
+      "titleZh": "常规排除清单",
+      "trigger": {
+        "category": "diagnosis",
+        "itemCodes": ["I25.1", "I25.103", "SYN-DX-01"],
+        "kind": "fact",
+        "presence": "present",
+        "requireEligible": true
+      }
+    }
+  ],
+  "toolPolicy": {
+    "allowedTools": [
+      "inpatient.disease-packs.read",
+      "inpatient.disease-pack-task-facts.read",
+      "inpatient.guideline-advice.request",
+      "inpatient.guideline-topics.read",
+      "outpatient.disease-packs.read",
+      "outpatient.disease-pack-task-facts.read",
+      "outpatient.guideline-topics.read"
+    ],
+    "forbiddenActions": [
+      "delete-clinical-record"
+    ]
+  }
+}

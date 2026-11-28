@@ -19,7 +19,7 @@ const SURGICAL_LIDOCAINE_PRODUCT = {
   brandName: null,
   dosageForm: '注射剂',
   genericName: '盐酸利多卡因注射液',
-  manufacturer: '仁和仿真制药厂',
+  manufacturer: 'ClinMesh 仿真制药一厂',
   packageDescription: '5mL:100mg×5支/盒',
   strength: '5 mL:100 mg',
 } as const

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { clinicalPromptCardSchema } from './clinical-prompt-cards.ts'
 import { guidelineTopicEvidenceSchema, guidelineTopicIdSchema } from './guideline-topics.ts'
 import { commandResponseSchema } from './his.ts'
 
@@ -6,26 +7,7 @@ const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/)
 const text = z.string().trim().min(1).max(4000)
 
-export const inpatientGuidelineAdviceKindSchema = z.enum([
-  'stent-category',
-  'imaging-guidance',
-  'measurement-requirements',
-  'initial-triage-diagnostics',
-  'ischemic-risk-stratification',
-  'invasive-timing-strategy',
-  'functional-ischemia-evaluation',
-  'revascularization-vs-gdmt',
-  'modality-and-anatomy-scope',
-  'renal-risk-stratification',
-  'hydration-and-volume-balance',
-  'contrast-dose-control',
-  'dapt-duration-and-bleeding',
-  'lipid-target-therapy',
-  'cardioprotective-gdmt',
-  'renal-stage-contraindications',
-  'cardiorenal-agent-selection',
-  'glycemic-monitoring-and-adjustment',
-])
+export const inpatientGuidelineAdviceKindSchema = z.string().regex(/^[a-z0-9-]{1,64}$/)
 export type InpatientGuidelineAdviceKind = z.infer<typeof inpatientGuidelineAdviceKindSchema>
 
 export const inpatientGuidelineAdviceConclusionSchema = z.object({
@@ -69,7 +51,7 @@ export const inpatientGuidelineAdviceResultSchema = z.object({
 
 export const inpatientGuidelineAdviceSchema = z.object({
   admissionId: id,
-  topicId: guidelineTopicIdSchema.default('pci-stent'),
+  topicId: guidelineTopicIdSchema,
   requestId: id.nullable(),
   taskId: id.nullable(),
   version: z.number().int().nonnegative(),
@@ -92,6 +74,7 @@ export const inpatientGuidelineAdviceSchema = z.object({
   message: text,
   missing: z.array(text).max(24),
   failureCode: z.string().nullable(),
+  promptCards: z.array(clinicalPromptCardSchema).max(64).optional(),
   result: inpatientGuidelineAdviceResultSchema.nullable(),
 }).strict()
 
@@ -106,7 +89,7 @@ export const inpatientGuidelineAdviceReadQuerySchema = z.object({
 }).strict()
 
 const pciPlanGuidelineAdviceRequestBodySchema = z.object({
-  topicId: z.literal('pci-stent').optional(),
+  topicId: guidelineTopicIdSchema.optional(),
   requestId: id,
   expectedVersion: z.number().int().nonnegative(),
   expectedFingerprint: fingerprint,

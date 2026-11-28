@@ -26,7 +26,7 @@ import {
   syntheticWstValueSetSnapshot,
 } from './scenario-data/medical-service-snapshot.ts'
 
-const BUILTIN_RELEASE_CONTENT_HASH = 'bc1e7ca7e11e31851acd651705ab627b45ff459c79dcca3aa1ebb32c81ae0b5e'
+const BUILTIN_RELEASE_CONTENT_HASH = 'dc2a6864f95e3dcf764eabb70f1a493c4c72d1155c309c0975d192894dbc8035'
 const BUILTIN_RELEASE_ID = 'clinmesh-hospital-reference-fixture-2026-08-28'
 
 export interface ReferenceDataReader {
@@ -103,7 +103,7 @@ function builtinReferenceData(): ReferenceDataReleaseList {
       sources: [{
         artifactFormat: 'nhsa-medication-product-csv',
         acquisitionMethod: 'generated',
-        checksum: 'b72aa94f14b640dc9bc2952d687728995cc06a137da734b2b74bbffb64256c93',
+        checksum: '1bfa500d86b812895011ee6ef490789a249589cb46ceae17b9b01b8a01d91088',
         importDiagnostics: {
           acceptedCount: syntheticNhsaMedicationProductSnapshot.length,
           rejectedCount: 0,
@@ -118,7 +118,7 @@ function builtinReferenceData(): ReferenceDataReleaseList {
       }, {
         acquisitionMethod: 'generated',
         artifactFormat: 'nhc-medical-service-csv',
-        checksum: '8ed125b9d880f39ff0e7a503229e4bd1d69772ec86ee6c19808d6c68eca3954b',
+        checksum: 'fe44f14ae5bf5c6587d6b09457524aaaeaa16ddcbbf60245cbadaadf272750e7',
         importDiagnostics: {
           acceptedCount: syntheticNhcMedicalServiceSnapshot.length,
           rejectedCount: 0,

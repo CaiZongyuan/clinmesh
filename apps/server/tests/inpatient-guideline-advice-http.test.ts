@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import { guidelineTopicBundleSchema, guidelineTopicIds, type GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
+import { guidelineTopicBundleSchema, type GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
 import { inpatientGuidelineAdviceListSchema, inpatientGuidelineAdviceSchema, inpatientGuidelineAdviceResponseSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryCatalogSchema, inpatientSurgeryRequestBodySchema } from '@clinmesh/contracts/inpatient-surgery'
 import {
@@ -28,7 +28,7 @@ import { agentClientSchema, agentCapabilityGrantSchema, revokedAgentCapabilityGr
 import { pciAgentParameters, pciAgentGeneration, pciAgentVerification } from './fixtures/inpatient-drg-agent.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
-import { getGuidelineTopicDefinition, legacyPciStentTopicFingerprintIfUnchanged } from '../src/application/guideline-topic-registry.ts'
+import { getGuidelineTopicDefinition, legacyPciStentTopicFingerprintIfUnchanged, listGuidelineTopicDefinitions } from '../src/application/guideline-topic-registry.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { createPciPaymentDrgFixture, preparePciPaymentDrgFixture } from './fixtures/pci-payment-drg.ts'
@@ -92,7 +92,7 @@ async function setup(options: { sources?: GuidelineDocument[]; metered?: boolean
   if (options.metered === false) prepared.options.chatCompletionsProvider = { completeJson: async () => { throw new Error('Must refuse before dispatch') } }
   const fixture = await createPciPaymentDrgFixture(prepared)
   cleanups.push(() => fixture.runtime.close())
-  const stay = await fixture.preparePciAdmission([])
+  const stay = await fixture.preparePciAdmission([], { baselineCreatinineUmolL: 88 })
   const path = `${stay.path}/guideline-advice/${stay.requestId}`
   const read = async () => {
     const response = await fixture.request('inpatient-doctor', path)
@@ -640,12 +640,11 @@ function fullTopicDocuments(): GuidelineDocument[] {
   const bySource = new Map<string, {
     pages: Map<number, string[]>
     sha256: string
-    specialty: 'cardiology' | 'endocrinology'
+    specialty: string
     title: string
     version: string
   }>()
-  for (const topicId of guidelineTopicIds) {
-    const def = getGuidelineTopicDefinition(topicId)
+  for (const def of listGuidelineTopicDefinitions()) {
     for (const ref of def.references) {
       let entry = bySource.get(ref.sourceId)
       if (!entry) {
@@ -784,7 +783,7 @@ it('门诊与住院同步读取注册 Guideline Topic 直接返回核验原文�
     `${medicalStay.path}/guideline-topics`,
     guidelineTopicBundleSchema,
   )
-  expect(inpatientBundle.items.map(item => item.topic.id)).toEqual([...guidelineTopicIds])
+  expect(inpatientBundle.items.map(item => item.topic.id)).toEqual(listGuidelineTopicDefinitions().map(def => def.id))
   const nonDiabeticT2dmTopic = inpatientBundle.items.find(item => item.topic.id === 't2dm-renal-medication')!
   expect(nonDiabeticT2dmTopic.patientIndicators.find(i => i.code === 't2dm-diagnosis')).toMatchObject({ status: 'missing' })
   expect(nonDiabeticT2dmTopic.missingPatientInputs.join('；')).toContain('尚未确认 2 型糖尿病')

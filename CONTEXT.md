@@ -84,6 +84,10 @@ _Avoid_: Synthetic Patient Profile, local Encounter, Scenario Dataset
 一组版本固定、可按统一编译边界生成多个 `Synthetic Patient Profile`、`Synthetic Case Instance`、`Visible Source History`、结构化分阶段 `Case Truth` 与模板 `Patient Persona` 的作者合成病例集合。准备只建立病例来源与就绪状态，不产生本院诊断、检查检验报告、医嘱、手术或费用。
 _Avoid_: Seed script, fixture dump, runtime clinical record, Synthea batch
 
+**Golden Case**:
+用于验证专病能力搬迁前后一致性与异常陷阱防线的版本冻结合成病例集合，全部预期检验检查结果预先写入 `Case Truth` 并在开单后按阶段精确显现；未预置项目不兜底生成正常参考值或调用模型。
+_Avoid_: Ad-hoc demo seed, mutable test patient, model-guessed fallback
+
 **Patient Persona**:
 扮演患者所依据的版本固定档案，包含性格、表达方式、健康素养、症状体验、主诉、开场陈述和自知病史。它描述患者知道的自身情况，不直接命名尚未获知的本次疾病。
 _Avoid_: Case Truth, diagnosis note, chat transcript
@@ -237,6 +241,34 @@ _Avoid_: Hard safety red-line block, document quality issue, DRG payment warning
 **Clinical Override**:
 负责医生针对特定 Clinical Quality Alert 选择受控临床原因并填写医学依据后，随原业务意图一并留存的正式越权决策记录。它与被确认的警示条目一同进入审计与回放链，但不能绕过药事与生理安全红线。
 _Avoid_: Silent bypass, unreasoned force flag, red-line exemption
+
+**Clinical Fact Ledger**:
+只读、按需从本院 FHIR R5 正式记录、Visible Source History 与 Clinical Risk Assessment 誊写生成的标准化患者临床事实视图。每条事实保留来源系统、时点、标本、方法、确定性质量标记及医生正式核实状态，供下游评分、质控与专病运行时读取，不覆盖原始正本，也不暴露 Case Truth。
+_Avoid_: Mutable shadow database, free-text case summary, Case Truth
+
+**Disease Pack**:
+不含可执行代码的纯数据专病配置包，按固定结构声明激活条件、诊疗阶段、任务级就绪字段要求、公认平台公式引用、工具白名单及禁止动作，在公共层与医院本地适配层叠加后以只收紧不放宽的规则驱动临床运行时。
+_Avoid_: Hardcoded TypeScript specialty module, executable plugin script, hospital-only local catalog
+
+**Recognition Pack**:
+与完整专病包共用同一数据格式但聚焦易漏诊疑难或罕见病线索提示的专病包类型，仅声明跨时间结构化触发条件、不适用人群与提示规范，不包含组套或治疗阶段。
+_Avoid_: Automated treatment pathway, full specialty management pack, diagnostic order engine
+
+**Concept Vocabulary**:
+分本院目录项、平台概念与国家/国际标准编码三层组织的受控临床概念词表，显式记录 SKOS 映射关系（`exact`、`close`、`broader`、`narrower`）与复核生命周期（`proposed`、`reviewed`、`approved`、`deprecated`）；仅复核通过且精确等价的映射允许驱动临床评分与安全红线。
+_Avoid_: Unverified fuzzy synonym table, hardcoded drug-name array, implicit code equivalence
+
+**Knowledge Claim**:
+绑定指南原文逐字引文、页码定位与结构化适用条件的原子专病知识主张，与面向临床导航的专题说明分层管理；须经九状态发布流转与执业医生身份签署方可进入正式发布快照，未签署知识仅能标为试用版并显式提示未经医生检查。
+_Avoid_: Unanchored free-text summary, unsigned authoritative clinical rule, mutable in-place claim overwrite
+
+**Offline Knowledge Pipeline**:
+在临床运行时之外借助受控模型流起草候选知识主张并执行原文锚点、逐字引文、概念映射与越界细节结构校验的离线知识治理流水线，配套提供指南跨版本差异仲裁队列与概念映射降级影响评估；临床在线运行时不开放任何直接写知识入口。
+_Avoid_: Online self-modifying knowledge base, unreviewed auto-overwrite on guideline update, runtime write-knowledge agent tool
+
+**Agent Output Scorer**:
+对照患者 `Clinical Fact Ledger` 与专病任务评分量表对 Agent 临床文书或建议输出执行正分覆盖与漏报扣分双轨核算、单独列出捏造临床事实并按字符差异统计医生逐字段增删改幅度的评测能力；未跑分输出默认显式标为未评测，真实模型评测须具备当次运行的明确授权许可。
+_Avoid_: Undifferentiated single composite score, unverified external history counted as ground truth, unauthorized live-model benchmark run
 
 **Report Acknowledgement**:
 负责医生确认已查看一份已签发诊断报告的业务事实。它不改变报告内容或签发状态。
@@ -419,6 +451,28 @@ _Avoid_: Balance overwrite, stock status
 **Trace Code**:
 跟踪特定药品或耗材包装流转的唯一业务编码。
 _Avoid_: Lot number, product code
+
+## 专病能力平台
+
+**Clinical Prompt Card**:
+平台在六个同步诊疗时机与异步报告更新时机统一呈现的非阻断或警示提示卡（含指南知识、缺项追问、排雷清单、退出总结、不适用边界、无指征黄牌、表型识别与质控映射），默认投递模式为“展示”并绑定依据事实版本。
+_Avoid_: Autonomous order execution, silent auto-override
+
+**Clinical Prompt Timing**:
+临床工作流中确定性触发统一提示卡求值的六个同步节点与异步报告更新时机（接诊开屏、组套草稿选择、医嘱/处方签署前、完诊、PCI 计划、出院及报告到达/修订），确保正确建议只在正确时机弹出。
+_Avoid_: Arbitrary background cron prompt, live model chat interrupt
+
+**Risk Tag**:
+挂靠在 `Clinical Prompt Card` 与多包并排展示上的结构化临床风险标记（含来源包、严重程度与触发条件），在多专病共存时保留各自来源标签并排提示。
+_Avoid_: Cross-pack winner arbitration, hidden alert suppression
+
+**Activation Gate**:
+专病包启用前经由真实 HTTP 或 CLI 入口执行的纯机器离线考卷门禁（含六类病种考题与七类公共陷阱题），不及格或导致已有包回退时阻止启用，与主观 Agent 输出评分器解耦。
+_Avoid_: LLM judge, runtime live exam
+
+**Standardized Exam Report**:
+每次运行包考卷门禁时由平台确定性生成的结构化审计报告，汇总搬迁前后零差异校验、独立加包对平台与合同的零改动审计、已有包回退检查、不挑来源系统结论及按五层归类的失败明细。
+_Avoid_: Prose summary, subjective score blend
 
 ## 互操作与审计
 

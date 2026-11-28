@@ -1,0 +1,62 @@
+{
+  "examSuite": {
+    "cases": [
+      {
+        "caseId": "t2dm-missing-creatinine-gate",
+        "category": "missing-critical-data",
+        "expectedActive": true,
+        "expectedBlockedTaskIds": ["t2dm-renal-medication"],
+        "expectedStageId": "initial-renal-glycemic-eval",
+        "layer": "workflow",
+        "titleZh": "2 型糖尿病缺少血清肌酐阻断检验例"
+      },
+      {
+        "caseId": "t2dm-standard-mild-ckd-eval",
+        "category": "standard-mild",
+        "expectedActive": true,
+        "expectedKnowledgeClaimValid": true,
+        "expectedReadyTaskIds": ["t2dm-renal-medication"],
+        "expectedRuleOutActive": true,
+        "expectedScoreFormulaIds": ["ckd-epi-2021"],
+        "expectedStageId": "initial-renal-glycemic-eval",
+        "layer": "knowledge",
+        "titleZh": "单纯 2 型糖尿病肾病伴有效肌酐检验正例（含知识卡回读校验）"
+      },
+      {
+        "caseId": "t2dm-inpatient-renal-impairment",
+        "category": "inpatient-severe",
+        "expectedActive": true,
+        "expectedReadyTaskIds": ["t2dm-renal-medication"],
+        "expectedStageId": "inpatient-renal-adjustment",
+        "layer": "workflow",
+        "titleZh": "住院重度肾功减退 T2DM 分期切换检验例"
+      },
+      {
+        "caseId": "t2dm-ckd4-metformin-redline",
+        "category": "red-line-violation",
+        "expectedActive": true,
+        "expectedRedLineCodes": ["RENAL_CONTRAINDICATED_MEDICATION"],
+        "expectedStageId": "initial-renal-glycemic-eval",
+        "layer": "agent-safety",
+        "titleZh": "T2DM 合并重度肾功能不全（eGFR < 30）二甲双胍红线拦截例"
+      },
+      {
+        "caseId": "t2dm-pregnancy-inapplicable",
+        "category": "multi-disease-conflict",
+        "expectedActive": false,
+        "expectedInapplicable": true,
+        "layer": "workflow",
+        "titleZh": "妊娠期人群命中 T2DM 成人包不适用边界检验例"
+      },
+      {
+        "caseId": "t2dm-low-risk-non-diabetic-overtesting",
+        "category": "over-testing-mild",
+        "expectedActive": false,
+        "expectedUnnecessaryOrderCodes": ["T2DM-CGM-PRO-UNINDICATED"],
+        "layer": "workflow",
+        "titleZh": "非糖尿病低危对照组防过度专项监测开单检验例"
+      }
+    ],
+    "passThreshold": 0.85
+  }
+}

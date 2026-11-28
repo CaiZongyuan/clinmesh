@@ -1,4 +1,5 @@
 import { assertInpatientRequestScope, assertOutpatientOrderPrerequisites, inpatientRequestOwner } from './clinical-request-context.ts'
+import type { ClinicalOverrideInput, ClinicalQualityReceipt } from '@clinmesh/contracts/clinical-quality'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
 import {
   acknowledgeImagingReportResponseSchema,
@@ -28,6 +29,7 @@ import {
   ExpectedVersionConflictError,
   provenanceAgents,
   type ActorContext,
+  type CommandEffect,
   type CommandExecutor,
   type CommandTransaction,
 } from './command-executor.ts'
@@ -160,6 +162,20 @@ export interface ImagingRequestHost {
   assertCaseResponsibility(context: ActorContext, caseId: string): void
   assertExpectedVersions(expectedVersions: Record<string, string>, references: string[]): void
   caseByEncounter(context: ActorContext, encounterId: string): { case_id: string; patient_id: string; status: string }
+  enforceOrderIndication?(input: {
+    asOf: string
+    candidateCodes?: readonly string[] | undefined
+    catalogItemId?: string | undefined
+    caseId: string
+    clinicalOverride?: ClinicalOverrideInput | undefined
+    context: ActorContext
+    itemCode: string
+    operation: string
+    orderDisplay?: string | undefined
+    orderKind: 'imaging' | 'examination' | 'laboratory'
+    patientId: string
+    subjectReference: string
+  }): { effects: CommandEffect[]; receipt?: ClinicalQualityReceipt }
   hasConsultation(context: ActorContext, caseId: string): boolean
   reportPublished(transaction: CommandTransaction, context: ActorContext, caseId: string, reportReference: string): void
   virtualTime(context: ActorContext): string
@@ -442,6 +458,7 @@ export class ImagingRequestService {
   }
 
   issue(input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedDraftVersion: number
@@ -456,13 +473,18 @@ export class ImagingRequestService {
       dataSchema: issueImagingRequestResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
-      input: { encounterId: input.encounterId, expectedDraftVersion: input.expectedDraftVersion },
+      input: {
+        ...(input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride }),
+        encounterId: input.encounterId,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
       operation: 'imaging-request.issue',
       authorize: () => assertRole(input.context, ['outpatient-doctor']),
     }, transaction => this.applyIssue(transaction, input))
   }
 
   applyIssue(transaction: CommandTransaction, input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedDraftVersion: number
@@ -502,6 +524,20 @@ export class ImagingRequestService {
       )
     }
     const now = this.#host.virtualTime(input.context)
+    const quality = this.#host.enforceOrderIndication?.({
+      asOf: now,
+      candidateCodes: [service.code, service.examCode, service.id],
+      catalogItemId: service.id,
+      caseId: outpatientCase.case_id,
+      clinicalOverride: input.clinicalOverride,
+      context: input.context,
+      itemCode: service.code,
+      operation: 'imaging-request.issue',
+      orderDisplay: service.name,
+      orderKind: 'imaging',
+      patientId: outpatientCase.patient_id,
+      subjectReference: `Encounter/${input.encounterId}`,
+    }) ?? { effects: [] }
     const requestId = uuidv7()
     const serviceRequest = transaction.fhir.create(input.context, {
       resourceType: 'ServiceRequest',
@@ -585,7 +621,8 @@ export class ImagingRequestService {
         draftVersion: draft.version + 1,
         request: this.#projectedRequest(input.context, requestId),
       },
-      effects: [...[serviceRequest, task].map(resourceEffect), ...(billing?.effects ?? [])],
+      effects: [...[serviceRequest, task].map(resourceEffect), ...(billing?.effects ?? []), ...quality.effects],
+      ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
     }
   }
 

@@ -29,7 +29,7 @@
 
 ### 共享指南专题注册表
 
-门诊与住院共用经逐字核对且版本固定的 `Guideline Topic` 注册表，首批覆盖急性胸痛与 ACS 危险分层（`acute-chest-pain-acs`）、冠脉血运重建指征与功能学评估（`coronary-revascularization-indication`）、冠脉介入支架选型与腔内影像（`pci-stent`）、对比剂肾损伤预防与围术期水化（`contrast-kidney-hydration`）、双联抗血小板与冠心病二级预防（`cad-dapt-and-secondary-prevention`）以及 2 型糖尿病合并慢性肾脏病用药（`t2dm-renal-medication`）六个专题。
+门诊与住院共用经逐字核对且版本固定的 `Guideline Topic` 注册表，专题定义全部由已激活的纯数据 `Disease Pack` 动态装配（其中心血管五项专题归属 `coronary-cad`，`t2dm-renal-medication` 专题归属独立合入的 `t2dm-renal-care`，`BASELINE_TOPICS_LIST` 已清空），按专题标识与内容指纹校验注册专题（未注册返回 `404`），并与医院层（ClinMesh 通用检验组合等全科室能力）隔离。
 
 每个注册专题绑定来源身份、版本、SHA-256、物理页码、必须完整保留的原文条款与限定语片段（兼容 PDF 软连字符与断行连字符规范化校验）及适用限制说明，同样受最多 8 段、48 KiB 预算约束。门诊（`doctor.case.guideline-topics.read`）与住院（`inpatient.guideline-topics.read`）提供零模型调用的同步专题依据读取，直接返回核验通过的原文段落、限定语、当前患者已落库客观指标（复用六项确定性临床评分及已签发心电图、心超 LVEF、冠脉造影狭窄率／FFR、糖化血红蛋白与有效 PCI 选型计划）与具体缺项清单；一旦来源缺失、撤回、人群隔离不匹配或页码限定语残缺，立即明确降级为 `unavailable` 并说明原因，严禁截断限定语输出残缺依据。门诊诊疗建议在可见病例命中注册专题时优先并入已核验专题段落并按正文去重，剩余预算再补充常规全文检索。专题注册表与手术单解耦见[共享指南专题注册表决策](../decisions/implemented/architecture/2026-11-17-shared-guideline-topic-registry.md)。
 
@@ -73,3 +73,38 @@
 ### 与门诊病历完备性质控的职责边界
 
 双层事中临床质控引擎与[门诊病历完备性质控](outpatient-workflows.md#页头主诉投影与病历完备性质控)职责正交、互不替代：前者是运行在共享写 Command 事务内的零模型确定性规则门禁，针对正式医嘱、完诊、介入手术与出院四个不可逆临床责任节点执行硬性安全阻断与受审计越权留痕；后者是经 outbox 异步执行的模型辅助文书审校，针对 12 字段病历草稿检查模板漏项、问诊前后矛盾与自动整理引用归属，仅提供纯提示定位与直接正文编辑引导，不阻断病历签署、也不要求填写越权理由。
+
+## 临床事实总账与可插拔专病包底座
+
+### 只读按需的临床事实总账与受审计核实
+
+门诊（`doctor.case.clinical-fact-ledger.read`）与住院（`inpatient.clinical-fact-ledger.read`）共用只读、按需生成的 `Clinical Fact Ledger` 引擎（`@clinmesh/contracts/clinical-fact-ledger` 与 `@clinmesh/core/clinical-fact-ledger`），不另外落库复制正本，统一通过三套来源规则将本院 FHIR R5 正式资源（含完整批次且认人通过的院内多源接入结果，保留各来源 `sourceSystemId`）、`Visible Source History` 与 `Clinical Risk Assessment` 誊写为覆盖八类临床数据的 14 字段标准化事实（排除草稿、未签发报告、病历全文与 `Case Truth`）。总账严格保持方法隔离（例如高敏肌钙蛋白 I、常规肌钙蛋白 I 与肌钙蛋白 T 独立成账）、支持任意 `asOf` 截止时点无回漏重现（仅纳入当时已入库且未作废版本，报告更正时精确保留旧时点视图）及公共层默认有效期校验；并在誊写期标出三类确定性拦截标记——`suspicious`（非白名单单位、超生理范围、报告早于开单、性别常识矛盾）、`conflict`（同标本同项目矛盾结果双双保留）与 `external-unverified`（外院历史默认待核实）。任一标记事实及过期事实默认标记 `eligibleForScoringAndRedLine: false`，不参与临床评分与药事/肾功能红线判定，直至责任医生通过受审计写命令（`doctor.case.clinical-fact-verification.record` / `inpatient.clinical-fact-verification.record`，落库 `clinical_fact_verification` 并写入 `AuditEvent` 与 `Action Trace`）正式核实并放行至同一截止时点之后（取舍见[临床事实总账与院内本地接入决策](../decisions/implemented/architecture/2026-11-24-clinical-fact-ledger-and-local-ingestion.md)）。
+
+### 纯数据专病包格式、三层叠覆与受控运行时
+
+平台合同（`@clinmesh/contracts/guideline-topics`、`@clinmesh/contracts/order-set-templates` 与 `@clinmesh/contracts/inpatient-guideline-advice`）已解除专题、科室与组套 ID 的封闭枚举耦合，改由纯数据文件夹形式的 `Disease Pack`（支持 `full` 与 `recognition` 两种类型，`@clinmesh/contracts/disease-pack` 与 `@clinmesh/core/disease-pack`）及运行期注册表校验已注册条目（未注册标识返回 `404`）。包加载器在入库前强制校验数据指纹、拦截任何可执行代码片段（`PACK_CODE_FORBIDDEN`）并核对版本化平台公式库引用（`PACK_FORMULA_VERSION_NOT_FOUND`）；公共层、病种包与医院适配层按“本地化映射与模板可替换、安全类条款（红线、禁止动作、有效期上限、触发条件与考卷门槛）只准收紧不准放宽”的规则合并三层配置，试图削弱安全限制时立即拒绝加载并指明越界字段（`HOSPITAL_OVERLAY_SAFETY_RELAXATION_FORBIDDEN`）。
+
+专病包运行时（`DiseasePackRuntimeService`）基于 `Clinical Fact Ledger` 自动求值跨时间、跨就诊结构化触发条件（显式指定比较时间戳字段）与诊疗阶段切换（阶段变化自动审计），并合并医生通过受审计 Command 提交的手动启停覆写；同时提供按任务声明过滤最小必要字段的只读任务视图（仅返回当前任务声明的关键项与次要项，隐藏无关护理与费用明细）、三档就绪门禁（`ready` / `missing-secondary` / `missing-critical`，其中被标为可疑、冲突或未核实的外院事实按缺项处理，缺关键项时直接拒绝 `PCI 术前指南参考意见` 等任务起草，仅缺次要项时允许带缺项批注起草）以及挂载在业务与 DSH 工具入口上的包工具白名单与禁止动作网关（越权调用返回 `403` 并记录 `AuditEvent`；详细取舍见[专病包格式、三层叠覆与受控运行时决策](../decisions/implemented/architecture/2026-11-24-disease-pack-format-and-runtime.md)）。
+
+### 概念词表映射门禁、知识主张发布与离线知识治理
+
+平台以本院目录项、平台概念与国家/国际标准三层受控词表（`@clinmesh/contracts/concept-vocabulary` 与 `@clinmesh/core/concept-vocabulary`）统一药物与检验概念语义（既有药理分类已迁移为受控词表节点并保留兼容导出；医院适配层可通过 `HospitalOverlay.conceptVocabulary` 挂载仅限叶节点的本院扩展词表并与公共层、病种包层共同完成三层确定性合并），显式声明 SKOS 四类映射关系（`exact`、`close`、`broader`、`narrower`）与四态复核生命周期（`proposed`、`reviewed`、`approved`、`deprecated`）。临床评分与第一层药事/肾功能安全红线仅放行 `approved + exact` 映射，`close`、`broader`、`narrower` 或未完成批准与已弃用映射一律给出结构化拒绝原因码，仅在检索召回场景使用已批准同义扩展；词表结构通过全平台只读入口 `catalog.concept-vocabulary.read` 对外查询（支持按 `hospitalId` 过滤叠加本院适配层词表）。
+
+专病知识采用“专题导航 + 原子知识主张”双层结构（`@clinmesh/contracts/knowledge-claims` 与 `@clinmesh/core/knowledge-claims`），绑定结构化适用条件、概念编码与带来源 `sha256` 及页码定位的逐字引文锚点，并以九状态发布状态机（`imported` -> `draft` -> `concept-mapped` -> `auto-verified` -> `clinician-reviewed` -> `published`，以及 `rejected`、`superseded`、`retracted`）与不可变 `KnowledgeSnapshot` 版本快照管理生命周期：推进至 `clinician-reviewed` 或 `published` 强制核验已登记执业医生审核记录，自动校对态 `auto-verified` 仅以 `试用版` 展示并强制携带 `未经医生检查，仅用于仿真` 免责声明；门诊与住院只读操作（`doctor.case.disease-pack-knowledge.read` 与 `inpatient.disease-pack-knowledge.read`）支持按任意 `asOf` 截止时间重放历史生效快照及对比最新版差异，一旦底层指南来源撤回、段落失配或哈希变化，关联引文与主张立即判定为失活（`anchorValid: false`、`active: false`）并附带停用原因，不篡改既有快照历史。
+
+离线知识治理流水线（`@clinmesh/contracts/knowledge-pipeline` 与 `@clinmesh/core/knowledge-pipeline`）限定以受控确定性模型流起草候选主张，并由结构化校验器强制执行五类拒收门禁（缺原文锚点 `CLAIM_ANCHOR_MISSING`、来源或哈希不匹配 `CLAIM_SOURCE_UNVERIFIED`、逐字引文失配 `CLAIM_QUOTE_MISMATCH`、超出锚点范围的未证实数值阈值或规格细节 `CLAIM_UNSUPPORTED_DETAIL`、未纳入受控词表的概念编码 `CLAIM_CONCEPT_UNMAPPED`）。合成测试指南必须明确标记 `SYNTHETIC_TEST_GUIDELINE_NOT_CLINICAL` 与不冒充真实临床指南声明；指南版本升级仅生成受影响专题、主张、规则与考题差异报告并将冲突推入专家仲裁队列，绝不自动改写既有已发布主张；映射降级时输出受影响包规则与主张评估报告，指南全文检索自动通过已批准精确同义词扩展召回，全平台临床运行时保持零在线写知识 Agent 工具或 CLI 命令（详细取舍见[概念词表、知识主张与离线治理流水线决策](../decisions/implemented/architecture/2026-11-25-concept-vocabulary-and-knowledge-claims.md)）。
+
+### Agent 输出双轨评测、捏造单列与医生修改统计
+
+针对 Agent 起草文书与临床建议的质量评测（`@clinmesh/contracts/agent-output-scorer` 与 `@clinmesh/core/agent-output-scorer`），平台基于指定 `asOf` 的患者 `Clinical Fact Ledger`（仅采信通过有效性及确定性核查放行 `eligibleForScoringAndRedLine: true` 的正式事实）与版本化专病任务评分量表执行正分命中与条件必答漏报双轨计分，并将三类临床捏造事实（引用总账中不存在的检验检查 `NONEXISTENT_LAB_OR_EXAM`、与总账正式数值或单位矛盾 `CONTRADICTORY_VALUE`、将未核实外院记录或高风险待确认事实当作已证实结论引用 `UNVERIFIED_EXTERNAL_USED_AS_FACT`）独立列于 `fabrications[]` 明细而不混入普通覆盖项；同时按字符级最长公共子序列统计医生最终定稿相对 Agent 草稿的逐字段 `addedChars`、`removedChars`、`editRatio` 及增删改汇总指标。
+
+评测结果默认保持 `Agent 输出未评测` 状态徽标，受控流仿真评测强制携带仿真口径免责声明并确保零实时模型调用；任何请求以 `live-model` 模式运行评测却未提供绑定当次运行且明确授予许可凭证的请求，一律以 `403 LIVE_MODEL_SCORING_PERMISSION_REQUIRED` 硬性拒绝且不调用真实模型，离线与仿真评测接口归入受控排除路由列表而不暴露为在线临床 Agent Grant（详细取舍见[Agent 输出双轨评测与医生修改统计决策](../decisions/implemented/architecture/2026-11-25-agent-output-scorer.md)）。
+
+### 统一时点提示卡、适应症黄牌、表型识别与考卷启用门禁
+
+平台将全部专病引导收敛为纯数据驱动的统一 `Clinical Prompt Card` 管道（`@clinmesh/contracts/clinical-prompt-cards` 与 `@clinmesh/core/clinical-prompt-cards`，`ClinicalPromptCardService`），严格与医院 DRG 参考余量隔离，并在多包共病共存时保留来源包标识与风险标签并排呈现，不做平台侧自动取舍：
+
+- **六大同步诊疗时机、异步报告回调与展示前安全过滤**：支持 `encounter-open`、`order-draft-select`、`order-sign`、`encounter-complete`、`pci-plan`、`discharge` 六个同步诊疗时机及报告到达/更正异步回调 `report-arrived`，默认投递模式均为 `display`、记录 `basedOnFactVersions`（检验检查报告更正后旧卡片自动标为过期 `stale`）并支持受审计 `dismiss`；展示前经确定性安全过滤器拦截已确认药物过敏、硬红线禁忌、`forbiddenActions` 越权建议、已退役或未发布知识状态以及未核实外院事实（零模型调用、拦截明细不返回临床/Agent 通道并写 `AuditEvent`）。
+- **排雷清单、审计退出、混淆包鉴别、不适用边界与检查适应症黄牌**：触发排查条件时展示排雷清单与缺项；满足 `exitCriteria` 后落库 `disease_pack_exit_state`（迁移 `0129_pack-exit-state.sql`）发出单次退出总结并在后续全时机静默（支持显式人工开关重启）；同时激活互相声明 `confusablePacks` 的包时屏蔽冲突治疗并输出合并鉴别工作卡；命中妊娠/儿科/透析等 `inapplicablePopulations` 时仅保留排雷清单、缺项核对与“超出本包范围”边界卡；检查与手术医嘱经 `@clinmesh/core/indication-rules`（零 DRG 依赖）判定缺少资料待补或无适应症时弹出 `INVESTIGATION_WITHOUT_INDICATION` 黄牌并允许填写受控 `clinicalOverride` 后放行。
+- **跨时间表型识别与非阻断识别包**：`recognition` 类型专病包（如 `familial-hypercholesterolemia`）配合确定性跨时间表型匹配器（`@clinmesh/contracts/phenotype-matcher` 与 `@clinmesh/core/phenotype-matcher`）在 `encounter-open` 和 `report-arrived` 聚合多年度 `Clinical Fact Ledger` 证据输出非阻断识别卡与草案复核建议（`blockingTier: 'none'`、零模型调用，命中不适用人群如继发性高脂血症自动静默）。
+- **机器考卷门禁、五层归因、标准化报告与静态防硬编码守卫**：管理员通过 `POST /api/his/v1/admin/disease-packs/exam/run` 与 `POST /api/his/v1/admin/disease-packs/:packId/activate`（对应 CLI `clinmesh admin disease-packs exam-run` / `activate`）运行纯机器六类病种考卷与七类公共陷阱题（`same-name-different-person`、`amended-report-stale`、`retracted-guideline`、`prompt-injection-in-note`、`missing-critical-lab`、`external-spoof-as-internal`、`inapplicable-population`），失败按五层（`data-normalization`、`terminology-mapping`、`knowledge`、`agent-safety`、`workflow`）归因并阻断启用（`409 DSAP_EXAM_GATE_FAILED`），同步生成标准化报告验证搬迁前黄金基准零差异及新加包（`t2dm-renal-care`）平台零改动；CI 边界检查通过 `scripts/verify-no-hardcoded-pack-ids.ts` 禁止非测试源码硬编码具体专病包标识。完整一期闭环决策见[可插拔专病平台一期临床迁移、提示与考卷门禁决策](../decisions/implemented/architecture/2026-11-26-dsap-phase1-clinical-packs-and-exam-gate.md)。

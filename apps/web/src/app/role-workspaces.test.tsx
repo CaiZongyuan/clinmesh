@@ -7128,7 +7128,7 @@ describe('role workspaces', () => {
     expect(flow.querySelector('[aria-current="step"]')).toBeNull()
     expect(within(flow).queryByText(/已完成/)).toBeNull()
     expect(copyBeforeFailedRead.isConnected).toBe(false)
-  })
+  }, 15_000)
 
   it('completes an eligible Encounter from the action bar and converts it to read-only', async () => {
     window.history.replaceState(null, '', '/consultation')

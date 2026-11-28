@@ -47,7 +47,17 @@
     "./order-set-templates": "./src/order-set-templates.ts",
     "./clinical-scores": "./src/clinical-scores.ts",
     "./clinical-quality": "./src/clinical-quality.ts",
-    "./guideline-topics": "./src/guideline-topics.ts"
+    "./clinical-fact-ledger": "./src/clinical-fact-ledger.ts",
+    "./local-source-ingestion": "./src/local-source-ingestion.ts",
+    "./disease-pack": "./src/disease-pack.ts",
+    "./disease-pack-exam": "./src/disease-pack-exam.ts",
+    "./guideline-topics": "./src/guideline-topics.ts",
+    "./concept-vocabulary": "./src/concept-vocabulary.ts",
+    "./knowledge-claims": "./src/knowledge-claims.ts",
+    "./knowledge-pipeline": "./src/knowledge-pipeline.ts",
+    "./clinical-prompt-cards": "./src/clinical-prompt-cards.ts",
+    "./phenotype-matcher": "./src/phenotype-matcher.ts",
+    "./agent-output-scorer": "./src/agent-output-scorer.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

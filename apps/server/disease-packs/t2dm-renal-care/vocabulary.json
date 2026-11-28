@@ -1,0 +1,43 @@
+{
+  "conceptVocabulary": {
+    "mappings": [
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "t2dm-map-wst-scr-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-endo-01",
+        "sourceCode": "1700404A",
+        "sourceDisplay": "肌酐测定",
+        "sourceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026",
+        "targetConceptCode": "2160-0",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "t2dm-map-wst-hba1c-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-endo-01",
+        "sourceCode": "1500904A",
+        "sourceDisplay": "糖化血红蛋白测定",
+        "sourceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026",
+        "targetConceptCode": "4548-4",
+        "version": "1.0.0"
+      }
+    ],
+    "nodes": [
+      {
+        "code": "t2dm-renal-stage-eval",
+        "displayEn": "T2DM Renal Staging Assessment",
+        "displayZh": "2 型糖尿病肾功分期评估",
+        "domain": "diagnosis",
+        "layer": "disease-pack",
+        "packId": "t2dm-renal-care",
+        "parentCode": null,
+        "synonyms": ["T2DM肾功分期", "糖尿病肾功能评估"]
+      }
+    ],
+    "version": "1.0.0"
+  }
+}

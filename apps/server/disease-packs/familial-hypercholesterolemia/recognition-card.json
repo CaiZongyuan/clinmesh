@@ -1,0 +1,43 @@
+{
+  "recognitionCard": {
+    "differentialPackIds": ["coronary-cad"],
+    "escalationGuidanceZh": "建议：① 核查并排除继发性高脂血症（甲状腺功能 TSH、尿蛋白/肾病综合征、肝胆梗阻）；② 专科查体重点记录有无肌腱黄色瘤（腱黄瘤）与早发角膜弓（< 45 岁）；③ 安排 FH 致病基因检测（LDL-R/LDLR、APOB、PCSK9）及空腹血脂谱/Lp(a) 复核；④ 建议转诊血脂专病门诊或心血管-内分泌-遗传多学科（MDT）会诊并评估一级亲属级联筛查。本提示卡仅作非阻断式识别与转诊建议，不自动修改医嘱或拦截诊疗操作。",
+    "id": "fh-cross-time-recognition",
+    "summaryZh": "识别到跨就诊多年度持续显著高 LDL-C（≥ 4.9 mmol/L，如 2023/2025/2026 跨期线索）、早发冠心病（如 38 岁早发冠心病）及一级亲属早发心肌梗死家族史（Z82.4）等高度提示家族性高胆固醇血症（FH）的表型组合，建议完善确诊检查及专科转诊。",
+    "titleZh": "疑似家族性高胆固醇血症（FH）跨时间表型识别提示"
+  },
+  "toolPolicy": {
+    "allowedTools": [
+      "inpatient.clinical-fact-ledger.read",
+      "inpatient.clinical-prompts.read",
+      "inpatient.clinical-quality.read",
+      "inpatient.clinical-scores.read",
+      "inpatient.disease-packs.read",
+      "inpatient.disease-pack-task-facts.read",
+      "inpatient.guideline-topics.read",
+      "inpatient.report.acknowledge.propose",
+      "inpatient.stage.select",
+      "outpatient.case.read",
+      "outpatient.case.select",
+      "outpatient.clinical-fact-ledger.read",
+      "outpatient.clinical-prompts.read",
+      "outpatient.clinical-quality.read",
+      "outpatient.clinical-scores.read",
+      "outpatient.consultation.ask",
+      "outpatient.disease-packs.read",
+      "outpatient.disease-pack-task-facts.read",
+      "outpatient.guideline-topics.read",
+      "outpatient.history.read",
+      "outpatient.history.search",
+      "outpatient.laboratory.draft.set",
+      "outpatient.laboratory.issue.propose",
+      "outpatient.report.acknowledge.propose",
+      "outpatient.section.select"
+    ],
+    "forbiddenActions": [
+      "auto-prescribe-medication",
+      "sign-clinical-document",
+      "autonomous-treatment-decision"
+    ]
+  }
+}

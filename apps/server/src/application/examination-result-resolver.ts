@@ -477,7 +477,7 @@ export class ExaminationResultResolver {
       if (profile.source.providerId !== 'synthea')
         throw new InvestigationGenerationError(
           'INVESTIGATION_UNSUPPORTED',
-          '仅普通 Synthea 病例可使用成人正常基线，当前来源必须提供完整精确真值',
+          '本病例未预置该检查',
         )
       const age = (Date.parse(row.authored_at) - Date.parse(profile.demographics.birthDate)) / (365.2425 * 86_400_000)
       if (age < 18 || age > 120 || !Number.isFinite(age))

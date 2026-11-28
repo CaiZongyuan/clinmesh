@@ -1,5 +1,14 @@
 import { z } from 'zod'
+import { packSourceSummarySchema } from './pack-source.ts'
 import { commandResponseSchema } from './his.ts'
+
+export const bedsideQuestionnaireValueInputSchema = z.object({
+  booleanValue: z.boolean().nullable().optional(),
+  code: z.string().trim().min(1).max(128),
+  numberValue: z.number().finite().nullable().optional(),
+  textValue: z.string().trim().min(1).max(500).nullable().optional(),
+}).strict()
+export type BedsideQuestionnaireValueInput = z.infer<typeof bedsideQuestionnaireValueInputSchema>
 
 export const killipClassSchema = z.enum(['I', 'II', 'III', 'IV'])
 export type KillipClass = z.infer<typeof killipClassSchema>
@@ -113,13 +122,15 @@ export const inpatientRiskAssessmentInputSchema = z.object({
   admissionId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
   expectedRevision: z.number().int().nonnegative(),
-  fields: clinicalRiskAssessmentFieldsInputSchema,
+  fields: clinicalRiskAssessmentFieldsInputSchema.default({}),
+  questionnaireAnswers: z.array(bedsideQuestionnaireValueInputSchema).max(64).optional(),
 }).strict()
 export type InpatientRiskAssessmentInput = z.infer<typeof inpatientRiskAssessmentInputSchema>
 
 export const outpatientRiskAssessmentInputSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
-  fields: clinicalRiskAssessmentFieldsInputSchema,
+  fields: clinicalRiskAssessmentFieldsInputSchema.default({}),
+  questionnaireAnswers: z.array(bedsideQuestionnaireValueInputSchema).max(64).optional(),
 }).strict()
 export type OutpatientRiskAssessmentInput = z.infer<typeof outpatientRiskAssessmentInputSchema>
 
@@ -245,8 +256,11 @@ export const clinicalScoreBundleSchema = z.object({
   encounterId: z.string().min(1),
   encounterVersion: z.string().min(1),
   evaluatedAt: z.iso.datetime({ offset: true }),
+  packId: z.string().regex(/^[a-z0-9-]{1,64}$/).optional(),
+  packVersion: z.string().trim().min(1).max(64).optional(),
   riskAssessment: clinicalRiskAssessmentRecordSchema,
   scores: z.array(clinicalScoreResultSchema).length(6),
+  sourcePacks: z.array(packSourceSummarySchema).max(32).optional(),
   vitalSigns: clinicalScoreVitalSummarySchema.nullable(),
 }).strict()
 export type ClinicalScoreBundle = z.infer<typeof clinicalScoreBundleSchema>
@@ -256,3 +270,72 @@ export const outpatientRiskAssessmentResponseSchema = commandResponseSchema(z.ob
   riskAssessment: clinicalRiskAssessmentRecordSchema,
 }).strict())
 export type OutpatientRiskAssessmentResponse = z.infer<typeof outpatientRiskAssessmentResponseSchema>
+
+export const bedsideQuestionnaireItemStateSchema = z.object({
+  booleanValue: z.boolean().nullable().optional(),
+  code: z.string().trim().min(1).max(128),
+  labelZh: z.string().trim().min(1).max(1000),
+  numberValue: z.number().finite().nullable().optional(),
+  options: z.array(z.string().trim().min(1).max(128)).max(32).optional(),
+  packIds: z.array(z.string().regex(/^[a-z0-9-]{1,64}$/)).min(1),
+  presence: z.enum(['present', 'absent', 'not-asked']),
+  recordedAt: z.iso.datetime({ offset: true }).nullable(),
+  recordedBy: z.string().min(1).nullable(),
+  textValue: z.string().nullable().optional(),
+  unit: z.string().trim().min(1).max(32).optional(),
+  valueText: z.string().min(1).max(500),
+  valueType: z.enum(['boolean', 'number', 'enum', 'text']),
+}).strict()
+export type BedsideQuestionnaireItemState = z.infer<typeof bedsideQuestionnaireItemStateSchema>
+
+export const bedsidePackMissingSchema = z.object({
+  missingCount: z.number().int().positive().max(128),
+  missingItems: z.array(z.object({
+    code: z.string().trim().min(1).max(128),
+    labelZh: z.string().trim().min(1).max(1000),
+  }).strict()).min(1).max(128),
+  packId: z.string().regex(/^[a-z0-9-]{1,64}$/),
+  titleZh: z.string().trim().min(1).max(200),
+}).strict()
+export type BedsidePackMissing = z.infer<typeof bedsidePackMissingSchema>
+
+export const bedsideQuestionnaireStateSchema = z.object({
+  encounterId: z.string().min(1).max(64),
+  encounterVersion: z.string().min(1).max(64),
+  items: z.array(bedsideQuestionnaireItemStateSchema).max(128),
+  legacyRiskAssessment: clinicalRiskAssessmentRecordSchema,
+  /** 按已启用专病包汇总的床旁缺项，只住院填充，门诊恒为空。 */
+  packMissing: z.array(bedsidePackMissingSchema).max(32),
+  recordedAt: z.iso.datetime({ offset: true }).nullable(),
+  revision: z.number().int().nonnegative(),
+  subjectId: z.string().min(1).max(64),
+  subjectKind: z.enum(['outpatient', 'inpatient']),
+}).strict()
+export type BedsideQuestionnaireState = z.infer<typeof bedsideQuestionnaireStateSchema>
+
+export const outpatientBedsideQuestionnaireReadInputSchema = z.object({
+  caseId: z.string().min(1).max(64),
+}).strict()
+
+export const inpatientBedsideQuestionnaireReadInputSchema = z.object({
+  admissionId: z.string().min(1).max(64),
+}).strict()
+
+export const outpatientBedsideQuestionnaireRecordInputSchema = z.object({
+  answers: z.array(bedsideQuestionnaireValueInputSchema).min(1).max(64),
+  caseId: z.string().min(1).max(64),
+  encounterVersion: z.string().regex(/^\d+$/),
+  expectedRevision: z.number().int().nonnegative(),
+}).strict()
+export type OutpatientBedsideQuestionnaireRecordInput = z.infer<typeof outpatientBedsideQuestionnaireRecordInputSchema>
+
+export const inpatientBedsideQuestionnaireRecordInputSchema = z.object({
+  admissionId: z.string().min(1).max(64),
+  answers: z.array(bedsideQuestionnaireValueInputSchema).min(1).max(64),
+  encounterVersion: z.string().regex(/^\d+$/),
+  expectedRevision: z.number().int().nonnegative(),
+}).strict()
+export type InpatientBedsideQuestionnaireRecordInput = z.infer<typeof inpatientBedsideQuestionnaireRecordInputSchema>
+
+export const bedsideQuestionnaireResponseSchema = commandResponseSchema(bedsideQuestionnaireStateSchema)
+export type BedsideQuestionnaireResponse = z.infer<typeof bedsideQuestionnaireResponseSchema>

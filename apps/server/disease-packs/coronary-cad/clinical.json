@@ -1,0 +1,1420 @@
+{
+  "exitCriteria": [
+    {
+      "condition": {
+        "kind": "allOf",
+        "nodes": [
+          {
+            "abnormal": false,
+            "category": "examination",
+            "itemCodes": ["11524-6", "examination-ecg-12-lead"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "abnormal": false,
+            "category": "laboratory",
+            "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B", "2100404A", "2100504A"],
+            "kind": "fact",
+            "minCount": 2,
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "abnormal": false,
+            "category": "laboratory",
+            "itemCodes": ["48065-7", "0501703A"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "kind": "not",
+            "node": {
+              "category": "diagnosis",
+              "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25|I26|I71|R07)",
+              "kind": "fact",
+              "presence": "present",
+              "requireEligible": true
+            }
+          }
+        ]
+      },
+      "descriptionZh": "12 导联心电图、动态复测心肌肌钙蛋白（至少 2 次正常）及 D-二聚体均已完成且结果正常，并排除冠心病/ACS（I20-I25）、肺栓塞（I26）、主动脉夹层（I71）与胸痛诊断后，退出本专病排查路径",
+      "id": "ruled-out-coronary-syndrome"
+    }
+  ],
+  "formulaRefs": [
+    { "formulaId": "ckd-epi-2021", "version": 1 },
+    { "formulaId": "cockcroft-gault", "version": 1 },
+    { "formulaId": "grace-acs", "version": 1 },
+    { "formulaId": "timi-ua-nstemi", "version": 1 },
+    { "formulaId": "precise-dapt", "version": 1 },
+    { "formulaId": "ascvd-ldl-target", "version": 1 }
+  ],
+  "indicationRules": [
+    {
+      "condition": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25|R07|R10\\.1|E11|I10|N18)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "category": "procedure",
+            "itemCodePattern": "^(?:00\\.66|36\\.0[67]|36\\.1|88\\.5[56])",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          }
+        ]
+      },
+      "id": "coronary-creatinine-workup",
+      "itemCodePattern": "^(?:2160-0|1700404A|CN-LAB-RENAL)$",
+      "orderKind": "laboratory",
+      "rationaleZh": "评估冠心病抗栓与含碘对比剂介入前基线肾功能及 eGFR 危险分层"
+    },
+    {
+      "condition": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "abnormal": true,
+            "category": "laboratory",
+            "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B", "2100404A", "2100504A"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "abnormal": true,
+            "category": "examination",
+            "itemCodes": ["11524-6", "examination-ecg-12-lead"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "category": "procedure",
+            "itemCodePattern": "^(?:36\\.0[67]|88\\.5[56])",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          }
+        ]
+      },
+      "id": "coronary-cta-indication",
+      "itemCodePattern": "^(?:CT-CORONARY-CTA|CORONARY-CTA|hospital-service-coronary-cta)$",
+      "orderKind": "imaging",
+      "rationaleZh": "冠状动脉 CTA 须具备明确的冠心病/ACS 诊断或心肌缺血客观依据（心电图异常或心肌肌钙蛋白升高）；低危非心源性胸壁痛且心电图及肌钙蛋白阴性时无常规冠脉 CTA 适应症",
+      "requiredItemCodes": [
+        "11524-6|examination-ecg-12-lead",
+        "89579-7|10839-9|6597-9|2100404B|2100404A|2100504A"
+      ]
+    },
+    {
+      "condition": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "abnormal": true,
+            "category": "laboratory",
+            "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B", "2100404A", "2100504A"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "abnormal": true,
+            "category": "examination",
+            "itemCodes": ["11524-6", "examination-ecg-12-lead"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          }
+        ]
+      },
+      "id": "coronary-angiography-indication",
+      "itemCodePattern": "^(?:88\\.55|88\\.56)",
+      "orderKind": "procedure",
+      "rationaleZh": "有创冠状动脉造影（CAG）须具备冠心病/ACS 诊断（I20-I25）、客观心肌缺血（心电图异常）或心肌损伤标志物升高依据",
+      "requiredItemCodes": [
+        "11524-6|examination-ecg-12-lead",
+        "89579-7|10839-9|6597-9|2100404B|2100404A|2100504A"
+      ]
+    }
+  ],
+  "orderSets": [
+    {
+      "descriptionZh": "急性胸痛首诊急查：首诊 10 分钟内 12 导联心电图，同时送检高敏肌钙蛋白、D-二聚体、肾功能与电解质，用于 ACS、肺栓塞等高危病因初筛；不含抗栓或其他治疗医嘱。",
+      "id": "chest-pain-stat-workup",
+      "items": [
+        {
+          "key": "ecg-12-lead",
+          "kind": "examination",
+          "options": [
+            {
+              "examCode": "ecg-12-lead",
+              "indication": "急性胸痛首诊，10 分钟内完成 12 导联心电图评估 ST 段改变",
+              "kind": "examination"
+            }
+          ],
+          "rationaleZh": "12 导联心电图识别 ST 段抬高/压低、心律失常与传导阻滞，是胸痛首诊与入院基线必查项目。",
+          "rules": [],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "12-lead ECG",
+          "titleZh": "常规 12 导联心电图"
+        },
+        {
+          "key": "hs-ctni",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "2100404B",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2100404A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-CARDIAC",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            }
+          ],
+          "rationaleZh": "心肌肌钙蛋白是急性心肌损伤判定依据；单次阴性不能排除 NSTE-ACS，须按时间窗复测。",
+          "rules": [],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "High-sensitivity cardiac troponin I",
+          "titleZh": "高敏心肌肌钙蛋白 I"
+        },
+        {
+          "key": "d-dimer",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "0501703A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-COAGULATION",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            }
+          ],
+          "rationaleZh": "D-二聚体用于低中度可能性急性肺栓塞与主动脉夹层的排除性评估，阳性须结合影像。",
+          "rules": [],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "D-dimer",
+          "titleZh": "D-二聚体"
+        },
+        {
+          "key": "renal-function",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-RENAL",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "1700404A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2160-0",
+              "referenceSystem": "http://loinc.org"
+            }
+          ],
+          "rationaleZh": "血肌酐用于 eGFR 计算，决定抗栓、对比剂与经肾排泄药物的使用边界。",
+          "rules": [],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "Renal function",
+          "titleZh": "肾功能"
+        },
+        {
+          "key": "electrolytes",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-ELECTROLYTES",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "1400605A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2823-3",
+              "referenceSystem": "http://loinc.org"
+            }
+          ],
+          "rationaleZh": "血钾等电解质异常影响心律失常风险及 RAAS 抑制剂、利尿剂使用。",
+          "rules": [],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "Electrolytes",
+          "titleZh": "电解质"
+        }
+      ],
+      "scopes": ["outpatient", "inpatient"],
+      "titleEn": "Chest pain stat work-up",
+      "titleZh": "胸痛首诊急查",
+      "version": "2026-11-18.r1"
+    },
+    {
+      "descriptionZh": "冠心病入院基线评估：常规 12 导联心电图、经胸超声心动图及血常规（五分类）、肾功能、电解质、血脂、糖化血红蛋白、高敏心肌肌钙蛋白 I、NT-proBNP 与凝血功能，为介入决策、抗栓与他汀治疗提供基线。",
+      "id": "cad-admission-baseline",
+      "items": [
+        {
+          "key": "ecg-12-lead",
+          "kind": "examination",
+          "options": [
+            {
+              "examCode": "ecg-12-lead",
+              "indication": "冠心病入院基线心电图",
+              "kind": "examination"
+            }
+          ],
+          "rationaleZh": "12 导联心电图识别 ST 段抬高/压低、心律失常与传导阻滞，是胸痛首诊与入院基线必查项目。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "12-lead ECG",
+          "titleZh": "常规 12 导联心电图"
+        },
+        {
+          "key": "tte",
+          "kind": "examination",
+          "options": [
+            {
+              "examCode": "tte",
+              "indication": "冠心病入院评估左室射血分数、室壁运动与瓣膜功能",
+              "kind": "examination"
+            }
+          ],
+          "rationaleZh": "左室射血分数与节段性室壁运动影响血运重建策略、β 受体阻滞剂与 RAAS 抑制剂选择。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Transthoracic echocardiography",
+          "titleZh": "经胸超声心动图"
+        },
+        {
+          "key": "cbc",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-CBC-5DIFF",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-CBC",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            }
+          ],
+          "rationaleZh": "血红蛋白与血小板是抗栓出血风险（PRECISE-DAPT）与介入前评估的必要基线。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Complete blood count",
+          "titleZh": "血常规（五分类）"
+        },
+        {
+          "key": "renal-function",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-RENAL",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "1700404A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2160-0",
+              "referenceSystem": "http://loinc.org"
+            }
+          ],
+          "rationaleZh": "血肌酐用于 eGFR 计算，决定抗栓、对比剂与经肾排泄药物的使用边界。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Renal function",
+          "titleZh": "肾功能"
+        },
+        {
+          "key": "electrolytes",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-ELECTROLYTES",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "1400605A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2823-3",
+              "referenceSystem": "http://loinc.org"
+            }
+          ],
+          "rationaleZh": "血钾等电解质异常影响心律失常风险及 RAAS 抑制剂、利尿剂使用。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Electrolytes",
+          "titleZh": "电解质"
+        },
+        {
+          "key": "lipids",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-LIPIDS",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2000404A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            }
+          ],
+          "rationaleZh": "降脂治疗前基线 LDL-C 决定 ASCVD 分层目标值与达标评估。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Lipid panel",
+          "titleZh": "血脂"
+        },
+        {
+          "key": "hba1c",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-HBA1C",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "1100301A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            }
+          ],
+          "rationaleZh": "筛查合并糖尿病，影响危险分层与降糖药物选择。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Glycated hemoglobin",
+          "titleZh": "糖化血红蛋白"
+        },
+        {
+          "key": "hs-ctni",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "2100404B",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2100404A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-CARDIAC",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            }
+          ],
+          "rationaleZh": "心肌肌钙蛋白是急性心肌损伤判定依据；单次阴性不能排除 NSTE-ACS，须按时间窗复测。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "High-sensitivity cardiac troponin I",
+          "titleZh": "高敏心肌肌钙蛋白 I"
+        },
+        {
+          "key": "nt-probnp",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "2100704A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            }
+          ],
+          "rationaleZh": "NT-proBNP 评估心功能不全与预后。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "NT-proBNP",
+          "titleZh": "氨基末端脑利钠肽前体"
+        },
+        {
+          "key": "coagulation",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-COAGULATION",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "0500103A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "0500203A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "6301-6",
+              "referenceSystem": "http://loinc.org"
+            }
+          ],
+          "rationaleZh": "介入及抗凝前评估凝血功能。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Coagulation panel",
+          "titleZh": "凝血功能"
+        }
+      ],
+      "scopes": ["inpatient"],
+      "titleEn": "CAD admission baseline",
+      "titleZh": "冠心病入院基线评估",
+      "version": "2026-11-18.r1"
+    },
+    {
+      "descriptionZh": "对比剂肾损高危围术期水化：造影前 3–12 h 至术后 6–24 h 以 0.9% 氯化钠按 1 mL/kg/h 静脉水化（合并心衰或 LVEF ≤35% 时减至 0.5 mL/kg/h），术后 48–72 h 复查血肌酐。",
+      "id": "cin-perioperative-hydration",
+      "items": [
+        {
+          "key": "isotonic-saline-hydration",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 1,
+              "doseText": "1000 mL",
+              "frequencyCode": "ONCE",
+              "inpatientDuration": "temporary",
+              "instructionsZh": "静脉滴注，常规按 1 mL/kg/h 调整滴速（合并心力衰竭或 LVEF ≤ 35% 时减至 0.5 mL/kg/h），覆盖造影前 3–12 h 至术后 6–24 h",
+              "kind": "medication",
+              "medicationKey": "sodium-chloride",
+              "routeCode": "IVGTT",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "等渗盐水静脉水化是对比剂相关急性肾损伤高危患者的预防措施。",
+          "rules": [
+            {
+              "action": "caution",
+              "comparator": "at-least",
+              "input": "egfr",
+              "rationaleZh": "eGFR ≥ 60 不属于对比剂肾损高危，水化应按临床评估决定",
+              "threshold": 60
+            },
+            {
+              "action": "caution",
+              "comparator": "required",
+              "input": "weightKg",
+              "rationaleZh": "水化滴速按体重 1 mL/kg/h 核定",
+              "threshold": null
+            }
+          ],
+          "scopes": ["inpatient"],
+          "titleEn": "Isotonic saline hydration",
+          "titleZh": "0.9% 氯化钠围术期水化"
+        },
+        {
+          "key": "creatinine-recheck",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "1700404A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2160-0",
+              "referenceSystem": "http://loinc.org"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-RENAL",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            }
+          ],
+          "rationaleZh": "术后 48–72 h 复查血肌酐，较基线升高 ≥ 26.5 μmol/L 或 ≥ 50% 提示对比剂相关急性肾损伤。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Serum creatinine recheck",
+          "titleZh": "血肌酐复查"
+        }
+      ],
+      "scopes": ["inpatient"],
+      "titleEn": "Contrast nephropathy perioperative hydration",
+      "titleZh": "对比剂肾损高危围术期水化",
+      "version": "2026-11-18.r1"
+    },
+    {
+      "descriptionZh": "冠心病/PCI 二级预防标准用药：阿司匹林联合氯吡格雷双联抗血小板、阿托伐他汀、美托洛尔、培哚普利及按需硝酸甘油；存在药物过敏、心动过缓、低血压或严重肾损时自动剔除或标记受限条目，缺体征或肾功能时标记待核实。",
+      "id": "cad-pci-secondary-prevention",
+      "items": [
+        {
+          "key": "aspirin",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "100 mg",
+              "frequencyCode": "QD",
+              "inpatientDuration": "long",
+              "kind": "medication",
+              "medicationKey": "aspirin",
+              "routeCode": "PO",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "阿司匹林长期抗血小板是冠心病二级预防基础。",
+          "rules": [],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "Aspirin",
+          "titleZh": "阿司匹林"
+        },
+        {
+          "key": "p2y12-inhibitor",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "75 mg",
+              "frequencyCode": "QD",
+              "inpatientDuration": "long",
+              "kind": "medication",
+              "medicationKey": "clopidogrel",
+              "routeCode": "PO",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "PCI 术后与阿司匹林组成双联抗血小板治疗。",
+          "rules": [],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "Clopidogrel (P2Y12 inhibitor)",
+          "titleZh": "氯吡格雷（P2Y12 抑制剂）"
+        },
+        {
+          "key": "statin",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "20 mg",
+              "frequencyCode": "QN",
+              "inpatientDuration": "long",
+              "kind": "medication",
+              "medicationKey": "atorvastatin",
+              "routeCode": "PO",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "他汀降低 LDL-C 并稳定冠脉斑块。",
+          "rules": [],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "Atorvastatin",
+          "titleZh": "阿托伐他汀"
+        },
+        {
+          "key": "beta-blocker",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "47.5 mg",
+              "frequencyCode": "QD",
+              "inpatientDuration": "long",
+              "kind": "medication",
+              "medicationKey": "metoprolol",
+              "routeCode": "PO",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "β 受体阻滞剂改善心肌缺血与心梗后预后，起始前须核对心率与血压。",
+          "rules": [
+            {
+              "action": "exclude",
+              "comparator": "below",
+              "input": "pulseBpm",
+              "rationaleZh": "心动过缓时不在组套中起始 β 受体阻滞剂",
+              "threshold": 50
+            },
+            {
+              "action": "caution",
+              "comparator": "below",
+              "input": "pulseBpm",
+              "rationaleZh": "心率偏慢，起始需从低剂量开始并监测心率",
+              "threshold": 60
+            },
+            {
+              "action": "exclude",
+              "comparator": "below",
+              "input": "systolicMmHg",
+              "rationaleZh": "收缩压 < 90 mmHg 时不在组套中起始降压或扩血管药物",
+              "threshold": 90
+            },
+            {
+              "action": "caution",
+              "comparator": "below",
+              "input": "systolicMmHg",
+              "rationaleZh": "血压偏低，起始前须复测并评估容量与灌注",
+              "threshold": 100
+            }
+          ],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "Beta blocker",
+          "titleZh": "β 受体阻滞剂"
+        },
+        {
+          "key": "acei",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "4 mg",
+              "frequencyCode": "QD",
+              "inpatientDuration": "long",
+              "kind": "medication",
+              "medicationKey": "perindopril",
+              "routeCode": "PO",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "ACEI 用于合并高血压、糖尿病、左室功能不全或慢性肾病的冠心病患者，起始前须核对血压与肾功能。",
+          "rules": [
+            {
+              "action": "exclude",
+              "comparator": "below",
+              "input": "systolicMmHg",
+              "rationaleZh": "收缩压 < 90 mmHg 时不在组套中起始降压或扩血管药物",
+              "threshold": 90
+            },
+            {
+              "action": "caution",
+              "comparator": "below",
+              "input": "systolicMmHg",
+              "rationaleZh": "血压偏低，起始前须复测并评估容量与灌注",
+              "threshold": 100
+            },
+            {
+              "action": "exclude",
+              "comparator": "below",
+              "input": "egfr",
+              "rationaleZh": "eGFR < 30 时不在组套中直接起始 ACEI，须专科评估剂量与血钾",
+              "threshold": 30
+            },
+            {
+              "action": "caution",
+              "comparator": "below",
+              "input": "egfr",
+              "rationaleZh": "肾功能下降须按肌酐清除率减量并监测血钾与肌酐",
+              "threshold": 60
+            }
+          ],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "ACE inhibitor",
+          "titleZh": "血管紧张素转换酶抑制剂"
+        },
+        {
+          "key": "nitroglycerin-prn",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "0.5 mg",
+              "frequencyCode": "PRN",
+              "inpatientDuration": "long",
+              "instructionsZh": "心绞痛发作时舌下含服，5 分钟不缓解可重复，最多 3 次",
+              "kind": "medication",
+              "medicationKey": "nitroglycerin",
+              "prnQuantity": 10,
+              "routeCode": "SL",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "硝酸甘油按需缓解心绞痛发作；低血压时禁用。",
+          "rules": [
+            {
+              "action": "exclude",
+              "comparator": "below",
+              "input": "systolicMmHg",
+              "rationaleZh": "收缩压 < 90 mmHg 时禁用硝酸酯类",
+              "threshold": 90
+            }
+          ],
+          "scopes": ["outpatient", "inpatient"],
+          "titleEn": "Nitroglycerin as needed",
+          "titleZh": "硝酸甘油（按需）"
+        }
+      ],
+      "scopes": ["outpatient", "inpatient"],
+      "titleEn": "CAD/PCI secondary prevention",
+      "titleZh": "冠心病/PCI 二级预防",
+      "version": "2026-11-18.r1"
+    },
+    {
+      "applicableProcedureCodes": ["00.6600", "00.6600x008", "36.0700", "88.5500", "88.5600"],
+      "descriptionZh": "冠脉介入/造影术后标准重整组套：整合术后静脉水化、双联抗血小板与冠心病二级预防用药、病房持续心电监护与穿刺部位止血制动护理，以及术后心电图、高敏肌钙蛋白、血常规与肾功能复查；自动识别术前已在用有效医嘱/同类互斥药物及在途检查并默认跳过，保留禁忌硬剔除。",
+      "id": "pci-postop-standard",
+      "items": [
+        {
+          "key": "isotonic-saline-hydration",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 1,
+              "doseText": "1000 mL",
+              "frequencyCode": "ONCE",
+              "inpatientDuration": "temporary",
+              "instructionsZh": "术后继续静脉滴注水化，常规按 1 mL/kg/h 调整滴速（合并心力衰竭或 LVEF ≤ 35% 时减至 0.5 mL/kg/h），持续 6–24 h",
+              "kind": "medication",
+              "medicationKey": "sodium-chloride",
+              "routeCode": "IVGTT",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "含碘对比剂术后继续等渗盐水静脉水化，预防对比剂相关性急性肾损伤。",
+          "rules": [
+            {
+              "action": "caution",
+              "comparator": "at-least",
+              "input": "egfr",
+              "rationaleZh": "eGFR ≥ 60 不属于对比剂肾损高危，术后水化应按临床评估决定",
+              "threshold": 60
+            },
+            {
+              "action": "caution",
+              "comparator": "required",
+              "input": "weightKg",
+              "rationaleZh": "水化滴速按体重 1 mL/kg/h 核定",
+              "threshold": null
+            }
+          ],
+          "scopes": ["inpatient"],
+          "titleEn": "Post-PCI isotonic saline hydration",
+          "titleZh": "0.9% 氯化钠术后水化"
+        },
+        {
+          "key": "aspirin",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "100 mg",
+              "frequencyCode": "QD",
+              "inpatientDuration": "long",
+              "kind": "medication",
+              "medicationKey": "aspirin",
+              "routeCode": "PO",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "PCI/造影术后维持阿司匹林长期抗血小板治疗；术前已在用有效长期医嘱时自动跳过重复开立。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Aspirin",
+          "titleZh": "阿司匹林"
+        },
+        {
+          "key": "p2y12-inhibitor",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "75 mg",
+              "frequencyCode": "QD",
+              "inpatientDuration": "long",
+              "kind": "medication",
+              "medicationKey": "clopidogrel",
+              "routeCode": "PO",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "PCI 术后与阿司匹林组成双联抗血小板；若术前已在用替格瑞洛或氯吡格雷则自动跳过。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Clopidogrel (P2Y12 inhibitor)",
+          "titleZh": "氯吡格雷（P2Y12 抑制剂）"
+        },
+        {
+          "key": "statin",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "20 mg",
+              "frequencyCode": "QN",
+              "inpatientDuration": "long",
+              "kind": "medication",
+              "medicationKey": "atorvastatin",
+              "routeCode": "PO",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "PCI 术后强化他汀调脂稳斑；若术前已在用瑞舒伐他汀或阿托伐他汀则自动跳过。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Atorvastatin",
+          "titleZh": "阿托伐他汀"
+        },
+        {
+          "key": "beta-blocker",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "47.5 mg",
+              "frequencyCode": "QD",
+              "inpatientDuration": "long",
+              "kind": "medication",
+              "medicationKey": "metoprolol",
+              "routeCode": "PO",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "术后控制心室率与改善心肌缺血，起始前须核对心率与收缩压。",
+          "rules": [
+            {
+              "action": "exclude",
+              "comparator": "below",
+              "input": "pulseBpm",
+              "rationaleZh": "心动过缓时不在组套中起始 β 受体阻滞剂",
+              "threshold": 50
+            },
+            {
+              "action": "caution",
+              "comparator": "below",
+              "input": "pulseBpm",
+              "rationaleZh": "心率偏慢，起始需从低剂量开始并监测心率",
+              "threshold": 60
+            },
+            {
+              "action": "exclude",
+              "comparator": "below",
+              "input": "systolicMmHg",
+              "rationaleZh": "收缩压 < 90 mmHg 时不在组套中起始降压或扩血管药物",
+              "threshold": 90
+            },
+            {
+              "action": "caution",
+              "comparator": "below",
+              "input": "systolicMmHg",
+              "rationaleZh": "血压偏低，起始前须复测并评估容量与灌注",
+              "threshold": 100
+            }
+          ],
+          "scopes": ["inpatient"],
+          "titleEn": "Beta blocker",
+          "titleZh": "β 受体阻滞剂"
+        },
+        {
+          "key": "acei",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "4 mg",
+              "frequencyCode": "QD",
+              "inpatientDuration": "long",
+              "kind": "medication",
+              "medicationKey": "perindopril",
+              "routeCode": "PO",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "术后心血管二级预防，起始前须核对血压与肾功能；术前已在用 ARB/ARNI/ACEI 时自动跳过。",
+          "rules": [
+            {
+              "action": "exclude",
+              "comparator": "below",
+              "input": "systolicMmHg",
+              "rationaleZh": "收缩压 < 90 mmHg 时不在组套中起始降压或扩血管药物",
+              "threshold": 90
+            },
+            {
+              "action": "caution",
+              "comparator": "below",
+              "input": "systolicMmHg",
+              "rationaleZh": "血压偏低，起始前须复测并评估容量与灌注",
+              "threshold": 100
+            },
+            {
+              "action": "exclude",
+              "comparator": "below",
+              "input": "egfr",
+              "rationaleZh": "eGFR < 30 时不在组套中直接起始 ACEI，须专科评估剂量与血钾",
+              "threshold": 30
+            },
+            {
+              "action": "caution",
+              "comparator": "below",
+              "input": "egfr",
+              "rationaleZh": "肾功能下降须按肌酐清除率减量并监测血钾与肌酐",
+              "threshold": 60
+            }
+          ],
+          "scopes": ["inpatient"],
+          "titleEn": "ACE inhibitor",
+          "titleZh": "血管紧张素转换酶抑制剂"
+        },
+        {
+          "key": "nitroglycerin-prn",
+          "kind": "medication",
+          "options": [
+            {
+              "courseDays": 30,
+              "doseText": "0.5 mg",
+              "frequencyCode": "PRN",
+              "inpatientDuration": "long",
+              "instructionsZh": "术后胸痛发作时舌下含服，5 分钟不缓解可重复并立即复查心电图",
+              "kind": "medication",
+              "medicationKey": "nitroglycerin",
+              "prnQuantity": 10,
+              "routeCode": "SL",
+              "rules": []
+            }
+          ],
+          "rationaleZh": "术后按需缓解心绞痛；低血压时禁用。",
+          "rules": [
+            {
+              "action": "exclude",
+              "comparator": "below",
+              "input": "systolicMmHg",
+              "rationaleZh": "收缩压 < 90 mmHg 时禁用硝酸酯类",
+              "threshold": 90
+            }
+          ],
+          "scopes": ["inpatient"],
+          "titleEn": "Nitroglycerin as needed",
+          "titleZh": "硝酸甘油（按需）"
+        },
+        {
+          "key": "postop-ecg-monitoring",
+          "kind": "service",
+          "options": [
+            {
+              "inpatientDuration": "temporary",
+              "kind": "service",
+              "quantity": 1,
+              "serviceId": "hospital-service-postop-ecg-monitoring"
+            }
+          ],
+          "rationaleZh": "PCI/造影术后持续心电、血压与血氧监护，及时发现再灌注心律失常与急性缺血。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Postoperative continuous ECG monitoring",
+          "titleZh": "术后持续心电监护"
+        },
+        {
+          "key": "postop-puncture-immobilization",
+          "kind": "service",
+          "options": [
+            {
+              "inpatientDuration": "temporary",
+              "kind": "service",
+              "quantity": 1,
+              "serviceId": "hospital-service-postop-puncture-immobilization"
+            }
+          ],
+          "rationaleZh": "观察桡/股动脉穿刺部位渗血、血肿与远端搏动，落实压迫止血与肢体制动护理。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Puncture site compression and limb immobilization nursing",
+          "titleZh": "穿刺部位压迫止血与肢体制动护理"
+        },
+        {
+          "key": "postop-ecg-12-lead",
+          "kind": "examination",
+          "options": [
+            {
+              "examCode": "ecg-12-lead",
+              "indication": "冠脉介入/造影术后即刻复查 12 导联心电图，对照术前评估 ST 段回落及心律失常",
+              "kind": "examination"
+            }
+          ],
+          "rationaleZh": "PCI 术后复查 12 导联心电图评估再灌注效果及围术期心肌缺血。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Post-PCI 12-lead ECG recheck",
+          "titleZh": "术后常规 12 导联心电图复查"
+        },
+        {
+          "key": "postop-hs-ctni",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "2100404B",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2100404A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-CARDIAC",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            }
+          ],
+          "rationaleZh": "术后复查高敏肌钙蛋白 I，识别围术期心肌损伤或 4a 型心肌梗死。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Post-PCI hs-cTnI recheck",
+          "titleZh": "术后高敏心肌肌钙蛋白 I 复查"
+        },
+        {
+          "key": "postop-cbc",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-CBC-5DIFF",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-CBC",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            }
+          ],
+          "rationaleZh": "术后复查血红蛋白与血小板，评估穿刺出血、隐性失血及肝素/抗血小板相关血小板下降。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Post-PCI CBC recheck",
+          "titleZh": "术后血常规（五分类）复查"
+        },
+        {
+          "key": "postop-renal-function",
+          "kind": "laboratory",
+          "options": [
+            {
+              "kind": "laboratory",
+              "referenceCode": "CN-LAB-RENAL",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "1700404A",
+              "referenceSystem": "https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026"
+            },
+            {
+              "kind": "laboratory",
+              "referenceCode": "2160-0",
+              "referenceSystem": "http://loinc.org"
+            }
+          ],
+          "rationaleZh": "术后 48–72 h 复查肾功能，监测对比剂相关性急性肾损伤。",
+          "rules": [],
+          "scopes": ["inpatient"],
+          "titleEn": "Post-PCI renal function recheck",
+          "titleZh": "术后肾功能复查"
+        }
+      ],
+      "scopes": ["inpatient"],
+      "titleEn": "PCI postoperative standard order set",
+      "titleZh": "冠脉介入/造影术后标准重整组套",
+      "version": "2026-11-25.r1"
+    }
+  ],
+  "qualityTightenings": {
+    "examPassThreshold": 0.85,
+    "redLineRules": [
+      {
+        "conditionSummary": "PCI 术前须完成有效血清肌酐与 eGFR 评估",
+        "id": "pci-preop-renal-redline",
+        "itemCode": "2160-0"
+      }
+    ],
+    "validityOverrides": [
+      {
+        "itemCode": "2160-0",
+        "maxValidityDays": 14
+      }
+    ]
+  },
+  "questionnaireItems": [
+    {
+      "code": "killip-class",
+      "labelZh": "Killip 心功能分级",
+      "options": ["I", "II", "III", "IV"],
+      "valueType": "enum"
+    },
+    {
+      "code": "cardiac-arrest-on-admission",
+      "labelZh": "入院时心脏骤停",
+      "valueType": "boolean"
+    },
+    {
+      "code": "angina-episodes-24h",
+      "labelZh": "24 小时内反复心绞痛发作次数",
+      "unit": "次",
+      "valueType": "number"
+    },
+    {
+      "code": "st-segment-deviation",
+      "labelZh": "床旁评估 ST 段偏移",
+      "valueType": "boolean"
+    },
+    {
+      "code": "aspirin-used-last-7-days",
+      "labelZh": "近 7 天内使用阿司匹林",
+      "valueType": "boolean"
+    },
+    {
+      "code": "smoking-status",
+      "labelZh": "吸烟状态",
+      "options": ["never", "former", "current"],
+      "valueType": "enum"
+    },
+    {
+      "code": "family-history-premature-cad",
+      "labelZh": "早发冠心病家族史",
+      "valueType": "boolean"
+    },
+    {
+      "code": "known-coronary-stenosis-ge-50",
+      "labelZh": "既往已知冠脉狭窄 >= 50%",
+      "valueType": "boolean"
+    },
+    {
+      "code": "prior-bleeding-history",
+      "labelZh": "既往自发性出血史",
+      "options": ["spontaneous", "non-spontaneous", "negative"],
+      "valueType": "enum"
+    }
+  ],
+  "riskTags": [
+    {
+      "condition": {
+        "category": "laboratory",
+        "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B"],
+        "kind": "fact",
+        "minValue": 14,
+        "presence": "present",
+        "requireEligible": true
+      },
+      "id": "troponin-positive-acs-risk",
+      "labelZh": "心肌肌钙蛋白升高警示（急性心肌损伤/ACS）",
+      "severity": "critical"
+    },
+    {
+      "condition": {
+        "category": "laboratory",
+        "itemCodes": ["2160-0"],
+        "kind": "fact",
+        "minValue": 1.5,
+        "presence": "present",
+        "requireEligible": true,
+        "unit": "mg/dL"
+      },
+      "id": "renal-impairment-contrast-caution",
+      "labelZh": "血清肌酐升高警示（造影/PCI 须分层水化并限对比剂剂量）",
+      "severity": "warning"
+    },
+    {
+      "candidateMedicationClasses": ["antiplatelet-aspirin", "p2y12"],
+      "condition": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^(?:I20|I21|I22|I23|I24|I25|R07|Z95)",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "category": "procedure",
+            "itemCodePattern": "^(?:00\\.66|36\\.0[67]|36\\.1|88\\.5[56])",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          }
+        ]
+      },
+      "descriptionZh": "双联抗血小板（阿司匹林联合 P2Y12 受体拮抗剂）治疗期间出血风险增高，须核对 PRECISE-DAPT 评分、既往自发性出血史及胃黏膜保护指征；如需停用或拒绝本警示，须选择可控原因并记录理由。",
+      "id": "dapt-bleeding-risk",
+      "labelZh": "双联抗血小板（DAPT）出血风险警示",
+      "severity": "warning",
+      "timing": "order-draft-select"
+    }
+  ],
+  "ruleOutChecklist": [
+    {
+      "actionHintZh": "急性胸痛或 2 型糖尿病伴不典型上腹痛须重点排查三大高危致命病因：急性心肌梗死（I21.4）、急性肺栓塞（I26.9）、主动脉夹层（I71.0），并完成 12 导联心电图、至少 2 次动态高敏肌钙蛋白（hs-cTnI）及 D-二聚体排查",
+      "checkItems": [
+        {
+          "condition": {
+            "abnormal": false,
+            "category": "examination",
+            "itemCodes": ["11524-6", "examination-ecg-12-lead"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "id": "ecg-12-lead",
+          "labelZh": "12 导联心电图（11524-6）",
+          "minCount": 1,
+          "purposeZh": "排查心梗",
+          "requireNormal": true,
+          "requiredItemCodes": ["11524-6", "examination-ecg-12-lead"]
+        },
+        {
+          "condition": {
+            "abnormal": false,
+            "category": "laboratory",
+            "itemCodes": ["89579-7", "10839-9", "6597-9", "2100404B", "2100404A", "2100504A"],
+            "kind": "fact",
+            "minCount": 2,
+            "presence": "present",
+            "requireEligible": true
+          },
+          "id": "serial-hs-ctni",
+          "labelZh": "动态心肌肌钙蛋白（hs-cTnI ≥ 2 次正常）",
+          "minCount": 2,
+          "purposeZh": "排查心肌损伤",
+          "requireNormal": true,
+          "requiredItemCodes": ["89579-7", "2100404B"]
+        },
+        {
+          "condition": {
+            "abnormal": false,
+            "category": "laboratory",
+            "itemCodes": ["48065-7", "0501703A"],
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          "id": "d-dimer",
+          "labelZh": "D-二聚体（48065-7）",
+          "minCount": 1,
+          "purposeZh": "排查肺栓塞",
+          "requireNormal": true,
+          "requiredItemCodes": ["48065-7", "0501703A"]
+        }
+      ],
+      "id": "acute-chest-pain-differential",
+      "requiredTestCodes": ["11524-6", "89579-7", "48065-7"],
+      "targetConditionCodes": ["I21.4", "I26.9", "I71.0", "I20.0"],
+      "titleZh": "急性胸痛高危病因排查清单（急性心肌梗死 I21.4 / 急性肺栓塞 I26.9 / 主动脉夹层 I71.0）",
+      "trigger": {
+        "kind": "anyOf",
+        "nodes": [
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^R07",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          },
+          {
+            "category": "diagnosis",
+            "itemCodePattern": "^R10\\.1",
+            "kind": "fact",
+            "presence": "present",
+            "requireEligible": true
+          }
+        ]
+      }
+    }
+  ],
+  "toolPolicy": {
+    "allowedTools": [
+      "inpatient.angiography-reports.read",
+      "inpatient.clinical-fact-ledger.read",
+      "inpatient.clinical-prompts.read",
+      "inpatient.clinical-quality.read",
+      "inpatient.clinical-scores.read",
+      "inpatient.disease-packs.read",
+      "inpatient.disease-pack-task-facts.read",
+      "inpatient.guideline-advice.request",
+      "inpatient.guideline-topics.read",
+      "inpatient.order-set-drafts.read",
+      "inpatient.order.verify.propose",
+      "inpatient.report.acknowledge.propose",
+      "inpatient.stage.select",
+      "inpatient.surgery.read",
+      "outpatient.case.read",
+      "outpatient.case.select",
+      "outpatient.clinical-fact-ledger.read",
+      "outpatient.clinical-prompts.read",
+      "outpatient.clinical-quality.read",
+      "outpatient.clinical-scores.read",
+      "outpatient.consultation.ask",
+      "outpatient.consultation.reply.retry",
+      "outpatient.diagnosis.confirm.propose",
+      "outpatient.diagnosis.draft.set",
+      "outpatient.disease-packs.read",
+      "outpatient.disease-pack-task-facts.read",
+      "outpatient.encounter.complete.propose",
+      "outpatient.examination.draft.set",
+      "outpatient.examination.issue.propose",
+      "outpatient.first-visit.draft.set",
+      "outpatient.guideline-topics.read",
+      "outpatient.history.read",
+      "outpatient.history.search",
+      "outpatient.imaging.draft.set",
+      "outpatient.imaging.issue.propose",
+      "outpatient.laboratory.draft.set",
+      "outpatient.laboratory.issue.propose",
+      "outpatient.medication.none.propose",
+      "outpatient.order-set-drafts.read",
+      "outpatient.prescription.draft.set",
+      "outpatient.prescription.issue.propose",
+      "outpatient.preview.request",
+      "outpatient.record.draft.set",
+      "outpatient.record.sign.propose",
+      "outpatient.report.acknowledge.propose",
+      "outpatient.revisit.draft.set",
+      "outpatient.section.select",
+      "outpatient.visit.start.propose"
+    ],
+    "forbiddenActions": []
+  }
+}

@@ -261,6 +261,7 @@ export function createHospitalBaseline(
   const cbcService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-CBC')
   const hba1cService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-HBA1C')
   const fundusService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-FUNDUS')
+  const coronaryCtaService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-CORONARY-CTA')
   const educationService = selectedMedicalService(
     medicalServices,
     'CM-NHC-SERVICE-DIABETES-EDUCATION',
@@ -707,6 +708,18 @@ export function createHospitalBaseline(
         valueSetEntries,
       }), hospitalService({
         executingDepartmentId: 'department-general-medicine',
+        insuranceCoverage: CLASS_B_10_COVERAGE,
+        itemId: 'hospital-service-coronary-cta',
+        localCode: 'CT-CORONARY-CTA',
+        name: '冠状动脉 CTA',
+        nationalService: coronaryCtaService,
+        priceFen: 68_000,
+        reportTemplate: '冠状动脉 CTA 检查结果：{value}。',
+        requestCatalogItemIds: [],
+        tatMinutes: 120,
+        valueSetEntries,
+      }), hospitalService({
+        executingDepartmentId: 'department-general-medicine',
         insuranceCoverage: CLASS_C_COVERAGE,
         itemId: 'hospital-service-diabetes-education',
         localCode: 'HOSP-SVC-DIABETES-EDUCATION',
@@ -725,7 +738,7 @@ export function createHospitalBaseline(
       displayOrder: 1,
       id: hospitalId,
       locale: 'zh-CN',
-      name: '仁和临床仿真医院',
+      name: 'ClinMesh 临床仿真医院',
       status: 'active',
       type: 'public-general-hospital',
     },

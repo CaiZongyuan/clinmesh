@@ -247,14 +247,14 @@ describe('Reference Data database CLI', () => {
     ])).resolves.toMatchObject({
       conceptCount: 0,
       releaseId: 'clinmesh-nhc-services-parser-fixture-2026-08-28',
-      serviceCount: 9,
+      serviceCount: 10,
       sourceCount: 2,
       valueSetEntryCount: 6,
     })
     await expect(runReferenceDatabaseCli([
       'list', '--database', databasePath,
     ])).resolves.toMatchObject({
-      items: [{ serviceCount: 9, valueSetEntryCount: 6 }],
+      items: [{ serviceCount: 10, valueSetEntryCount: 6 }],
     })
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,

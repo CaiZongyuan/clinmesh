@@ -33,6 +33,11 @@ import { commandRequestHash, type ActorContext } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import {
+  DiseasePackRuntimeError,
+  type DiseasePackRuntimeService,
+} from './disease-pack-runtime-service.ts'
+import type { InpatientService } from './inpatient-service.ts'
+import {
   proposalCommandOperations,
   resolveAgentPageContext,
   validateAgentToolInputForContext,
@@ -86,6 +91,8 @@ interface CreatePageContextInput {
 
 interface AgentIntegrationServiceOptions {
   cases: SyntheticCaseRepository
+  diseasePacks?: DiseasePackRuntimeService
+  inpatient?: InpatientService
   now?: () => Date
   secret: string
 }
@@ -114,12 +121,16 @@ export class AgentIntegrationService {
   readonly hostModelWaiting: HostModelWaiting
   readonly #cases: SyntheticCaseRepository
   readonly #database: ClinMeshDatabase
+  readonly #diseasePacks: DiseasePackRuntimeService | undefined
+  readonly #inpatient: InpatientService | undefined
   readonly #now: () => Date
   readonly #secret: string
 
   constructor(database: ClinMeshDatabase, options: AgentIntegrationServiceOptions) {
     this.#cases = options.cases
     this.#database = database
+    this.#diseasePacks = options.diseasePacks
+    this.#inpatient = options.inpatient
     this.#now = options.now ?? (() => new Date())
     this.#secret = options.secret
     this.hostModelWaiting = new HostModelWaiting(database, {
@@ -467,6 +478,7 @@ export class AgentIntegrationService {
     request: z.infer<typeof agentToolAuthorizationRequestSchema>
     userAccountId: string
   }): z.infer<typeof agentToolAuthorizationResponseSchema> {
+    let readinessAnnotations: string[] = []
     const request = agentToolAuthorizationRequestSchema.parse(input.request)
     const context = this.verifyPageContextToken(request.contextToken)
     this.#assertCurrentCaller(context, input.actor, input.userAccountId)
@@ -512,6 +524,74 @@ export class AgentIntegrationService {
       && !(definition.operationId === 'outpatient.section.select'
         && z.object({ section: z.literal('consultation') }).strict().safeParse(parsedInput).success)) {
       throw this.#taskChanged()
+    }
+    const existingCall = this.#database.driver.prepare(`
+      SELECT 1 AS found FROM agent_tool_call
+      WHERE workspace_id = ? AND epoch = ? AND dsh_session_id = ? AND call_id = ?
+    `).get(
+      context.workspace.id,
+      context.workspace.epoch,
+      proof.dshSessionId,
+      proof.callId,
+    )
+    if (existingCall !== undefined) {
+      throw new AgentIntegrationError(
+        'AGENT_CALL_REPLAYED',
+        'The DSH Tool call was already authorized',
+        409,
+      )
+    }
+    const targetPackId = request.packId ?? (
+      (definition.operationId === 'outpatient.disease-pack-task-facts.read'
+        || definition.operationId === 'inpatient.disease-pack-task-facts.read')
+        ? (parsedInput as { packId: string }).packId
+        : undefined
+    )
+    if (this.#diseasePacks !== undefined) {
+      const sel = context.claim.selection
+      if (sel?.kind === 'case' || sel?.kind === 'inpatient-admission') {
+        const subjectKind = sel.kind === 'case' ? 'outpatient' : 'inpatient'
+        if (targetPackId !== undefined) {
+          this.#diseasePacks.authorizePackToolInvocation({
+            context: input.actor,
+            ...(subjectKind === 'inpatient' && this.#inpatient !== undefined ? { inpatient: this.#inpatient } : {}),
+            packId: targetPackId,
+            rawBody: {
+              ...(request.actionTag === undefined ? {} : { actionTag: request.actionTag }),
+              operationId: definition.operationId,
+            },
+            subjectId: sel.id,
+            subjectKind,
+          })
+        } else {
+          this.#diseasePacks.enforceActivePacksToolPolicy({
+            ...(request.actionTag === undefined ? {} : { actionTag: request.actionTag }),
+            context: input.actor,
+            ...(subjectKind === 'inpatient' && this.#inpatient !== undefined ? { inpatient: this.#inpatient } : {}),
+            operationId: definition.operationId,
+            subjectId: sel.id,
+            subjectKind,
+          })
+        }
+        if (definition.operationId === 'outpatient.prescription.draft.set' && subjectKind === 'outpatient') {
+          const readiness = this.#diseasePacks.evaluateSubjectStageReadiness({
+            auditBlockedOperation: definition.operationId,
+            context: input.actor,
+            relevantCategory: 'medication',
+            subjectId: sel.id,
+            subjectKind: 'outpatient',
+          })
+          if (readiness.blocked) {
+            throw new DiseasePackRuntimeError(
+              'TASK_READINESS_CRITICAL_MISSING',
+              `当前任务缺少关键前置资料：${readiness.missingCriticalLabels.join('、')}`,
+              409,
+              'DSAP_TASK_READINESS_BLOCKED',
+            )
+          }
+          readinessAnnotations = readiness.annotations
+        }
+      }
     }
 
     const startedAt = this.#now().toISOString()
@@ -579,6 +659,7 @@ export class AgentIntegrationService {
       dshSessionId: proof.dshSessionId,
       operationId: definition.operationId,
       ...(proposalId === undefined ? {} : { proposalId }),
+      ...(readinessAnnotations.length === 0 ? {} : { readinessAnnotations }),
       receiptToken: this.#signReceipt({
         callId: proof.callId,
         contextId: context.id,

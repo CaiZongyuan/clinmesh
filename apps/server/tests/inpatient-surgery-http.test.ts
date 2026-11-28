@@ -2142,7 +2142,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
         VALUES(?,?,'guide-1','adm-1','pci-stent','req-inflight',1,'{}','{}','f2','automatic','succeeded',?)
       `).run(scope.workspaceId, scope.epoch, now)
 
-      expect(applyMigrations(db).applied).toEqual([migrationFile, '0121_surgery-medications-and-nursing.sql', '0122_surgery-ad-hoc-pci.sql', '0123_surgery-preop-policy-and-postop-investigations.sql'])
+      expect(applyMigrations(db).applied).toEqual([migrationFile, '0121_surgery-medications-and-nursing.sql', '0122_surgery-ad-hoc-pci.sql', '0123_surgery-preop-policy-and-postop-investigations.sql', '0124_clinical-fact-verification.sql', '0125_local-source-ingestion.sql', '0126_disease-pack-runtime.sql', '0127_bedside-questionnaire-answers.sql', '0128_clinical-prompt-cards.sql', '0129_pack-exit-state.sql', '0130_disease-pack-activation.sql'])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
       const migratedRows = z.array(z.object({
         request_id: z.string(),

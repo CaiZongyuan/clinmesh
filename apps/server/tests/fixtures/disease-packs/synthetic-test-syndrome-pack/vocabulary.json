@@ -1,0 +1,117 @@
+{
+  "conceptVocabulary": {
+    "mappings": [
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "syn-map-ctni-close-hs",
+        "notesZh": "常规 cTnI (10839-9) 与高敏肌钙蛋白 I (89579-7) 方法学不可互换，仅作相近映射提示，不参与临床算分与红线拦截。",
+        "relation": "close",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-syn-cardio-01",
+        "sourceCode": "10839-9",
+        "sourceDisplay": "肌钙蛋白I (常规 cTnI)",
+        "sourceSystem": "http://loinc.org",
+        "targetConceptCode": "89579-7",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "syn-map-hs-ctni-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-syn-cardio-01",
+        "sourceCode": "SYN-HS-CTNI",
+        "sourceDisplay": "合成高敏肌钙蛋白 I",
+        "sourceSystem": "urn:clinmesh:synthetic-pack",
+        "targetConceptCode": "89579-7",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "syn-map-dx-exact",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-syn-cardio-01",
+        "sourceCode": "SYN-DX-01",
+        "sourceDisplay": "合成测试综合征诊断",
+        "sourceSystem": "urn:clinmesh:synthetic-pack",
+        "targetConceptCode": "syn-syndrome-dx",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-01-01",
+        "id": "syn-map-ctnt-proposed",
+        "relation": "exact",
+        "reviewStatus": "proposed",
+        "reviewerId": null,
+        "sourceCode": "SYN-CTNT-PROP",
+        "sourceDisplay": "待审合成肌钙蛋白 T",
+        "sourceSystem": "urn:clinmesh:synthetic-pack",
+        "targetConceptCode": "6597-9",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2026-02-01",
+        "id": "syn-map-reviewed-broader",
+        "notesZh": "已初审但未终审批准的宽泛映射（broader），不进入算分红线。",
+        "relation": "broader",
+        "reviewStatus": "reviewed",
+        "reviewerId": "reviewer-syn-cardio-01",
+        "sourceCode": "SYN-CARDIAC-BROAD",
+        "sourceDisplay": "宽泛心肌损伤合成指标",
+        "sourceSystem": "urn:clinmesh:synthetic-pack",
+        "targetConceptCode": "89579-7",
+        "version": "1.0.0"
+      },
+      {
+        "effectiveDate": "2025-01-01",
+        "id": "syn-map-deprecated-narrower",
+        "notesZh": "已停用窄范围映射（deprecated），仅保留版本历史审计。",
+        "relation": "narrower",
+        "reviewStatus": "deprecated",
+        "reviewerId": "reviewer-syn-cardio-01",
+        "sourceCode": "SYN-OLD-CREAT",
+        "sourceDisplay": "旧版合成肌酐编码",
+        "sourceSystem": "urn:clinmesh:synthetic-pack",
+        "targetConceptCode": "2160-0",
+        "version": "0.9.0"
+      },
+      {
+        "effectiveDate": "2099-01-01",
+        "id": "syn-map-future-effective",
+        "notesZh": "未来生效日期测试条目（effectiveDate=2099-01-01），当前日期未生效。",
+        "relation": "exact",
+        "reviewStatus": "approved",
+        "reviewerId": "reviewer-syn-cardio-01",
+        "sourceCode": "SYN-FUTURE-MAP",
+        "sourceDisplay": "未来生效合成编码",
+        "sourceSystem": "urn:clinmesh:synthetic-pack",
+        "targetConceptCode": "2160-0",
+        "version": "2.0.0"
+      }
+    ],
+    "nodes": [
+      {
+        "code": "syn-syndrome-dx",
+        "displayEn": "Synthetic Test Syndrome Diagnosis",
+        "displayZh": "合成测试综合征诊断",
+        "domain": "diagnosis",
+        "layer": "disease-pack",
+        "packId": "synthetic-test-syndrome",
+        "parentCode": "coronary-artery-disease",
+        "synonyms": ["合成测试综合征", "SYN-DX-01"]
+      },
+      {
+        "code": "syn-hs-ctni-panel",
+        "displayEn": "Synthetic High-sensitivity Troponin I Panel",
+        "displayZh": "合成高敏肌钙蛋白 I 检验组",
+        "domain": "laboratory",
+        "layer": "disease-pack",
+        "packId": "synthetic-test-syndrome",
+        "parentCode": "89579-7",
+        "synonyms": ["SYN-HS-CTNI"]
+      }
+    ],
+    "version": "1.0.0"
+  }
+}

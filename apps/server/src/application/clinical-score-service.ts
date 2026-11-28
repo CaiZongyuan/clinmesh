@@ -1,7 +1,13 @@
 import {
+  bedsideQuestionnaireStateSchema,
+  bedsideQuestionnaireValueInputSchema,
   clinicalRiskAssessmentValuesSchema,
   inpatientVitalSignsValuesSchema,
   outpatientRiskAssessmentResponseSchema,
+  type BedsideQuestionnaireItemState,
+  type BedsidePackMissing,
+  type BedsideQuestionnaireState,
+  type BedsideQuestionnaireValueInput,
   type ClinicalRiskAssessmentFieldsInput,
   type ClinicalRiskAssessmentRecord,
   type ClinicalRiskAssessmentValues,
@@ -9,14 +15,18 @@ import {
   type ClinicalScoreSourceReference,
   type ClinicalScoreVitalSummary,
   type EffectiveStSegmentDeviation,
+  type InpatientBedsideQuestionnaireRecordInput,
   type InpatientRiskAssessmentInput,
   type InpatientVitalSignsInput,
   type InpatientVitalSignsRecord,
+  type OutpatientBedsideQuestionnaireRecordInput,
   type OutpatientRiskAssessmentInput,
 } from '@clinmesh/contracts/clinical-scores'
+import type { ClinicalFact } from '@clinmesh/contracts/clinical-fact-ledger'
 import type { GuidelineTopicBundle, GuidelineTopicId } from '@clinmesh/contracts/guideline-topics'
 import { inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { investigationResultContentSchema } from '@clinmesh/contracts/scenario'
+import { LEGACY_BEDSIDE_QUESTIONNAIRE_FIELDS, normalizeBedsideItemCode } from '@clinmesh/core/clinical-fact-ledger'
 import {
   calculateCkdEpi2021Egfr,
   evaluateClinicalScores,
@@ -34,6 +44,8 @@ import {
   type CommandTransaction,
   provenanceAgents,
 } from './command-executor.ts'
+import type { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
+import type { DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
 import { buildSynchronousTopicBundle } from './guideline-topic-registry.ts'
 import { businessDate } from './inpatient-orders.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
@@ -272,6 +284,45 @@ function mergeRiskValues(
   }
 }
 
+function mergeQuestionnaireAnswersIntoLegacyFields(
+  baseFields: ClinicalRiskAssessmentFieldsInput,
+  answers: readonly BedsideQuestionnaireValueInput[] | undefined,
+): ClinicalRiskAssessmentFieldsInput {
+  if (answers === undefined || answers.length === 0) return baseFields
+  const next: ClinicalRiskAssessmentFieldsInput = { ...baseFields }
+  for (const ans of answers) {
+    const code = normalizeBedsideItemCode(ans.code)
+    if (code === 'killip-class' && next.killipClass === undefined) {
+      if (ans.textValue === 'I' || ans.textValue === 'II' || ans.textValue === 'III' || ans.textValue === 'IV' || ans.textValue === null) {
+        next.killipClass = ans.textValue
+      }
+    } else if (code === 'cardiac-arrest-on-admission' && next.cardiacArrestOnAdmission === undefined) {
+      if (ans.booleanValue !== undefined) next.cardiacArrestOnAdmission = ans.booleanValue
+    } else if (code === 'angina-episodes-24h' && next.anginaEpisodes24h === undefined) {
+      if (ans.numberValue === null || (typeof ans.numberValue === 'number' && Number.isInteger(ans.numberValue))) {
+        next.anginaEpisodes24h = ans.numberValue
+      }
+    } else if (code === 'st-segment-deviation' && next.stSegmentDeviation === undefined) {
+      if (ans.booleanValue !== undefined) next.stSegmentDeviation = ans.booleanValue
+    } else if (code === 'aspirin-used-last-7-days' && next.aspirinUsedLast7Days === undefined) {
+      if (ans.booleanValue !== undefined) next.aspirinUsedLast7Days = ans.booleanValue
+    } else if (code === 'smoking-status' && next.smokingStatus === undefined) {
+      if (ans.textValue === 'current' || ans.textValue === 'former' || ans.textValue === 'never' || ans.textValue === null) {
+        next.smokingStatus = ans.textValue
+      }
+    } else if (code === 'family-history-premature-cad' && next.familyHistoryPrematureCad === undefined) {
+      if (ans.booleanValue !== undefined) next.familyHistoryPrematureCad = ans.booleanValue
+    } else if (code === 'known-coronary-stenosis-ge-50' && next.knownCoronaryStenosisGe50 === undefined) {
+      if (ans.booleanValue !== undefined) next.knownCoronaryStenosisGe50 = ans.booleanValue
+    } else if (code === 'prior-bleeding-history' && next.priorBleedingHistory === undefined) {
+      if (ans.textValue === 'spontaneous' || ans.textValue === 'non-spontaneous' || ans.textValue === 'negative' || ans.textValue === null) {
+        next.priorBleedingHistory = ans.textValue
+      }
+    }
+  }
+  return next
+}
+
 export function buildVitalObservationComponents(vitals: {
   bloodPressure: { diastolicMmHg: number; systolicMmHg: number }
   heightCm?: number | undefined
@@ -499,6 +550,8 @@ function isExplicitNormalStLead(value: unknown, interpretation?: string): boolea
 export class ClinicalScoreService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
+  #diseasePacks: DiseasePackRuntimeService | undefined
+  readonly #factLedger: ClinicalFactLedgerService | undefined
   readonly #fhir: FhirRepository
   readonly #guidelines: GuidelineCorpus | undefined
   readonly #outpatientContext: OutpatientWorkflowContext
@@ -506,15 +559,23 @@ export class ClinicalScoreService {
   constructor(options: {
     commands: CommandExecutor
     database: ClinMeshDatabase
+    diseasePacks?: DiseasePackRuntimeService
+    factLedger?: ClinicalFactLedgerService
     fhir: FhirRepository
     guidelines?: GuidelineCorpus
     outpatientContext: OutpatientWorkflowContext
   }) {
     this.#commands = options.commands
     this.#database = options.database
+    this.#diseasePacks = options.diseasePacks
+    this.#factLedger = options.factLedger
     this.#fhir = options.fhir
     this.#guidelines = options.guidelines
     this.#outpatientContext = options.outpatientContext
+  }
+
+  setDiseasePacks(diseasePacks: DiseasePackRuntimeService): void {
+    this.#diseasePacks = diseasePacks
   }
 
   initialInpatientVitalSigns(
@@ -593,19 +654,41 @@ export class ClinicalScoreService {
     }
   }
 
+  /** 已由首份已签 12 导联心电图回答、床旁不再算缺项的项目代码。 */
+  satisfiedBedsideCodes(context: RepositoryContext, subjectId: string, cutoffIso?: string): string[] {
+    return this.latestRiskAssessment(context, subjectId, cutoffIso).effectiveStSegmentDeviation?.source === 'ecg-report'
+      ? ['st-segment-deviation']
+      : []
+  }
+
   latestRiskAssessment(
     context: RepositoryContext,
     caseId: string,
+    cutoffIso?: string,
   ): ClinicalRiskAssessmentRecord {
-    const row = riskAssessmentRowSchema.optional().parse(
-      this.#database.driver.prepare(`
-        SELECT revision, assessment_json, observation_id, observation_version, provenance_id, recorded_at, recorded_by
-        FROM clinical_risk_assessment
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        ORDER BY revision DESC
-        LIMIT 1
-      `).get(context.workspaceId, context.epoch, caseId),
-    )
+    const cutoffMs = cutoffIso !== undefined ? Date.parse(cutoffIso) : Number.NaN
+    const hasCutoff = Number.isFinite(cutoffMs)
+    const row = hasCutoff
+      ? z.array(riskAssessmentRowSchema).parse(
+          this.#database.driver.prepare(`
+            SELECT revision, assessment_json, observation_id, observation_version, provenance_id, recorded_at, recorded_by
+            FROM clinical_risk_assessment
+            WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+            ORDER BY revision DESC
+          `).all(context.workspaceId, context.epoch, caseId),
+        ).find(item => {
+          const ts = Date.parse(item.recorded_at)
+          return !Number.isFinite(ts) || ts <= cutoffMs
+        })
+      : riskAssessmentRowSchema.optional().parse(
+          this.#database.driver.prepare(`
+            SELECT revision, assessment_json, observation_id, observation_version, provenance_id, recorded_at, recorded_by
+            FROM clinical_risk_assessment
+            WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+            ORDER BY revision DESC
+            LIMIT 1
+          `).get(context.workspaceId, context.epoch, caseId),
+        )
     const values = row === undefined
       ? { ...EMPTY_RISK_VALUES }
       : clinicalRiskAssessmentValuesSchema.parse(JSON.parse(row.assessment_json))
@@ -614,6 +697,7 @@ export class ClinicalScoreService {
       caseId,
       values,
       row === undefined ? null : { observationId: row.observation_id, observationVersion: row.observation_version },
+      hasCutoff ? cutoffMs : undefined,
     )
     return {
       effectiveStSegmentDeviation,
@@ -656,13 +740,23 @@ export class ClinicalScoreService {
         caseId: outpatientCase.case_id,
         encounterId: outpatientCase.encounter_id,
         expectedRevision: parsedInput.expectedRevision,
-        fields: parsedInput.fields,
+        fields: mergeQuestionnaireAnswersIntoLegacyFields(parsedInput.fields, parsedInput.questionnaireAnswers),
         now,
         onConflict: () => {
           throw new WorkflowError('WORKFLOW_CONFLICT', '专病风险评估修订号已变化，请刷新后重试')
         },
         patientId: outpatientCase.patient_id,
       })
+      if (parsedInput.questionnaireAnswers !== undefined && parsedInput.questionnaireAnswers.length > 0) {
+        this.#persistBedsideAnswersSync(input.context, {
+          answers: parsedInput.questionnaireAnswers,
+          nextRevision: record.revision,
+          now,
+          patientId: outpatientCase.patient_id,
+          subjectId: outpatientCase.case_id,
+          subjectKind: 'outpatient',
+        })
+      }
       return {
         data: {
           encounterVersion: encounter.meta?.versionId ?? '1',
@@ -793,17 +887,27 @@ export class ClinicalScoreService {
         throw new InpatientError('INPATIENT_STATE_CONFLICT', '患者当前状态不能修改住院专病风险评估')
       }
       const now = inpatient.virtualTime(context)
-      const { effects } = this.#persistRiskAssessment(transaction, context, {
+      const { effects, record } = this.#persistRiskAssessment(transaction, context, {
         caseId: admission.id,
         encounterId: admission.id,
         expectedRevision: input.expectedRevision,
-        fields: input.fields,
+        fields: mergeQuestionnaireAnswersIntoLegacyFields(input.fields, input.questionnaireAnswers),
         now,
         onConflict: () => {
           throw new InpatientError('INPATIENT_RISK_ASSESSMENT_CONFLICT', '专病风险评估修订号已变化，请刷新后重试')
         },
         patientId: admission.patientId,
       })
+      if (input.questionnaireAnswers !== undefined && input.questionnaireAnswers.length > 0) {
+        this.#persistBedsideAnswersSync(context, {
+          answers: input.questionnaireAnswers,
+          nextRevision: record.revision,
+          now,
+          patientId: admission.patientId,
+          subjectId: admission.id,
+          subjectKind: 'inpatient',
+        })
+      }
       return { data: inpatient.orders.read(context, admission.id), effects }
     })
   }
@@ -812,6 +916,27 @@ export class ClinicalScoreService {
     let bundle: ClinicalScoreBundle
     try {
       bundle = this.outpatientSnapshot(context, caseId)
+      const row = z.object({ patient_id: z.string().min(1) }).optional().parse(
+        this.#database.driver.prepare(`
+          SELECT patient_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        `).get(context.workspaceId, context.epoch, caseId),
+      )
+      if (row !== undefined && this.#diseasePacks !== undefined) {
+        const activeRuntime = this.#diseasePacks.activeRuntimeSummaryForSubject(
+          context,
+          { id: caseId, kind: 'outpatient', patientId: row.patient_id },
+          bundle.evaluatedAt,
+        )
+        if (activeRuntime.sourcePacks.length > 0) {
+          bundle = {
+            ...bundle,
+            ...(activeRuntime.primaryPack === undefined
+              ? {}
+              : { packId: activeRuntime.primaryPack.packId, packVersion: activeRuntime.primaryPack.packVersion }),
+            sourcePacks: activeRuntime.sourcePacks,
+          }
+        }
+      }
     } catch (error) {
       try { this.#commands.auditRead(context, 'doctor.case.clinical-scores.read', { caseId }, 'failed') } catch { /* preserve original error */ }
       throw error
@@ -824,6 +949,23 @@ export class ClinicalScoreService {
     let bundle: ClinicalScoreBundle
     try {
       bundle = this.inpatientSnapshot(inpatient, context, admissionId)
+      const binding = inpatient.readAdmissionBinding(context, admissionId)
+      if (this.#diseasePacks !== undefined) {
+        const activeRuntime = this.#diseasePacks.activeRuntimeSummaryForSubject(
+          context,
+          { id: admissionId, kind: 'inpatient', patientId: binding.patientId },
+          bundle.evaluatedAt,
+        )
+        if (activeRuntime.sourcePacks.length > 0) {
+          bundle = {
+            ...bundle,
+            ...(activeRuntime.primaryPack === undefined
+              ? {}
+              : { packId: activeRuntime.primaryPack.packId, packVersion: activeRuntime.primaryPack.packVersion }),
+            sourcePacks: activeRuntime.sourcePacks,
+          }
+        }
+      }
     } catch (error) {
       try { inpatient.commands.auditRead(context, 'inpatient.clinical-scores.read', { admissionId }, 'failed') } catch { /* preserve original error */ }
       throw error
@@ -865,7 +1007,13 @@ export class ClinicalScoreService {
         ? (extractEncounterEndIso(rawEncounter) ?? (caseRow.visit_date ? `${caseRow.visit_date}T23:59:59.999+08:00` : now))
         : now
       const scores = this.outpatientSnapshot(context, caseId, referenceCutoffIso, encCompleted)
+      const activeRuntime = this.#diseasePacks?.activeRuntimeSummaryForSubject(
+        context,
+        { id: caseId, kind: 'outpatient', patientId: caseRow.patient_id },
+        referenceCutoffIso,
+      )
       bundle = buildSynchronousTopicBundle({
+        activeRuntime,
         caseId,
         context,
         corpus: this.#guidelines,
@@ -878,6 +1026,7 @@ export class ClinicalScoreService {
         patientId: caseRow.patient_id,
         populationReferenceIso: encCompleted ? referenceCutoffIso : (caseRow.visit_date ?? now),
         referenceCutoffIso,
+        registry: this.#diseasePacks?.registry,
         scores,
         topicId,
       })
@@ -887,6 +1036,443 @@ export class ClinicalScoreService {
     }
     this.#commands.auditRead(context, 'doctor.case.guideline-topics.read', auditInput, 'success')
     return bundle
+  }
+
+  readOutpatientBedsideQuestionnaire(context: ActorContext, caseId: string): BedsideQuestionnaireState {
+    try {
+      this.#outpatientContext.requireDoctorCase(context, caseId)
+      this.#outpatientContext.assertCaseResponsibility(context, caseId)
+      const caseRow = z.object({
+        encounter_id: z.string().min(1),
+        patient_id: z.string().min(1),
+      }).parse(
+        this.#database.driver.prepare(`
+          SELECT encounter_id, patient_id FROM outpatient_case
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        `).get(context.workspaceId, context.epoch, caseId),
+      )
+      const encounter = this.#fhir.read(context, 'Encounter', caseRow.encounter_id)
+      const asOf = this.#outpatientContext.virtualTime(context)
+      const state = this.#buildBedsideQuestionnaireState(context, {
+        asOf,
+        encounterId: caseRow.encounter_id,
+        encounterVersion: encounter.meta?.versionId ?? '1',
+        patientId: caseRow.patient_id,
+        subjectId: caseId,
+        subjectKind: 'outpatient',
+      })
+      this.#commands.auditRead(context, 'doctor.case.bedside-questionnaire.read', { caseId }, 'success')
+      return state
+    } catch (error) {
+      try { this.#commands.auditRead(context, 'doctor.case.bedside-questionnaire.read', { caseId }, 'failed') } catch { /* preserve original error */ }
+      throw error
+    }
+  }
+
+  recordOutpatientBedsideQuestionnaire(
+    context: ActorContext,
+    input: OutpatientBedsideQuestionnaireRecordInput,
+    idempotencyKey: string,
+  ) {
+    return this.#commands.execute({
+      authorize: () => {
+        this.#outpatientContext.requireDoctorCase(context, input.caseId)
+        this.#outpatientContext.assertCaseResponsibility(context, input.caseId)
+      },
+      context,
+      dataSchema: bedsideQuestionnaireStateSchema,
+      expectedVersions: { [`Encounter/${this.#outpatientEncounterId(context, input.caseId)}`]: input.encounterVersion },
+      idempotencyKey,
+      input,
+      operation: 'doctor.case.bedside-questionnaire.record',
+    }, transaction => {
+      const outpatientCase = z.object({
+        encounter_id: z.string().min(1),
+        patient_id: z.string().min(1),
+        status: z.string().min(1),
+      }).parse(
+        this.#database.driver.prepare(`
+          SELECT encounter_id, patient_id, status FROM outpatient_case
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        `).get(context.workspaceId, context.epoch, input.caseId),
+      )
+      const encounter = transaction.fhir.read(context, 'Encounter', outpatientCase.encounter_id)
+      if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '当前门诊就诊不可修改床旁问答')
+      }
+      this.#outpatientContext.assertExpectedVersions(
+        { [`Encounter/${outpatientCase.encounter_id}`]: input.encounterVersion },
+        [`Encounter/${outpatientCase.encounter_id}`],
+      )
+      const now = this.#outpatientContext.virtualTime(context)
+      return this.#applyBedsideQuestionnaireWrite(transaction, context, {
+        answers: input.answers,
+        encounterId: outpatientCase.encounter_id,
+        encounterVersion: encounter.meta?.versionId ?? '1',
+        expectedRevision: input.expectedRevision,
+        now,
+        onConflict: () => {
+          throw new WorkflowError('WORKFLOW_CONFLICT', '床旁问答修订号已变化，请刷新后重试')
+        },
+        patientId: outpatientCase.patient_id,
+        subjectId: input.caseId,
+        subjectKind: 'outpatient',
+      })
+    })
+  }
+
+  readInpatientBedsideQuestionnaire(inpatient: InpatientService, context: ActorContext, admissionId: string): BedsideQuestionnaireState {
+    try {
+      inpatient.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
+      const binding = inpatient.readAdmissionBinding(context, admissionId)
+      const encounter = this.#fhir.read(context, 'Encounter', admissionId)
+      const asOf = inpatient.virtualTime(context)
+      const state = this.#buildBedsideQuestionnaireState(context, {
+        asOf,
+        encounterId: admissionId,
+        encounterVersion: encounter.meta?.versionId ?? '1',
+        patientId: binding.patientId,
+        subjectId: admissionId,
+        subjectKind: 'inpatient',
+      })
+      inpatient.commands.auditRead(context, 'inpatient.bedside-questionnaire.read', { admissionId }, 'success')
+      return state
+    } catch (error) {
+      try { inpatient.commands.auditRead(context, 'inpatient.bedside-questionnaire.read', { admissionId }, 'failed') } catch { /* preserve original error */ }
+      throw error
+    }
+  }
+
+  recordInpatientBedsideQuestionnaire(
+    inpatient: InpatientService,
+    context: ActorContext,
+    input: InpatientBedsideQuestionnaireRecordInput,
+    idempotencyKey: string,
+  ) {
+    return inpatient.commands.execute({
+      authorize: () => {
+        inpatient.assertRole(context, ['inpatient-doctor', 'ward-nurse'])
+        inpatient.admissionBinding(context, input.admissionId)
+      },
+      context,
+      dataSchema: bedsideQuestionnaireStateSchema,
+      expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion },
+      idempotencyKey,
+      input,
+      operation: 'inpatient.bedside-questionnaire.record',
+    }, transaction => {
+      inpatient.assertNotArchived(context, input.admissionId)
+      const admission = inpatient.detail(context, input.admissionId).admission
+      if (!['admitted', 'discharge-pending'].includes(admission.status)) {
+        throw new InpatientError('INPATIENT_STATE_CONFLICT', '患者当前状态不能修改住院床旁问答')
+      }
+      const now = inpatient.virtualTime(context)
+      return this.#applyBedsideQuestionnaireWrite(transaction, context, {
+        answers: input.answers,
+        encounterId: admission.id,
+        encounterVersion: admission.versionId ?? input.encounterVersion,
+        expectedRevision: input.expectedRevision,
+        now,
+        onConflict: () => {
+          throw new InpatientError('INPATIENT_RISK_ASSESSMENT_CONFLICT', '床旁问答修订号已变化，请刷新后重试')
+        },
+        patientId: admission.patientId,
+        subjectId: admission.id,
+        subjectKind: 'inpatient',
+      })
+    })
+  }
+
+  #outpatientEncounterId(context: RepositoryContext, caseId: string): string {
+    const row = z.object({ encounter_id: z.string().min(1) }).optional().parse(
+      this.#database.driver.prepare(`
+        SELECT encounter_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(context.workspaceId, context.epoch, caseId),
+    )
+    return row?.encounter_id ?? caseId
+  }
+
+  #latestBedsideAnswersRow(
+    context: RepositoryContext,
+    subjectKind: 'outpatient' | 'inpatient',
+    subjectId: string,
+  ) {
+    return z.object({
+      answers_json: z.string().min(1),
+      recorded_at: z.string().min(1),
+      recorded_by_actor_id: z.string().min(1),
+      revision: z.number().int().positive(),
+    }).strict().optional().parse(
+      this.#database.driver.prepare(`
+        SELECT answers_json, recorded_at, recorded_by_actor_id, revision
+        FROM bedside_questionnaire_answers
+        WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ?
+        ORDER BY revision DESC LIMIT 1
+      `).get(context.workspaceId, context.epoch, subjectKind, subjectId),
+    )
+  }
+
+  #persistBedsideAnswersSync(
+    context: ActorContext,
+    options: {
+      answers: readonly BedsideQuestionnaireValueInput[]
+      nextRevision: number
+      now: string
+      patientId: string
+      subjectId: string
+      subjectKind: 'outpatient' | 'inpatient'
+    },
+  ): number {
+    const existingRow = this.#latestBedsideAnswersRow(context, options.subjectKind, options.subjectId)
+    const mergedByCode = new Map<string, BedsideQuestionnaireValueInput>()
+    if (existingRow !== undefined) {
+      for (const prev of z.array(bedsideQuestionnaireValueInputSchema).parse(JSON.parse(existingRow.answers_json))) {
+        mergedByCode.set(normalizeBedsideItemCode(prev.code), { ...prev, code: normalizeBedsideItemCode(prev.code) })
+      }
+    }
+    for (const ans of options.answers) {
+      const code = normalizeBedsideItemCode(ans.code)
+      mergedByCode.set(code, { ...ans, code })
+    }
+    const revision = Math.max(options.nextRevision, (existingRow?.revision ?? 0) + 1)
+    this.#database.driver.prepare(`
+      INSERT INTO bedside_questionnaire_answers (
+        workspace_id, epoch, subject_kind, subject_id, patient_id, revision,
+        answers_json, recorded_by_actor_id, recorded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      options.subjectKind,
+      options.subjectId,
+      options.patientId,
+      revision,
+      JSON.stringify([...mergedByCode.values()]),
+      context.actorId,
+      options.now,
+    )
+    return revision
+  }
+
+  #applyBedsideQuestionnaireWrite(
+    transaction: CommandTransaction,
+    context: ActorContext,
+    options: {
+      answers: readonly BedsideQuestionnaireValueInput[]
+      encounterId: string
+      encounterVersion: string
+      expectedRevision: number
+      now: string
+      onConflict: () => never
+      patientId: string
+      subjectId: string
+      subjectKind: 'outpatient' | 'inpatient'
+    },
+  ) {
+    const latestRisk = this.latestRiskAssessment(context, options.subjectId)
+    const latestAnswersRow = this.#latestBedsideAnswersRow(context, options.subjectKind, options.subjectId)
+    const currentRevision = Math.max(latestRisk.revision, latestAnswersRow?.revision ?? 0)
+    if (currentRevision !== options.expectedRevision) options.onConflict()
+
+    const legacyFieldsPatch = mergeQuestionnaireAnswersIntoLegacyFields({}, options.answers)
+    const effects: CommandEffect[] = []
+    let nextRevision = currentRevision + 1
+
+    if (Object.keys(legacyFieldsPatch).length > 0) {
+      const riskResult = this.#persistRiskAssessment(transaction, context, {
+        caseId: options.subjectId,
+        encounterId: options.encounterId,
+        expectedRevision: latestRisk.revision,
+        fields: legacyFieldsPatch,
+        now: options.now,
+        onConflict: options.onConflict,
+        patientId: options.patientId,
+      })
+      effects.push(...riskResult.effects)
+      nextRevision = Math.max(nextRevision, riskResult.record.revision)
+    }
+
+    const answerRev = this.#persistBedsideAnswersSync(context, {
+      answers: options.answers,
+      nextRevision,
+      now: options.now,
+      patientId: options.patientId,
+      subjectId: options.subjectId,
+      subjectKind: options.subjectKind,
+    })
+    effects.push({
+      kind: latestAnswersRow === undefined ? 'created' : 'updated',
+      reference: `BedsideQuestionnaire/${options.subjectKind}:${options.subjectId}`,
+      versionId: String(answerRev),
+    })
+
+    const state = this.#buildBedsideQuestionnaireState(context, {
+      asOf: options.now,
+      encounterId: options.encounterId,
+      encounterVersion: options.encounterVersion,
+      patientId: options.patientId,
+      subjectId: options.subjectId,
+      subjectKind: options.subjectKind,
+    })
+    return { data: state, effects }
+  }
+
+  #buildBedsideQuestionnaireState(
+    context: ActorContext,
+    options: {
+      asOf: string
+      encounterId: string
+      encounterVersion: string
+      patientId: string
+      subjectId: string
+      subjectKind: 'outpatient' | 'inpatient'
+    },
+  ): BedsideQuestionnaireState {
+    const legacyRiskAssessment = this.latestRiskAssessment(context, options.subjectId)
+    const answerRow = this.#latestBedsideAnswersRow(context, options.subjectKind, options.subjectId)
+    const activeSummary = this.#diseasePacks?.activeRuntimeSummaryForSubject(
+      context,
+      { id: options.subjectId, kind: options.subjectKind, patientId: options.patientId },
+      options.asOf,
+    )
+    const storedByCode = new Map<string, BedsideQuestionnaireValueInput>()
+    if (answerRow !== undefined) {
+      for (const ans of z.array(bedsideQuestionnaireValueInputSchema).parse(JSON.parse(answerRow.answers_json))) {
+        storedByCode.set(normalizeBedsideItemCode(ans.code), ans)
+      }
+    }
+
+    const legacyValueByCode = new Map<string, ClinicalRiskAssessmentValues[keyof ClinicalRiskAssessmentValues]>()
+    for (const descriptor of LEGACY_BEDSIDE_QUESTIONNAIRE_FIELDS) {
+      const val = legacyRiskAssessment.values[descriptor.key]
+      if (val !== null) legacyValueByCode.set(descriptor.code, val)
+    }
+
+    const itemsByCode = new Map<string, BedsideQuestionnaireItemState>()
+    const pushItemState = (spec: {
+      code: string
+      labelZh: string
+      options?: readonly string[]
+      packIds: readonly string[]
+      unit?: string
+      valueType: 'boolean' | 'number' | 'enum' | 'text'
+    }) => {
+      const code = normalizeBedsideItemCode(spec.code)
+      const stored = storedByCode.get(code)
+      const legacyVal = legacyValueByCode.get(code)
+      const rawVal: boolean | number | string | null | undefined = stored !== undefined
+        ? (stored.booleanValue ?? stored.numberValue ?? stored.textValue ?? null)
+        : legacyVal
+      const presence: 'present' | 'absent' | 'not-asked' =
+        rawVal === null || rawVal === undefined
+          ? 'not-asked'
+          : typeof rawVal === 'boolean'
+            ? (rawVal ? 'present' : 'absent')
+            : typeof rawVal === 'number'
+              ? (code === 'angina-episodes-24h' && rawVal === 0 ? 'absent' : 'present')
+              : (['never', 'none', 'negative'].includes(String(rawVal)) ? 'absent' : 'present')
+      const valueText =
+        rawVal === null || rawVal === undefined
+          ? '没问到'
+          : typeof rawVal === 'boolean'
+            ? (rawVal ? '是' : '否')
+            : typeof rawVal === 'number' && spec.unit
+              ? `${rawVal} ${spec.unit}`
+              : String(rawVal)
+      const recordedAt = presence === 'not-asked'
+        ? null
+        : (stored !== undefined ? answerRow?.recorded_at : legacyRiskAssessment.recordedAt) ?? null
+      const recordedBy = presence === 'not-asked'
+        ? null
+        : (stored !== undefined ? answerRow?.recorded_by_actor_id : legacyRiskAssessment.recordedBy) ?? null
+
+      itemsByCode.set(code, {
+        ...(typeof rawVal === 'boolean' ? { booleanValue: rawVal } : {}),
+        code,
+        labelZh: spec.labelZh,
+        ...(typeof rawVal === 'number' ? { numberValue: rawVal } : {}),
+        ...(spec.options === undefined ? {} : { options: [...spec.options] }),
+        packIds: [...spec.packIds],
+        presence,
+        recordedAt,
+        recordedBy,
+        ...(typeof rawVal === 'string' ? { textValue: rawVal } : {}),
+        ...(spec.unit === undefined ? {} : { unit: spec.unit }),
+        valueText,
+        valueType: spec.valueType,
+      })
+    }
+
+    for (const activeItem of activeSummary?.activeQuestionnaireItems ?? []) {
+      pushItemState({
+        code: activeItem.code,
+        labelZh: activeItem.labelZh,
+        ...(activeItem.options === undefined ? {} : { options: activeItem.options }),
+        packIds: activeItem.packIds,
+        ...(activeItem.unit === undefined ? {} : { unit: activeItem.unit }),
+        valueType: activeItem.valueType,
+      })
+    }
+
+    for (const descriptor of LEGACY_BEDSIDE_QUESTIONNAIRE_FIELDS) {
+      const code = normalizeBedsideItemCode(descriptor.code)
+      if (!itemsByCode.has(code) && (legacyValueByCode.has(code) || storedByCode.has(code))) {
+        const val = legacyValueByCode.get(code) ?? storedByCode.get(code)?.booleanValue ?? storedByCode.get(code)?.numberValue ?? storedByCode.get(code)?.textValue
+        pushItemState({
+          code,
+          labelZh: descriptor.display,
+          packIds: ['hospital-baseline'],
+          valueType: typeof val === 'boolean' ? 'boolean' : typeof val === 'number' ? 'number' : 'text',
+        })
+      }
+    }
+
+    for (const [code, ans] of storedByCode) {
+      if (itemsByCode.has(code)) continue
+      pushItemState({
+        code,
+        labelZh: code,
+        packIds: ['hospital-baseline'],
+        valueType: ans.booleanValue != null ? 'boolean' : ans.numberValue != null ? 'number' : 'text',
+      })
+    }
+
+    const packMissing: BedsidePackMissing[] = []
+    if (options.subjectKind === 'inpatient') {
+      const satisfiedCodes = this.satisfiedBedsideCodes(context, options.subjectId)
+      for (const effective of activeSummary?.activePacks ?? []) {
+        const entry = activeSummary?.entries.find(item => item.packId === effective.pack.manifest.id)
+        const stage = effective.pack.stages.find(item => item.id === entry?.currentStageId)
+        const stageCodes = stage?.questionnaireItemCodes
+        const missingItems = (effective.pack.questionnaireItems ?? [])
+          .filter(item => stageCodes === undefined || stageCodes.length === 0 || stageCodes.includes(item.code))
+          .filter(item => !satisfiedCodes.includes(item.code))
+          .filter(item => itemsByCode.get(normalizeBedsideItemCode(item.code))?.presence === 'not-asked')
+          .map(item => ({ code: item.code, labelZh: item.labelZh }))
+        if (missingItems.length > 0) {
+          packMissing.push({
+            missingCount: missingItems.length,
+            missingItems,
+            packId: effective.pack.manifest.id,
+            titleZh: effective.pack.manifest.titleZh,
+          })
+        }
+      }
+    }
+
+    const revision = Math.max(legacyRiskAssessment.revision, answerRow?.revision ?? 0)
+    const recordedAtCandidates = [legacyRiskAssessment.recordedAt, answerRow?.recorded_at].filter((v): v is string => typeof v === 'string').sort()
+    return bedsideQuestionnaireStateSchema.parse({
+      encounterId: options.encounterId,
+      encounterVersion: options.encounterVersion,
+      items: [...itemsByCode.values()],
+      legacyRiskAssessment,
+      packMissing,
+      recordedAt: recordedAtCandidates.at(-1) ?? null,
+      revision,
+      subjectId: options.subjectId,
+      subjectKind: options.subjectKind,
+    })
   }
 
   outpatientSnapshot(
@@ -1400,6 +1986,7 @@ export class ClinicalScoreService {
     caseId: string,
     values: ClinicalRiskAssessmentValues,
     bedsideObservation: { observationId: string; observationVersion: string } | null,
+    cutoffMs?: number,
   ): EffectiveStSegmentDeviation | null {
     const revisionIndex = this.#buildReportRevisionIndex(context)
     const ecgRows = z.array(z.object({
@@ -1444,6 +2031,7 @@ export class ClinicalScoreService {
           timestampMs: Number.isFinite(tsMs) ? tsMs : undefined,
         }
       })
+      .filter(candidate => cutoffMs === undefined || candidate.timestampMs === undefined || candidate.timestampMs <= cutoffMs)
       .sort((a, b) => {
         if (a.timestampMs !== undefined && b.timestampMs !== undefined && a.timestampMs !== b.timestampMs) {
           return a.timestampMs - b.timestampMs
@@ -1726,11 +2314,47 @@ export class ClinicalScoreService {
 
     const birthDateStr = typeof patient.birthDate === 'string' ? patient.birthDate : undefined
     const cutoffMs = Date.parse(options.now)
+    const evaluatedLedger = this.#factLedger?.buildInternalLedger(
+      context,
+      { kind: options.inpatient ? 'inpatient' : 'outpatient', id: options.caseId, patientId: options.patientId },
+      { asOf: options.now, includeSuperseded: false },
+    )
+    const eligibleIngestedEntries = this.#factLedger?.listEligibleIngestedObservations(context, options.patientId) ?? []
+    const eligibleIngestedByObsId = new Map(
+      eligibleIngestedEntries.map(entry => [entry.observation.id, entry.observation]),
+    )
+    const ineligibleObservationIds = new Set(
+      evaluatedLedger?.facts
+        .filter(f => (
+          f.institutionScope === 'local'
+          && f.provenance.recordType === 'Observation'
+          && f.ineligibleReasons.some(reason => reason !== 'expired')
+        ))
+        .map(f => f.provenance.recordId) ?? [],
+    )
+    const verifiedExternalFacts = evaluatedLedger?.facts.filter(
+      f => f.institutionScope === 'external' && f.clinicianVerification.verified && f.eligibleForScoringAndRedLine,
+    ) ?? []
+    const eligibleIngestedLocalFacts = evaluatedLedger?.facts.filter(
+      f =>
+        f.institutionScope === 'local'
+        && f.provenance.recordType === 'Observation'
+        && f.eligibleForScoringAndRedLine
+        && eligibleIngestedByObsId.has(f.provenance.recordId),
+    ) ?? []
+    const factGate = {
+      ineligibleObservationIds,
+      verifiedExternalFacts,
+      eligibleIngestedLocalFacts,
+      eligibleIngestedByObsId,
+      ...(options.isArchivedCutoff && Number.isFinite(cutoffMs) ? { historicalCutoffMs: cutoffMs } : {}),
+    }
     const labs = this.#extractLaboratoryAnalytes(
       context,
       options.caseId,
       options.legacyDiagnosticReportId,
       options.inpatientTimingGate,
+      factGate,
     )
     let ckdChronicity: {
       ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
@@ -1756,6 +2380,7 @@ export class ClinicalScoreService {
           age,
           sex,
           cutoffMs,
+          ineligibleObservationIds,
         )
       }
     }
@@ -1797,6 +2422,7 @@ export class ClinicalScoreService {
       options.now,
       labs.latestLipidObservationMs,
       options.isArchivedCutoff,
+      ineligibleObservationIds,
     )
     const bedsideKnownStenosis =
       riskRef !== undefined && riskAssessment.values.knownCoronaryStenosisGe50 !== null
@@ -2346,6 +2972,7 @@ export class ClinicalScoreService {
     fallbackAgeYears: number,
     sex: 'male' | 'female',
     cutoffMs: number,
+    ineligibleObservationIds?: ReadonlySet<string>,
   ): {
     ckdLt30Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
     ckdLt60Chronicity?: { source: ClinicalScoreSourceReference; value: 'confirmed' | 'excluded' }
@@ -2386,7 +3013,7 @@ export class ClinicalScoreService {
       const page = this.#fhir.search(context, 'Observation', obsParams)
       for (const raw of page.resources) {
         const obs = observationResourceSchema.safeParse(raw)
-        if (!obs.success || excludedObsIds.has(obs.data.id)) continue
+        if (!obs.success || excludedObsIds.has(obs.data.id) || ineligibleObservationIds?.has(obs.data.id)) continue
         if (!['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
         const codes = new Set(
           (obs.data.code?.coding ?? [])
@@ -2491,6 +3118,13 @@ export class ClinicalScoreService {
           earliestSurgeryMs: number | undefined
         }
       | undefined,
+    factGate?: {
+      ineligibleObservationIds: ReadonlySet<string>
+      verifiedExternalFacts: readonly ClinicalFact[]
+      eligibleIngestedLocalFacts?: readonly ClinicalFact[]
+      eligibleIngestedByObsId?: ReadonlyMap<string, unknown>
+      historicalCutoffMs?: number | undefined
+    },
   ) {
     const rows = z.array(z.object({
       diagnostic_report_id: z.string(),
@@ -2555,11 +3189,16 @@ export class ClinicalScoreService {
       value: { unit: string; value: number }
     }> = []
 
+    const seenReportObservationIds = new Set<string>()
     const revisionIndex = this.#buildReportRevisionIndex(context)
     for (const { reportId, reportTime } of reportEntries) {
       const rawReport = this.#fhir.read(context, 'DiagnosticReport', reportId)
       const report = diagnosticReportResourceSchema.safeParse(rawReport)
       if (!report.success || !['final', 'amended', 'corrected'].includes(report.data.status ?? '')) continue
+      const reportTsMs = parseResourceTimestampMs(report.data.issued ?? reportTime ?? report.data.effectiveDateTime)
+      if (factGate?.historicalCutoffMs !== undefined && reportTsMs !== undefined && reportTsMs > factGate.historicalCutoffMs) {
+        continue
+      }
       const rootReportId = revisionIndex.resolveRootMeta(reportId)?.rootReportId ?? reportId
       const fallbackReportIso = report.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
       for (const [resultIndex, ref] of (report.data.result ?? []).entries()) {
@@ -2567,6 +3206,13 @@ export class ClinicalScoreService {
         if (!obsId) continue
         const obs = observationResourceSchema.safeParse(this.#fhir.read(context, 'Observation', obsId))
         if (!obs.success || !['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
+        const obsIssued = typeof obs.data['issued'] === 'string' ? obs.data['issued'] : undefined
+        const obsTsMs = parseResourceTimestampMs(obsIssued ?? obs.data.effectiveDateTime ?? fallbackReportIso)
+        if (factGate?.historicalCutoffMs !== undefined && obsTsMs !== undefined && obsTsMs > factGate.historicalCutoffMs) {
+          continue
+        }
+        seenReportObservationIds.add(obs.data.id)
+        if (factGate?.ineligibleObservationIds.has(obs.data.id)) continue
 
         const codes = new Set(
           (obs.data.code?.coding ?? [])
@@ -2677,6 +3323,57 @@ export class ClinicalScoreService {
           })
         }
       }
+    }
+
+    const appendFactToAnalyteHits = (
+      fact: ClinicalFact,
+      source: ClinicalScoreSourceReference,
+      ingestedObs?: unknown,
+    ): void => {
+      if (fact.category !== 'laboratory' || fact.presence === 'not-asked') return
+      const timestampMs = parseResourceTimestampMs(fact.effectiveAt ?? fact.reportedAt ?? fact.ingestedAt)
+      const val = fact.value.normalizedValue
+      if (typeof val === 'object' && val !== null && 'value' in val && 'unit' in val) {
+        if (fact.itemCode.code === '2160-0' && fact.presence === 'present') creatinineHitsDesc.push({ source, timestampMs, value: val })
+        else if (fact.itemCode.code === '6690-2' && fact.presence === 'present') wbcHitsDesc.push({ source, timestampMs, value: val })
+        else if (fact.itemCode.code === '718-7' && fact.presence === 'present') hemoglobinHitsDesc.push({ source, timestampMs, value: val })
+        else if (fact.itemCode.code === '2093-3' && fact.presence === 'present') tcHitsDesc.push({ source, specimenKey: fact.provenance.recordId, timestampMs, value: val })
+        else if (fact.itemCode.code === '2085-9' && fact.presence === 'present') hdlHitsDesc.push({ source, specimenKey: fact.provenance.recordId, timestampMs, value: val })
+        else if (fact.itemCode.code === '13457-7' && fact.presence === 'present') ldlHitsDesc.push({ source, timestampMs, value: val })
+        else if (fact.itemCode.code === '89579-7' || fact.itemCode.code === '6597-9' || fact.itemCode.code === '10839-9') {
+          const parsedObs = ingestedObs !== undefined ? observationResourceSchema.safeParse(ingestedObs) : undefined
+          const obsElevated = parsedObs?.success ? this.#evaluateTroponinElevation(parsedObs.data) : undefined
+          const fallbackThreshold = fact.itemCode.code === '10839-9' ? 0.04 : 14
+          troponinHitsDesc.push({ elevated: obsElevated ?? val.value > fallbackThreshold, source, timestampMs })
+        }
+      } else if (
+        (fact.itemCode.code === '89579-7' || fact.itemCode.code === '10839-9' || fact.itemCode.code === '6597-9')
+        && (typeof val === 'boolean' || typeof val === 'string')
+      ) {
+        const elevated = typeof val === 'boolean' ? val : /阳性|升高|positive|elevated|high/i.test(val)
+        troponinHitsDesc.push({ elevated, source, timestampMs })
+      }
+    }
+
+    for (const fact of factGate?.eligibleIngestedLocalFacts ?? []) {
+      if (seenReportObservationIds.has(fact.provenance.recordId)) continue
+      appendFactToAnalyteHits(
+        fact,
+        {
+          label: fact.itemCode.display.slice(0, 120),
+          reference: `Observation/${fact.provenance.recordId}`,
+          versionId: fact.provenance.recordVersion,
+        },
+        factGate?.eligibleIngestedByObsId?.get(fact.provenance.recordId),
+      )
+    }
+
+    for (const fact of factGate?.verifiedExternalFacts ?? []) {
+      appendFactToAnalyteHits(fact, {
+        label: `外院已核实 ${fact.itemCode.display}`.slice(0, 120),
+        reference: fact.provenance.recordId.slice(0, 200),
+        versionId: fact.provenance.recordVersion,
+      })
     }
 
     const troponinChronological = [...troponinHitsDesc]
@@ -3348,6 +4045,7 @@ export class ClinicalScoreService {
     nowIso: string,
     latestCurrentCaseLipidMs: number | undefined,
     isArchivedCutoff: boolean,
+    ineligibleObservationIds?: ReadonlySet<string>,
   ): {
     lipidLoweringMedicationActive?: { source: ClinicalScoreSourceReference; value: boolean }
     pretreatmentHdlCholesterol?: { source: ClinicalScoreSourceReference; value: { unit: string; value: number } }
@@ -3757,7 +4455,7 @@ export class ClinicalScoreService {
       const page = this.#fhir.search(context, 'Observation', obsParams)
       for (const raw of page.resources) {
         const obs = observationResourceSchema.safeParse(raw)
-        if (!obs.success || excludedObsIds.has(obs.data.id)) continue
+        if (!obs.success || excludedObsIds.has(obs.data.id) || ineligibleObservationIds?.has(obs.data.id)) continue
         if (!['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
         const unit = obs.data.valueQuantity?.code ?? obs.data.valueQuantity?.unit
         const quantity = obs.data.valueQuantity?.value

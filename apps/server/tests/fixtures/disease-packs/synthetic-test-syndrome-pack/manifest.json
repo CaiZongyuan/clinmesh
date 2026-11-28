@@ -1,0 +1,15 @@
+{
+  "dependencies": [],
+  "fingerprint": "7d61a787e19a89f0db922460fefe08bb1d117c044665f5ad3fa54f4e2a69e8d3",
+  "id": "synthetic-test-syndrome",
+  "packType": "full",
+  "specialty": "synthetic-medicine",
+  "status": "active",
+  "supportedTasks": [
+    "pci-preop-guideline-advice",
+    "followup-review"
+  ],
+  "titleEn": "Synthetic Test Syndrome Disease Pack",
+  "titleZh": "合成测试综合征专病包",
+  "version": "1.0.0"
+}

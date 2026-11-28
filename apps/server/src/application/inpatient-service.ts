@@ -16,7 +16,11 @@ import type { ReferenceDataService } from './reference-data-service.ts'
 import { InpatientBilling } from './inpatient-billing.ts'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.ts'
 import { InpatientInsuranceAdjustments } from './inpatient-insurance-adjustments.ts'
-import type { InpatientRiskAssessmentInput, InpatientVitalSignsInput } from '@clinmesh/contracts/clinical-scores'
+import type {
+  InpatientBedsideQuestionnaireRecordInput,
+  InpatientRiskAssessmentInput,
+  InpatientVitalSignsInput,
+} from '@clinmesh/contracts/clinical-scores'
 import { InpatientOrders } from './inpatient-orders.ts'
 import { InpatientCatalogSearch } from './inpatient-catalog-search.ts'
 import { InpatientPciSelection } from './inpatient-pci-selection.ts'
@@ -115,6 +119,7 @@ export class InpatientService {
     this.surgeryRequestReasons = new InpatientSurgeryRequestReason(this, estimateContextStatus)
     this.drgExplanations = new InpatientDrgExplanation(this, estimateContextStatus)
     this.intraoperativeReviews = new InpatientIntraoperativeReview(this)
+    workflow.promptCards.setInpatient(this)
   }
   recordVitalSigns(context: ActorContext, input: InpatientVitalSignsInput, idempotencyKey: string) {
     return this.workflow.clinicalScores.recordInpatientVitalSigns(this, context, input, idempotencyKey)
@@ -125,8 +130,62 @@ export class InpatientService {
   readClinicalScores(context: ActorContext, admissionId: string) {
     return this.workflow.clinicalScores.readInpatientClinicalScores(this, context, admissionId)
   }
+  readBedsideQuestionnaire(context: ActorContext, admissionId: string) {
+    return this.workflow.clinicalScores.readInpatientBedsideQuestionnaire(this, context, admissionId)
+  }
+  recordBedsideQuestionnaire(context: ActorContext, input: InpatientBedsideQuestionnaireRecordInput, idempotencyKey: string) {
+    return this.workflow.clinicalScores.recordInpatientBedsideQuestionnaire(this, context, input, idempotencyKey)
+  }
   readClinicalQuality(context: ActorContext, input: Parameters<WorkflowService['clinicalQuality']['readInpatient']>[2]) {
     return this.workflow.clinicalQuality.readInpatient(this, context, input)
+  }
+  readClinicalFactLedger(
+    context: ActorContext,
+    admissionId: string,
+    options?: Parameters<WorkflowService['clinicalFactLedger']['readInpatientLedger']>[3],
+  ) {
+    return this.workflow.clinicalFactLedger.readInpatientLedger(this, context, admissionId, options)
+  }
+  recordClinicalFactVerification(
+    context: ActorContext,
+    admissionId: string,
+    body: Parameters<WorkflowService['clinicalFactLedger']['recordInpatientVerification']>[1]['body'],
+    idempotencyKey: string,
+  ) {
+    return this.workflow.clinicalFactLedger.recordInpatientVerification(this, {
+      context,
+      admissionId,
+      body,
+      idempotencyKey,
+    })
+  }
+  readDiseasePacks(context: ActorContext, admissionId: string) {
+    return this.workflow.diseasePacks.readInpatientPacks(this, context, admissionId)
+  }
+  toggleDiseasePack(
+    context: ActorContext,
+    admissionId: string,
+    packId: string,
+    body: unknown,
+    idempotencyKey: string,
+  ) {
+    return this.workflow.diseasePacks.toggleInpatientPack(this, context, admissionId, packId, body, idempotencyKey)
+  }
+  readDiseasePackTaskReadiness(context: ActorContext, admissionId: string, packId: string, taskId: string) {
+    return this.workflow.diseasePacks.readInpatientTaskReadiness(this, context, admissionId, packId, taskId)
+  }
+  readDiseasePackTaskFacts(context: ActorContext, admissionId: string, packId: string, taskId: string) {
+    return this.workflow.diseasePacks.readInpatientTaskFacts(this, context, admissionId, packId, taskId)
+  }
+  authorizeDiseasePackTool(context: ActorContext, admissionId: string, packId: string, rawBody: unknown) {
+    return this.workflow.diseasePacks.authorizePackToolInvocation({
+      context,
+      inpatient: this,
+      packId,
+      rawBody,
+      subjectId: admissionId,
+      subjectKind: 'inpatient',
+    })
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)

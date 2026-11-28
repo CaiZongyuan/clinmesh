@@ -3,6 +3,7 @@ import type {
   ClinicalQualityAlert,
   ClinicalQualityCheck,
   ClinicalQualityGate,
+  ClinicalQualityPendingIndication,
   ClinicalQualityReceipt,
   ClinicalQualityRedLine,
 } from '@clinmesh/contracts/clinical-quality'
@@ -24,12 +25,15 @@ import {
   type RenalFunctionFact,
 } from '@clinmesh/core/clinical-quality'
 import { resolveInpatientDose } from '@clinmesh/core/inpatient-dose'
+import { evaluateOrderIndicationRules, type OrderIndicationOrderKind } from '@clinmesh/core/indication-rules'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ClinicalScoreService } from './clinical-score-service.ts'
+import type { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
 import type { ActorContext, CommandEffect, CommandExecutor } from './command-executor.ts'
+import type { DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
 import { extractSupplementaryIndicators } from './guideline-topic-registry.ts'
 import { inpatientMedicationConfigSchema } from './inpatient-medication-config.ts'
 import type { InpatientService } from './inpatient-service.ts'
@@ -61,16 +65,60 @@ interface Facts {
 export class ClinicalQualityService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
+  #diseasePacks: DiseasePackRuntimeService | undefined
+  readonly #factLedger: ClinicalFactLedgerService | undefined
   readonly #fhir: FhirRepository
   readonly #outpatient: OutpatientWorkflowContext
   readonly #scores: ClinicalScoreService
 
-  constructor(options: { commands: CommandExecutor; database: ClinMeshDatabase; fhir: FhirRepository; outpatientContext: OutpatientWorkflowContext; scores: ClinicalScoreService }) {
+  constructor(options: { commands: CommandExecutor; database: ClinMeshDatabase; diseasePacks?: DiseasePackRuntimeService; factLedger?: ClinicalFactLedgerService; fhir: FhirRepository; outpatientContext: OutpatientWorkflowContext; scores: ClinicalScoreService }) {
     this.#commands = options.commands
     this.#database = options.database
+    this.#diseasePacks = options.diseasePacks
+    this.#factLedger = options.factLedger
     this.#fhir = options.fhir
     this.#outpatient = options.outpatientContext
     this.#scores = options.scores
+  }
+
+  setDiseasePacks(diseasePacks: DiseasePackRuntimeService): void {
+    this.#diseasePacks = diseasePacks
+  }
+
+  #withPackProvenance(
+    context: ActorContext,
+    subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string },
+    check: ClinicalQualityCheck,
+    asOf: string,
+  ): ClinicalQualityCheck {
+    if (this.#diseasePacks === undefined) return check
+    const activeRuntime = this.#diseasePacks.activeRuntimeSummaryForSubject(context, subject, asOf)
+    if (activeRuntime.sourcePacks.length === 0) return check
+    return {
+      ...check,
+      ...(activeRuntime.primaryPack === undefined
+        ? {}
+        : { packId: activeRuntime.primaryPack.packId, packVersion: activeRuntime.primaryPack.packVersion }),
+      sourcePacks: activeRuntime.sourcePacks,
+    }
+  }
+
+  #ineligibleObservationIds(
+    context: ActorContext,
+    subject: { kind: 'outpatient' | 'inpatient'; id: string; patientId: string },
+    asOf: string,
+  ): ReadonlySet<string> | undefined {
+    if (!this.#factLedger) return undefined
+    const ledger = this.#factLedger.buildInternalLedger(context, subject, { asOf, includeSuperseded: false })
+    return new Set(
+      ledger.facts
+        .filter(f => (
+          f.institutionScope === 'local'
+          && f.provenance.recordType === 'Observation'
+          && f.ineligibleReasons.some(reason => reason !== 'expired')
+        ))
+        .map(f => f.provenance.recordId),
+    )
   }
 
   medicationSafety(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, catalogItemId: string): MedicationSafetyRule | undefined {
@@ -122,7 +170,16 @@ export class ClinicalQualityService {
   }
 
   outpatientCompletion(context: ActorContext, input: { caseId: string; encounterId: string }): ClinicalQualityCheck {
-    const indicators = extractSupplementaryIndicators({ caseId: input.caseId, context, database: this.#database, encounterId: input.encounterId, fhir: this.#fhir })
+    const patientRow = this.#factLedger
+      ? z.object({ patient_id: z.string().min(1) }).optional().parse(
+          this.#database.driver.prepare('SELECT patient_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?').get(context.workspaceId, context.epoch, input.caseId),
+        )
+      : undefined
+    const asOf = this.#outpatient.virtualTime(context)
+    const ineligibleObservationIds = patientRow
+      ? this.#ineligibleObservationIds(context, { kind: 'outpatient', id: input.caseId, patientId: patientRow.patient_id }, asOf)
+      : undefined
+    const indicators = extractSupplementaryIndicators({ caseId: input.caseId, context, database: this.#database, encounterId: input.encounterId, fhir: this.#fhir, ineligibleObservationIds })
     return this.#result(context, 'outpatient-completion', [], chestPainWorkupFindings({
       presentation: evidence('急性胸痛就诊依据', indicators.acsEligibility),
       ecg: indicators.ecgSummary && { label: '12 导联心电图报告', reference: indicators.ecgSummary.sourceReference, versionId: indicators.ecgSummary.versionId },
@@ -178,8 +235,9 @@ export class ClinicalQualityService {
     cutoff: string,
     issueEventId?: string,
   ): ClinicalQualityCheck {
+    const ineligibleObservationIds = this.#ineligibleObservationIds(context, { kind: 'inpatient', id: admissionId, patientId }, cutoff)
     const indicators = extractSupplementaryIndicators({ caseId: admissionId, context, database: this.#database, encounterId: admissionId, fhir: this.#fhir,
-      inpatient: { actor: context, service: inpatient }, patientId })
+      ineligibleObservationIds, inpatient: { actor: context, service: inpatient }, patientId })
     const rows = z.array(z.object({ order_id: z.string(), catalog_item_id: z.string(), stopped_at: z.string().nullable() })).parse(
       issueEventId === undefined
         ? this.#database.driver.prepare(`SELECT order_id, catalog_item_id, stopped_at FROM inpatient_order
@@ -211,39 +269,228 @@ export class ClinicalQualityService {
     return this.#result(context, 'inpatient-discharge', [], dischargeSecondaryPreventionFindings({ cad: evidence('冠心病/PCI 依据', indicators.cadEligibility), longTermClasses }))
   }
 
-  readOutpatient(context: ActorContext, input: { encounterId: string; gate: 'outpatient-prescription' | 'outpatient-completion' }): ClinicalQualityCheck {
-    return this.#auditedRead(context, 'encounter.clinical-quality.read', input, () => {
-      this.#outpatient.assertRole(context, ['outpatient-doctor'])
-      const outpatientCase = this.#outpatient.caseByEncounter(context, input.encounterId)
-      this.#outpatient.assertCaseResponsibility(context, outpatientCase.case_id)
-      if (input.gate === 'outpatient-completion') return this.outpatientCompletion(context, { caseId: outpatientCase.case_id, encounterId: input.encounterId })
-      const draft = z.object({ draft_json: z.string().nullable() }).optional().parse(this.#database.driver.prepare(
-        'SELECT draft_json FROM prescription_draft_state WHERE workspace_id=? AND epoch=? AND case_id=?').get(context.workspaceId, context.epoch, outpatientCase.case_id))
-      const items = draft?.draft_json
-        ? z.object({ items: z.array(z.object({ catalogItemId: z.string(), doseText: z.string().optional(), frequencyCode: z.string().optional() }).loose()) }).loose().parse(JSON.parse(draft.draft_json)).items
-        : []
-      const medications: QualityMedicationCandidate[] = items.flatMap(item => {
-        const row = z.object({ code: z.string(), name_zh: z.string() }).optional().parse(this.#database.driver.prepare(
-          "SELECT code, name_zh FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=? AND kind='medication'").get(context.workspaceId, context.epoch, item.catalogItemId))
-        if (row === undefined) return []
-        const safety = this.medicationSafety(context, item.catalogItemId)
-        return [{
-          catalogItemId: item.catalogItemId,
-          code: row.code,
-          display: row.name_zh,
-          pharmacologyClasses: [...(safety?.pharmacologyClasses ?? [])],
-          doseLimits: safety?.doseLimits,
-          doseText: item.doseText,
-          frequencyCode: item.frequencyCode,
-        }]
-      })
-      return this.outpatientPrescription(context, {
-        caseId: outpatientCase.case_id,
-        patientId: outpatientCase.patient_id,
-        diagnosisCodes: this.#outpatient.confirmedDiagnoses(context, outpatientCase.case_id)?.entries.map(entry => entry.code) ?? [],
-        medications,
-      })
+  previewOutpatient(context: ActorContext, input: { encounterId: string; gate: 'outpatient-prescription' | 'outpatient-completion' }): ClinicalQualityCheck {
+    this.#outpatient.assertRole(context, ['outpatient-doctor'])
+    const outpatientCase = this.#outpatient.caseByEncounter(context, input.encounterId)
+    this.#outpatient.assertCaseResponsibility(context, outpatientCase.case_id)
+    const subject = { id: outpatientCase.case_id, kind: 'outpatient' as const, patientId: outpatientCase.patient_id }
+    const asOf = this.#outpatient.virtualTime(context)
+    if (input.gate === 'outpatient-completion') {
+      return this.#withPackProvenance(
+        context,
+        subject,
+        this.outpatientCompletion(context, { caseId: outpatientCase.case_id, encounterId: input.encounterId }),
+        asOf,
+      )
+    }
+    const draft = z.object({ draft_json: z.string().nullable() }).optional().parse(this.#database.driver.prepare(
+      'SELECT draft_json FROM prescription_draft_state WHERE workspace_id=? AND epoch=? AND case_id=?').get(context.workspaceId, context.epoch, outpatientCase.case_id))
+    const items = draft?.draft_json
+      ? z.object({ items: z.array(z.object({ catalogItemId: z.string(), doseText: z.string().optional(), frequencyCode: z.string().optional() }).loose()) }).loose().parse(JSON.parse(draft.draft_json)).items
+      : []
+    const medications: QualityMedicationCandidate[] = items.flatMap(item => {
+      const row = z.object({ code: z.string(), name_zh: z.string() }).optional().parse(this.#database.driver.prepare(
+        "SELECT code, name_zh FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=? AND kind='medication'").get(context.workspaceId, context.epoch, item.catalogItemId))
+      if (row === undefined) return []
+      const safety = this.medicationSafety(context, item.catalogItemId)
+      return [{
+        catalogItemId: item.catalogItemId,
+        code: row.code,
+        display: row.name_zh,
+        pharmacologyClasses: [...(safety?.pharmacologyClasses ?? [])],
+        doseLimits: safety?.doseLimits,
+        doseText: item.doseText,
+        frequencyCode: item.frequencyCode,
+      }]
     })
+    const check = this.outpatientPrescription(context, {
+      caseId: outpatientCase.case_id,
+      patientId: outpatientCase.patient_id,
+      diagnosisCodes: this.#outpatient.confirmedDiagnoses(context, outpatientCase.case_id)?.entries.map(entry => entry.code) ?? [],
+      medications,
+    })
+    return this.#withPackProvenance(context, subject, check, asOf)
+  }
+
+  /** 按当前已激活专病包的 `indicationRules` 对拟开立检查/检验/药品/术式做确定性适应症检查（不读 DRG）。 */
+  checkOrderIndication(input: {
+    asOf: string
+    candidateCodes?: readonly string[] | undefined
+    catalogItemId?: string | undefined
+    context: ActorContext
+    gate: ClinicalQualityGate
+    itemCode: string
+    orderDisplay?: string | undefined
+    orderKind: OrderIndicationOrderKind
+    subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string }
+  }): ClinicalQualityCheck {
+    if (!this.#factLedger || !this.#diseasePacks) {
+      return this.#result(input.context, input.gate, [], [])
+    }
+    const ledger = this.#factLedger.buildInternalLedger(input.context, input.subject, {
+      asOf: input.asOf,
+      includeSuperseded: false,
+    })
+    const encounterMap = this.#diseasePacks.resolvePatientEncounterMap(input.context, input.subject.patientId)
+    const runtimeSummary = this.#diseasePacks.activeRuntimeSummaryForSubject(
+      input.context,
+      input.subject,
+      input.asOf,
+      ledger,
+    )
+    const evaluatedPacks = runtimeSummary.entries.flatMap(entry => {
+      if (entry.activationStatus !== 'active' || entry.exited === true || entry.activationReason === 'pack-exited') {
+        return []
+      }
+      const effective = runtimeSummary.activePacks.find(p => p.pack.manifest.id === entry.packId)
+      return effective === undefined ? [] : [{ effective, entry }]
+    })
+    const evalResult = evaluateOrderIndicationRules({
+      asOf: input.asOf,
+      ...(input.candidateCodes === undefined ? {} : { candidateCodes: input.candidateCodes }),
+      ...(input.catalogItemId === undefined ? {} : { catalogItemId: input.catalogItemId }),
+      encounterIdByRecordId: encounterMap,
+      itemCode: input.itemCode,
+      ledger,
+      ...(input.orderDisplay === undefined ? {} : { orderDisplay: input.orderDisplay }),
+      orderKind: input.orderKind,
+      packs: evaluatedPacks,
+    })
+    const check = this.#result(input.context, input.gate, [], evalResult.alerts)
+    if (evalResult.sourcePacks.length === 0) return check
+    const pendingIndications = evalResult.status === 'missing-inputs' && evalResult.missingMessageZh !== null
+      ? [{
+          ...(input.catalogItemId === undefined ? {} : { catalogItemId: input.catalogItemId }),
+          messageZh: evalResult.missingMessageZh,
+          missingInputs: evalResult.missingInputs,
+          orderDisplay: input.orderDisplay ?? input.itemCode,
+        }]
+      : []
+    return {
+      ...check,
+      ...(pendingIndications.length === 0 ? {} : { pendingIndications }),
+      packId: evalResult.sourcePacks[0]!.packId,
+      packVersion: evalResult.sourcePacks[0]!.packVersion,
+      sourcePacks: evalResult.sourcePacks,
+    }
+  }
+
+  mergeChecks(base: ClinicalQualityCheck, extra: ClinicalQualityCheck): ClinicalQualityCheck {
+    const redLines = [...base.redLines, ...extra.redLines].slice(0, 16)
+    const alerts = [...base.alerts, ...extra.alerts].slice(0, 16)
+    const pendingIndications = [...(base.pendingIndications ?? []), ...(extra.pendingIndications ?? [])].slice(0, 16)
+    const sourcePacksMap = new Map<string, NonNullable<ClinicalQualityCheck['sourcePacks']>[number]>()
+    for (const sp of [...(base.sourcePacks ?? []), ...(extra.sourcePacks ?? [])]) {
+      sourcePacksMap.set(sp.packId, sp)
+    }
+    const sourcePacks = [...sourcePacksMap.values()]
+    const primaryPack = base.packId ?? extra.packId
+    const primaryVersion = base.packVersion ?? extra.packVersion
+    return {
+      ...base,
+      alerts,
+      ...(primaryPack === undefined ? {} : { packId: primaryPack }),
+      ...(primaryVersion === undefined ? {} : { packVersion: primaryVersion }),
+      ...(pendingIndications.length === 0 ? {} : { pendingIndications }),
+      redLines,
+      ...(sourcePacks.length === 0 ? {} : { sourcePacks }),
+      status: redLines.length > 0 ? 'blocked' : alerts.length > 0 ? 'alert' : 'pass',
+    }
+  }
+
+  enforceOrderIndication(
+    context: ActorContext,
+    input: {
+      asOf: string
+      candidateCodes?: readonly string[] | undefined
+      catalogItemId?: string | undefined
+      clinicalOverride?: ClinicalOverrideInput | undefined
+      gate: ClinicalQualityGate
+      itemCode: string
+      operation: string
+      orderDisplay?: string | undefined
+      orderKind: OrderIndicationOrderKind
+      subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string }
+      subjectReference: string
+    },
+  ): { effects: CommandEffect[]; pendingIndications?: ClinicalQualityPendingIndication[]; receipt?: ClinicalQualityReceipt } {
+    const check = this.checkOrderIndication({
+      asOf: input.asOf,
+      ...(input.candidateCodes === undefined ? {} : { candidateCodes: input.candidateCodes }),
+      ...(input.catalogItemId === undefined ? {} : { catalogItemId: input.catalogItemId }),
+      context,
+      gate: input.gate,
+      itemCode: input.itemCode,
+      ...(input.orderDisplay === undefined ? {} : { orderDisplay: input.orderDisplay }),
+      orderKind: input.orderKind,
+      subject: input.subject,
+    })
+    return this.enforce(context, {
+      check,
+      operation: input.operation,
+      override: input.clinicalOverride,
+      patientId: input.subject.patientId,
+      subjectReference: input.subjectReference,
+    })
+  }
+
+  readOutpatient(context: ActorContext, input: { encounterId: string; gate: 'outpatient-prescription' | 'outpatient-completion' }): ClinicalQualityCheck {
+    return this.#auditedRead(context, 'encounter.clinical-quality.read', input, () => this.previewOutpatient(context, input))
+  }
+
+  previewInpatient(inpatient: InpatientService, context: ActorContext, input: {
+    admissionId: string
+    gate: 'inpatient-order' | 'inpatient-pci-plan' | 'inpatient-discharge'
+    catalogItemId?: string | undefined
+    doseText?: string | undefined
+    frequencyCode?: string | undefined
+  }): ClinicalQualityCheck {
+    inpatient.assertReadRole(context, ['inpatient-doctor'])
+    const admission = inpatient.readAdmissionBinding(context, input.admissionId)
+    const subject = { id: admission.id, kind: 'inpatient' as const, patientId: admission.patientId }
+    const asOf = inpatient.virtualTime(context)
+    if (input.gate === 'inpatient-pci-plan') {
+      return this.#withPackProvenance(context, subject, this.inpatientPciPlan(inpatient, context, admission.id), asOf)
+    }
+    if (input.gate === 'inpatient-discharge') {
+      const latestIssue = admission.status === 'admitted' ? undefined : inpatient.discharge.events(context, admission.id).filter(event => event.kind === 'issue').at(-1)
+      const dischargeTime = latestIssue?.virtualTime ?? asOf
+      return this.#withPackProvenance(
+        context,
+        subject,
+        this.inpatientDischarge(inpatient, context, admission.id, admission.patientId, dischargeTime, latestIssue?.id),
+        dischargeTime,
+      )
+    }
+    const active = inpatient.orders.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && ['signed', 'verified'].includes(order.state))
+      .map(order => ({ catalogItemId: order.catalogItemId, display: order.display, pharmacologyClasses: this.medicationClasses(context, order.catalogItemId) }))
+    if (input.catalogItemId === undefined) {
+      return this.#withPackProvenance(context, subject, this.#check(context, 'inpatient-order', {
+        allergyCodes: this.#outpatient.patientAllergyCodes(context, admission.patientId),
+        diagnosisCodes: inpatient.orders.diagnosis(context, admission.id).entries.map(entry => entry.coding.code),
+        medications: active,
+        renal: () => renalFact(this.#scores.inpatientSnapshot(inpatient, context, admission.id)),
+      }), asOf)
+    }
+    const item = z.object({ code: z.string(), name_zh: z.string(), config_json: z.string() }).optional().parse(this.#database.driver.prepare(
+      "SELECT code, name_zh, config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=? AND kind='medication' AND active=1").get(context.workspaceId, context.epoch, input.catalogItemId))
+    if (item === undefined) throw new ClinicalQualityReadError('住院药品目录项不存在或未启用')
+    const safety = this.medicationSafety(context, input.catalogItemId)
+    const medication: QualityMedicationCandidate = {
+      catalogItemId: input.catalogItemId,
+      code: item.code,
+      display: item.name_zh,
+      pharmacologyClasses: [...(safety?.pharmacologyClasses ?? [])],
+      doseLimits: safety?.doseLimits,
+      doseText: this.inpatientSafetyDose(item.config_json, input.doseText),
+      frequencyCode: input.frequencyCode,
+    }
+    return this.#withPackProvenance(
+      context,
+      subject,
+      this.inpatientOrder(inpatient, context, admission.id, admission.patientId, medication, active),
+      asOf,
+    )
   }
 
   readInpatient(inpatient: InpatientService, context: ActorContext, input: {
@@ -253,41 +500,18 @@ export class ClinicalQualityService {
     doseText?: string | undefined
     frequencyCode?: string | undefined
   }): ClinicalQualityCheck {
-    return this.#auditedRead(context, 'inpatient.clinical-quality.read', input, () => {
-      inpatient.assertReadRole(context, ['inpatient-doctor'])
-      const admission = inpatient.readAdmissionBinding(context, input.admissionId)
-      if (input.gate === 'inpatient-pci-plan') return this.inpatientPciPlan(inpatient, context, admission.id)
-      if (input.gate === 'inpatient-discharge') {
-        const latestIssue = admission.status === 'admitted' ? undefined : inpatient.discharge.events(context, admission.id).filter(event => event.kind === 'issue').at(-1)
-        return this.inpatientDischarge(inpatient, context, admission.id, admission.patientId, latestIssue?.virtualTime ?? inpatient.virtualTime(context), latestIssue?.id)
-      }
-      const item = z.object({ code: z.string(), name_zh: z.string(), config_json: z.string() }).optional().parse(this.#database.driver.prepare(
-        "SELECT code, name_zh, config_json FROM outpatient_catalog WHERE workspace_id=? AND epoch=? AND item_id=? AND kind='medication' AND active=1").get(context.workspaceId, context.epoch, input.catalogItemId))
-      if (item === undefined) throw new ClinicalQualityReadError('住院药品目录项不存在或未启用')
-      const safety = this.medicationSafety(context, input.catalogItemId!)
-      const medication: QualityMedicationCandidate = {
-        catalogItemId: input.catalogItemId!,
-        code: item.code,
-        display: item.name_zh,
-        pharmacologyClasses: [...(safety?.pharmacologyClasses ?? [])],
-        doseLimits: safety?.doseLimits,
-        doseText: this.inpatientSafetyDose(item.config_json, input.doseText),
-        frequencyCode: input.frequencyCode,
-      }
-      const active = inpatient.orders.facts(context, admission.id).orders.filter(order => order.kind === 'medication' && ['signed', 'verified'].includes(order.state))
-        .map(order => ({ catalogItemId: order.catalogItemId, display: order.display, pharmacologyClasses: this.medicationClasses(context, order.catalogItemId) }))
-      return this.inpatientOrder(inpatient, context, admission.id, admission.patientId, medication, active)
-    })
+    return this.#auditedRead(context, 'inpatient.clinical-quality.read', input, () => this.previewInpatient(inpatient, context, input))
   }
 
   /** 在调用方的 Command 事务内执行：红线或未覆盖警示时整笔回滚，越权放行时写入正式留痕并返回回执片段。 */
   enforce(context: ActorContext, input: { check: ClinicalQualityCheck; operation: string; override?: ClinicalOverrideInput | undefined; patientId: string; subjectReference: string })
-    : { effects: CommandEffect[]; receipt?: ClinicalQualityReceipt } {
+    : { effects: CommandEffect[]; pendingIndications?: ClinicalQualityPendingIndication[]; receipt?: ClinicalQualityReceipt } {
     const { check } = input
+    const pending = check.pendingIndications === undefined ? {} : { pendingIndications: check.pendingIndications }
     if (check.redLines.length > 0) {
       throw new ClinicalQualityError('CLINICAL_QUALITY_RED_LINE', `命中药事安全红线，不可越权提交：${check.redLines.map(item => `${item.code} ${item.message}`).join('；')}`, check)
     }
-    if (check.alerts.length === 0) return { effects: [] }
+    if (check.alerts.length === 0) return { effects: [], ...pending }
     if (!clinicalOverrideCovers(input.override, check.alerts)) {
       throw new ClinicalQualityError('CLINICAL_QUALITY_ALERT',
         `临床质控警示待处理（${check.alerts.map(item => item.code).join('、')}）：补齐检查或医嘱后重试，或附 clinicalOverride 逐项确认全部警示并说明原因`, check)
@@ -298,6 +522,7 @@ export class ClinicalQualityService {
       input.subjectReference, input.patientId, JSON.stringify(check.alerts), override.reasonCode, override.note, context.actorId, context.practitionerRoleId ?? null, recordedAt)
     return {
       effects: [{ kind: 'created', reference: `ClinicalQualityOverride/${overrideId}`, versionId: '1' }],
+      ...pending,
       receipt: { alerts: check.alerts, gate: check.gate, override: { note: override.note, reasonCode: override.reasonCode }, overrideId, recordedAt },
     }
   }

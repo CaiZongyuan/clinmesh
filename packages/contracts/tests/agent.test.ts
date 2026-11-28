@@ -238,6 +238,7 @@ describe('ClinMesh DSH Agent contracts', () => {
     ]))
     for (const op of [
       'outpatient.clinical-scores.read',
+      'outpatient.clinical-fact-ledger.read',
       'outpatient.guideline-topics.read',
       'outpatient.clinical-quality.read',
       'outpatient.order-set-drafts.read',
@@ -248,6 +249,7 @@ describe('ClinMesh DSH Agent contracts', () => {
     expect(agentToolsForContext('outpatient-doctor', 'consultation', 'diagnosis').map(tool => tool.operationId))
       .toEqual(expect.arrayContaining([
         'outpatient.clinical-scores.read',
+        'outpatient.clinical-fact-ledger.read',
         'outpatient.guideline-topics.read',
         'outpatient.clinical-quality.read',
         'outpatient.order-set-drafts.read',
@@ -261,6 +263,7 @@ describe('ClinMesh DSH Agent contracts', () => {
         'inpatient.surgery.read',
         'inpatient.angiography-reports.read',
         'inpatient.clinical-scores.read',
+        'inpatient.clinical-fact-ledger.read',
         'inpatient.guideline-topics.read',
         'inpatient.clinical-quality.read',
         'inpatient.order-set-drafts.read',
@@ -270,11 +273,15 @@ describe('ClinMesh DSH Agent contracts', () => {
     expect(parseAgentToolInput('inpatient.order-set-drafts.read', { templateId: 'pci-postop-standard', surgeryExecutionId: 'exec-1' }))
       .toEqual({ templateId: 'pci-postop-standard', surgeryExecutionId: 'exec-1' })
     expect(agentToolsForContext('ward-nurse', 'inpatient', 'surgery').map(tool => tool.operationId))
+      .not.toContain('inpatient.clinical-fact-ledger.read')
+    expect(agentToolsForContext('ward-nurse', 'inpatient', 'surgery').map(tool => tool.operationId))
       .toContain('inpatient.surgery.read')
     expect(agentToolsForContext('inpatient-doctor', 'inpatient', 'orders').map(tool => tool.operationId))
       .toContain('inpatient.order-set-drafts.read')
     expect(agentToolsForContext('inpatient-doctor', 'inpatient', 'orders').map(tool => tool.operationId))
       .not.toContain('inpatient.surgery.read')
+    expect(agentToolsForContext('medical-records', 'inpatient', 'record').map(tool => tool.operationId))
+      .not.toContain('inpatient.clinical-fact-ledger.read')
     expect(agentToolsForContext('medical-records', 'inpatient', 'record').map(tool => tool.operationId))
       .toEqual(expect.arrayContaining([
         'inpatient.surgery.read',
@@ -286,9 +293,9 @@ describe('ClinMesh DSH Agent contracts', () => {
     expect(parseAgentToolInput('outpatient.order-set-drafts.read', {})).toEqual({})
     expect(parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'chest-pain-stat-workup' }))
       .toEqual({ templateId: 'chest-pain-stat-workup' })
-    expect(() => parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'cin-perioperative-hydration' }))
-      .toThrow()
-    expect(() => parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'cad-admission-baseline' }))
+    expect(parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'synthetic-syndrome-workup' }))
+      .toEqual({ templateId: 'synthetic-syndrome-workup' })
+    expect(() => parseAgentToolInput('outpatient.order-set-drafts.read', { templateId: 'Bad_Template_Id!' }))
       .toThrow()
   })
 

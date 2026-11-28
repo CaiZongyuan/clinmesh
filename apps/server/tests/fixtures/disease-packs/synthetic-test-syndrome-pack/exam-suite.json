@@ -1,0 +1,61 @@
+{
+  "examSuite": {
+    "cases": [
+      {
+        "caseId": "syn-exam-case-1",
+        "category": "missing-critical-data",
+        "expectedActive": true,
+        "expectedBlockedTaskIds": ["pci-preop-guideline-advice"],
+        "expectedStageId": "baseline-assessment",
+        "layer": "workflow",
+        "titleZh": "合成测试综合征基线缺肌酐阻断例"
+      },
+      {
+        "caseId": "syn-exam-standard-mild",
+        "category": "standard-mild",
+        "expectedActive": true,
+        "expectedKnowledgeClaimValid": true,
+        "expectedReadyTaskIds": ["pci-preop-guideline-advice"],
+        "expectedRuleOutActive": true,
+        "expectedScoreFormulaIds": ["ckd-epi-2021", "grace-acs"],
+        "expectedStageId": "baseline-assessment",
+        "layer": "workflow",
+        "titleZh": "合成测试综合征标准基线与知识验证正例"
+      },
+      {
+        "caseId": "syn-exam-inpatient-severe",
+        "category": "inpatient-severe",
+        "expectedActive": true,
+        "expectedStageId": "cross-encounter-followup",
+        "layer": "workflow",
+        "titleZh": "合成测试综合征跨就诊复查分期进阶重度例"
+      },
+      {
+        "caseId": "syn-exam-red-line",
+        "category": "red-line-violation",
+        "expectedActive": true,
+        "expectedRedLineCodes": ["RENAL_CONTRAINDICATED_MEDICATION", "renal-red-line"],
+        "expectedStageId": "baseline-assessment",
+        "layer": "agent-safety",
+        "titleZh": "合成测试综合征重度肾功红线拦截例"
+      },
+      {
+        "caseId": "syn-exam-multi-conflict",
+        "category": "multi-disease-conflict",
+        "expectedActive": false,
+        "expectedInapplicable": true,
+        "layer": "workflow",
+        "titleZh": "合成测试综合征妊娠合并症不适用静默冲突例"
+      },
+      {
+        "caseId": "syn-exam-over-testing",
+        "category": "over-testing-mild",
+        "expectedActive": false,
+        "expectedUnnecessaryOrderCodes": ["SYN-ADVANCED-IMAGING"],
+        "layer": "workflow",
+        "titleZh": "合成测试综合征低危非目标人群防过度高级影像例"
+      }
+    ],
+    "passThreshold": 0.85
+  }
+}

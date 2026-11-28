@@ -5,6 +5,8 @@ import {
   type DoctorCaseHistoryDetailInput,
   type DoctorCaseHistoryInput,
 } from '@clinmesh/contracts/agent'
+import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
+import type { OrderIndicationOrderKind } from '@clinmesh/core/indication-rules'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
 import { inpatientHistoryDetail, inpatientHistoryItems, isInpatientHistoryEntry } from './doctor-inpatient-history.ts'
 import { outpatientCaseSource, uniquePatientCaseSource } from './outpatient-case-source.ts'
@@ -53,6 +55,7 @@ import {
   type SyntheticCaseInstance,
   type SyntheticPatientProfile,
 } from '@clinmesh/contracts/scenario'
+import type { ClinicalReviewerRecord } from '@clinmesh/contracts/knowledge-claims'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
@@ -90,7 +93,15 @@ import { OutpatientPrescriptionService } from './outpatient-prescription-service
 import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 import { ClinicalScoreService, buildVitalObservationComponents } from './clinical-score-service.ts'
 import { ClinicalQualityService } from './clinical-quality-service.ts'
+import { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
+import { LocalSourceIngestionService } from './local-source-ingestion-service.ts'
+import { DiseasePackRegistry, DiseasePackRuntimeService } from './disease-pack-runtime-service.ts'
+import { DiseasePackExamService } from './disease-pack-exam-service.ts'
+import { KnowledgePipelineService } from './knowledge-pipeline-service.ts'
+import { KnowledgeSemanticService } from './knowledge-semantic-service.ts'
+import { AgentOutputScorerService } from './agent-output-scorer-service.ts'
 import { OrderSetDraftService } from './order-set-draft-service.ts'
+import { ClinicalPromptCardService } from './clinical-prompt-card-service.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import {
   casePresentation,
@@ -313,10 +324,19 @@ export class WorkflowService
   readonly pathology: PathologyRequestService
   readonly consultationRecording: ConsultationRecordingService
   readonly qualityControl: ClinicalDocumentQualityControl
+  readonly clinicalFactLedger: ClinicalFactLedgerService
+  readonly localIngestion: LocalSourceIngestionService
   readonly clinicalScores: ClinicalScoreService
   readonly clinicalQuality: ClinicalQualityService
+  readonly diseasePacks: DiseasePackRuntimeService
+  readonly diseasePackExam: DiseasePackExamService
+  readonly knowledgeSemantics: KnowledgeSemanticService
+  readonly knowledgePipeline: KnowledgePipelineService
+  readonly agentOutputScorer: AgentOutputScorerService
   /** 专病组套只读草稿预装配；不写入任何正式业务事实。 */
   readonly orderSets: OrderSetDraftService
+  /** 多时机统一临床提示卡与展示前安全过滤引擎（同步零模型调用）。 */
+  readonly promptCards: ClinicalPromptCardService
 
   constructor(
     database: ClinMeshDatabase,
@@ -324,6 +344,13 @@ export class WorkflowService
     commands: CommandExecutor,
     options: {
       consultationRecordingEnabled?: boolean
+      diseasePacks?: readonly unknown[]
+      diseasePackDirs?: readonly string[]
+      diseasePackVerifyFingerprint?: boolean
+      hospitalOverlays?: readonly unknown[]
+      includeBuiltinDraftDiseasePacks?: boolean
+      registeredClinicianReviewers?: readonly ClinicalReviewerRecord[]
+      skipStartupExamVerification?: boolean
       qualityModelAvailable?: boolean
       qualityContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
@@ -357,14 +384,86 @@ export class WorkflowService
       requests: this.#requests,
       tokenSecret: options.tokenSecret,
     })
+    this.clinicalFactLedger = new ClinicalFactLedgerService({
+      commands,
+      database,
+      fhir,
+      outpatientContext: this.#context,
+    })
+    this.localIngestion = new LocalSourceIngestionService({
+      commands,
+      database,
+      fhir,
+      outpatientContext: this.#context,
+    })
     this.clinicalScores = new ClinicalScoreService({
       commands,
       database,
+      factLedger: this.clinicalFactLedger,
       fhir,
       ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
       outpatientContext: this.#context,
     })
-    this.clinicalQuality = new ClinicalQualityService({ commands, database, fhir, outpatientContext: this.#context, scores: this.clinicalScores })
+    this.clinicalQuality = new ClinicalQualityService({ commands, database, factLedger: this.clinicalFactLedger, fhir, outpatientContext: this.#context, scores: this.clinicalScores })
+    this.diseasePacks = new DiseasePackRuntimeService({
+      commands,
+      database,
+      factLedger: this.clinicalFactLedger,
+      fhir,
+      outpatientContext: this.#context,
+      registry: new DiseasePackRegistry({
+        ...(options.includeBuiltinDraftDiseasePacks === undefined ? {} : { includeBuiltinDraftPacks: options.includeBuiltinDraftDiseasePacks }),
+        ...(options.hospitalOverlays === undefined ? {} : { overlays: options.hospitalOverlays }),
+        ...(options.diseasePackDirs === undefined ? {} : { packDirs: options.diseasePackDirs }),
+        ...(options.diseasePacks === undefined ? {} : { packs: options.diseasePacks }),
+        ...(options.diseasePackVerifyFingerprint === undefined ? {} : { verifyFingerprint: options.diseasePackVerifyFingerprint }),
+        ...(options.registeredClinicianReviewers === undefined ? {} : { registeredClinicianReviewers: options.registeredClinicianReviewers }),
+      }),
+    })
+    this.diseasePackExam = new DiseasePackExamService({
+      commands,
+      database,
+      diseasePacks: this.diseasePacks,
+      now: this.#now,
+      ...(options.referenceData === undefined ? {} : { referenceData: options.referenceData }),
+      tokenSecret: options.tokenSecret,
+    })
+    this.clinicalScores.setDiseasePacks(this.diseasePacks)
+    this.clinicalQuality.setDiseasePacks(this.diseasePacks)
+    this.clinicalFactLedger.setActivePromptsResolver((context, subject, baseLedger, asOf) => (
+      this.diseasePacks
+        .activeRuntimeSummaryForSubject(context, subject, asOf, baseLedger)
+        .activeQuestionnaireItems
+        .map(item => ({
+          code: item.code,
+          labelZh: item.labelZh,
+          ...(item.unit === undefined ? {} : { unit: item.unit }),
+        }))
+    ))
+    this.knowledgeSemantics = new KnowledgeSemanticService({
+      commands,
+      database: this.#database,
+      diseasePacks: this.diseasePacks,
+      factLedger: this.clinicalFactLedger,
+      fhir,
+      ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
+      outpatientContext: this.#context,
+    })
+    this.knowledgePipeline = new KnowledgePipelineService({
+      commands,
+      database,
+      diseasePacks: this.diseasePacks,
+      factLedger: this.clinicalFactLedger,
+      ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
+      outpatientContext: this.#context,
+      ...(options.registeredClinicianReviewers === undefined ? {} : { registeredReviewers: options.registeredClinicianReviewers }),
+    })
+    this.agentOutputScorer = new AgentOutputScorerService({
+      commands,
+      database,
+      factLedger: this.clinicalFactLedger,
+      outpatientContext: this.#context,
+    })
     this.insurance = new InsuranceService(database, commands, {
       now: this.#now,
       readSource: (context, target) => {
@@ -468,12 +567,46 @@ export class WorkflowService
         }
       },
     })
+    const enforceOrderIndication = (indicationInput: {
+      asOf: string
+      candidateCodes?: readonly string[] | undefined
+      catalogItemId?: string | undefined
+      caseId: string
+      clinicalOverride?: ClinicalOverrideInput | undefined
+      context: ActorContext
+      itemCode: string
+      operation: string
+      orderDisplay?: string | undefined
+      orderKind: OrderIndicationOrderKind
+      patientId: string
+      subjectReference: string
+    }) => {
+      const inpatientOwner = inpatientRequestOwner(this.#database, indicationInput.context, indicationInput.caseId)
+      const subject = inpatientOwner === undefined
+        ? { id: indicationInput.caseId, kind: 'outpatient' as const, patientId: indicationInput.patientId }
+        : { id: inpatientOwner.admission_id, kind: 'inpatient' as const, patientId: inpatientOwner.patient_id }
+      const gate = inpatientOwner === undefined ? 'outpatient-prescription' as const : 'inpatient-order' as const
+      return this.clinicalQuality.enforceOrderIndication(indicationInput.context, {
+        asOf: indicationInput.asOf,
+        candidateCodes: indicationInput.candidateCodes,
+        catalogItemId: indicationInput.catalogItemId,
+        clinicalOverride: indicationInput.clinicalOverride,
+        gate,
+        itemCode: indicationInput.itemCode,
+        operation: indicationInput.operation,
+        orderDisplay: indicationInput.orderDisplay,
+        orderKind: indicationInput.orderKind,
+        subject,
+        subjectReference: indicationInput.subjectReference,
+      })
+    }
     const requestHost = {
       assertCaseResponsibility: (context: ActorContext, caseId: string) => this.#context.assertCaseResponsibility(context, caseId),
       assertExpectedVersions: (expectedVersions: Record<string, string>, references: string[]) => (
         this.#context.assertExpectedVersions(expectedVersions, references)
       ),
       caseByEncounter: (context: ActorContext, encounterId: string) => this.#context.caseByEncounter(context, encounterId),
+      enforceOrderIndication,
       hasConsultation: (context: ActorContext, caseId: string) => this.#context.hasConsultation(context, caseId),
       reportPublished: (transaction: CommandTransaction, context: ActorContext, caseId: string, reportReference: string) =>
         this.#recordPublishedReport(transaction, context, caseId, reportReference),
@@ -481,7 +614,19 @@ export class WorkflowService
     }
     this.examination = new ExaminationRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.orderSets = new OrderSetDraftService({
-      clinicalScores: this.clinicalScores, commands, database, examination: this.examination, fhir, outpatientContext: this.#context,
+      clinicalScores: this.clinicalScores, commands, database, diseasePacks: this.diseasePacks, examination: this.examination, fhir, outpatientContext: this.#context,
+    })
+    this.promptCards = new ClinicalPromptCardService({
+      clinicalQuality: this.clinicalQuality,
+      clinicalScores: this.clinicalScores,
+      commands,
+      database,
+      diseasePacks: this.diseasePacks,
+      factLedger: this.clinicalFactLedger,
+      fhir,
+      ...(options.guidelines === undefined ? {} : { guidelines: options.guidelines }),
+      outpatientContext: this.#context,
+      ...(options.registeredClinicianReviewers === undefined ? {} : { registeredReviewers: options.registeredClinicianReviewers }),
     })
     this.imaging = new ImagingRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
     this.pathology = new PathologyRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
@@ -497,6 +642,7 @@ export class WorkflowService
     this.#laboratory = new OutpatientLaboratoryService({
       context: this.#context,
       host: {
+        enforceOrderIndication,
         reportPublished: (transaction, context, caseId, reportReference, reportName) => (
           this.#appendReportCardTurn(transaction, context, caseId, { reportName, reportReference })
         ),
@@ -527,6 +673,10 @@ export class WorkflowService
         ),
       },
     })
+    this.diseasePackExam.restorePersistedActivations()
+    if (!options.skipStartupExamVerification) {
+      this.diseasePackExam.verifyStartupActivePacks()
+    }
   }
 
   commandReceipt(context: ActorContext, operationId: string, idempotencyKey: string) {
@@ -702,6 +852,7 @@ export class WorkflowService
   }
 
   orderHospitalService(input: {
+    clinicalOverride?: ClinicalOverrideInput | undefined
     context: ActorContext
     encounterId: string
     expectedVersions: Record<string, string>
@@ -713,7 +864,11 @@ export class WorkflowService
       dataSchema: orderHospitalServiceResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
-      input: { encounterId: input.encounterId, serviceId: input.serviceId },
+      input: {
+        ...(input.clinicalOverride === undefined ? {} : { clinicalOverride: input.clinicalOverride }),
+        encounterId: input.encounterId,
+        serviceId: input.serviceId,
+      },
       operation: 'hospital-service.order',
     }, transaction => {
       this.#context.assertRole(input.context, ['outpatient-doctor'])
@@ -742,10 +897,28 @@ export class WorkflowService
       if (!config.availableScopes.includes('outpatient')) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The Hospital Service is unavailable for outpatient care')
       }
+      const now = this.#context.virtualTime(input.context)
+      const orderKind: OrderIndicationOrderKind = ({
+        EXAMINATION: 'examination',
+        IMAGING: 'imaging',
+        LABORATORY: 'laboratory',
+      } as const)[config.category.code as 'EXAMINATION' | 'IMAGING' | 'LABORATORY'] ?? 'procedure'
+      const quality = this.clinicalQuality.enforceOrderIndication(input.context, {
+        asOf: now,
+        candidateCodes: [service.code, config.nationalService.code, service.service_id],
+        catalogItemId: service.service_id,
+        clinicalOverride: input.clinicalOverride,
+        gate: 'outpatient-prescription',
+        itemCode: service.code,
+        operation: 'hospital-service.order',
+        orderDisplay: service.name_zh,
+        orderKind,
+        subject: { id: outpatientCase.case_id, kind: 'outpatient', patientId: outpatientCase.patient_id },
+        subjectReference: `Encounter/${input.encounterId}`,
+      })
       const serviceRequestId = uuidv7()
       const taskId = `task-hospital-service-${serviceRequestId}`
       const chargeItemId = `charge-hospital-service-${serviceRequestId}`
-      const now = this.#context.virtualTime(input.context)
       const serviceRequest = transaction.fhir.create(input.context, {
         resourceType: 'ServiceRequest',
         id: serviceRequestId,
@@ -819,11 +992,12 @@ export class WorkflowService
           taskVersion: task.meta?.versionId ?? '1',
           totalFen: config.chargeDefinition.priceFen,
         },
-        effects: [serviceRequest, task, chargeItem].map(resource => ({
+        effects: [...[serviceRequest, task, chargeItem].map(resource => ({
           kind: 'created' as const,
           reference: `${resource.resourceType}/${resource.id}`,
           versionId: resource.meta?.versionId ?? '1',
-        })),
+        })), ...quality.effects],
+        ...(quality.receipt === undefined ? {} : { clinicalQuality: quality.receipt }),
       }
     })
   }
