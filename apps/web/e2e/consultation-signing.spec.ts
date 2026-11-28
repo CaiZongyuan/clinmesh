@@ -3,20 +3,12 @@ import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { expect, test } from './fixtures.ts'
-import { waitForRecordedHistory } from './consultation-recording.ts'
 
-test('confirms specialty visit classification, recovers signing preparation and signs with contextual histories', async ({ page, webRoot }) => {
-  let reply = '头晕一周了。'
+test('confirms specialty visit classification, signs and revises clinical documents with contextual histories', async ({ page, webRoot }) => {
   const server = await startBrowserServer(webRoot, {
-    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
-    syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
-    chatCompletionsProvider: { async completeJson(input) {
-      if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
-      if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply }), model: 'synthetic' }
-      const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }> }
-      const turn = payload.turns.at(-1)!
-      return { content: JSON.stringify({ additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turn.id,
-        quote: turn.messageText, relation: 'addition' }] }), model: 'synthetic' }
+    syntheaProvider: new StubSyntheaProvider(),
+    chatCompletionsProvider: { async completeJson() {
+      return { content: JSON.stringify(persona), model: 'synthetic' }
     } },
   })
   const errors: string[] = []
@@ -36,13 +28,6 @@ test('confirms specialty visit classification, recovers signing preparation and 
     await page.getByText('张琴', { exact: true }).first().click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
-    const ask = async () => {
-      await openWorkspaceTab(page, '问诊记录')
-      await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充病史？')
-      await page.getByRole('button', { name: '向患者提问', exact: true }).click()
-      await expect(page.getByText(reply, { exact: true })).toBeVisible()
-      await openWorkspaceTab(page, '病历记录')
-    }
     await openWorkspaceTab(page, '病历记录')
     await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('')
     await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('')
@@ -81,13 +66,8 @@ test('confirms specialty visit classification, recovers signing preparation and 
     await openWorkspaceTab(page, '病历记录')
     await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('父亲患高血压，患者自述。')
     await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('青霉素用药后皮疹，患者自述。')
-    await ask()
-    await waitForRecordedHistory(page, reply)
-    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了。')
-    await page.getByRole('button', { name: '暂停自动整理', exact: true }).click()
-    await expect(page.getByRole('button', { name: '恢复并补录', exact: true })).toBeEnabled()
-    reply = '站起来时更明显。'
-    await ask()
+    const hpiText = '患者自述：头晕一周了。\n患者自述：站起来时更明显。'
+    await page.getByLabel('现病史', { exact: true }).fill(hpiText)
     for (const [label, text] of [
       ['主诉', '头晕一周。'], ['既往史', '既往高血压。'], ['体格检查', '查体未见明显异常。'],
       ['辅助检查', '暂无检查。'], ['评估', '继续评估。'], ['处置', '门诊随访。'], ['随访', '加重时及时就诊。'],
@@ -105,35 +85,16 @@ test('confirms specialty visit classification, recovers signing preparation and 
     await expect(dialog).toContainText('青霉素用药后皮疹，患者自述。')
     const commit = dialog.getByRole('button', { name: '确认签署病历', exact: true })
     await expect(commit).toBeEnabled()
-    const firstPreviewId = (await read()).consultationRecording!.signingPreparation!.previewId
-    await page.route('**/clinical-document/actions/cancel-sign', async route => {
-      const response = await route.fetch()
-      expect(response.ok()).toBe(true)
-      await route.abort('failed')
-    }, { times: 1 })
     await dialog.getByRole('button', { name: '取消', exact: true }).click()
     await expect(dialog).toHaveCount(0)
-    await expect.poll(async () => (await read()).consultationRecording!.signingPreparation).toBeUndefined()
-    expect((await read()).consultationRecording).toMatchObject({ paused: true, remainingCount: 1 })
     await page.getByRole('button', { name: '签署病历', exact: true }).click()
     await expect(dialog).toBeVisible()
-    expect((await read()).consultationRecording!.signingPreparation!.previewId).not.toBe(firstPreviewId)
-    await page.reload()
-    await openWorkspaceTab(page, '问诊记录')
-    await expect(page.getByRole('button', { name: '恢复并补录', exact: true })).toBeDisabled()
-    await openWorkspaceTab(page, '病历记录')
-    await expect(page.getByText('签署准备尚未结束', { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: '返回编辑并恢复整理', exact: true }).click()
-    await expect(page.getByText('签署准备尚未结束', { exact: true })).toHaveCount(0)
-    await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
-    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了。\n患者自述：' + reply)
-    await page.getByRole('button', { name: '签署病历', exact: true }).click()
     await expect(dialog.getByRole('checkbox')).toHaveCount(0)
     await expect(commit).toBeEnabled()
     await commit.click()
     await expect(dialog).toHaveCount(0)
     await expect.poll(async () => (await read()).clinicalDocument!.signed.length).toBe(1)
-    expect((await read()).clinicalDocument!.signed[0]!.content.historyOfPresentIllness).toBe('患者自述：头晕一周了。\n患者自述：' + reply)
+    expect((await read()).clinicalDocument!.signed[0]!.content.historyOfPresentIllness).toBe(hpiText)
     expect((await read()).clinicalDocument!.signed[0]!.content).toMatchObject({
       menstrualHistory: '患者自述已绝经。', obstetricHistory: '患者自述孕2产2。',
       familyHistory: '父亲患高血压，患者自述。', allergyHistory: '青霉素用药后皮疹，患者自述。',
@@ -205,9 +166,6 @@ test('confirms specialty visit classification, recovers signing preparation and 
     const revisionBounds = await revision.boundingBox()
     const historyBounds = await history.boundingBox()
     expect(revisionBounds!.y + revisionBounds!.height).toBeLessThan(historyBounds!.y)
-    await openWorkspaceTab(page, '问诊记录')
-    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toHaveCount(1)
-    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toBeDisabled()
     expect(errors).toEqual([])
   } finally { await server.close() }
 })

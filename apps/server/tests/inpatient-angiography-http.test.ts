@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientPciSelectionSchema, inpatientPciSelectionResponseSchema, type InpatientPciSelectionParameters } from '@clinmesh/contracts/inpatient-pci-selection'
-import { inpatientDrgAgentSchema } from '@clinmesh/contracts/inpatient-drg-agent'
+import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientMaterialEstimateResponseSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientMaterialReservationListSchema, inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -313,7 +313,7 @@ it('未确认修订不改变已确认选型的用量依据，当前编辑仍可�
     expect(recorded.status).toBe(200)
     surgery = inpatientSurgeryResponseSchema.parse(await recorded.json()).data
   }
-  const usage = (await s.fixture.read('ward-nurse', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)).usage
+  const usage = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/record-checks`, inpatientDrgRecordChecksSchema)).usage
     .filter(item => item.executionId === executionId)
   expect(usage).toContainEqual(expect.objectContaining({ materialId: wire, plannedQuantity: 1, actualQuantity: 2,
     remainingQuantity: 0, excessQuantity: 1, usedFen: 40000, additionalFen: 20000 }))
@@ -324,7 +324,7 @@ it('未确认修订不改变已确认选型的用量依据，当前编辑仍可�
     executionId, note: '完成后仍按本台原选型确认回顾实际用量',
   })
   expect(completed.status).toBe(200)
-  expect((await s.fixture.read('ward-nurse', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)).usage
+  expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/record-checks`, inpatientDrgRecordChecksSchema)).usage
     .filter(item => item.executionId === executionId)).toEqual(usage)
   expect(s.prepared.modelCalls).toBe(0)
 })
@@ -494,19 +494,11 @@ describe('多手术计划的选型依据隔离', () => {
     confirmed = inpatientPciSelectionResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
       expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: s.stay.requestId },
     })).json()).data.confirmation!
-    expect((await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/followup/start`, {
-      encounterVersion: s.stay.encounterVersion, expectedTaskVersion: 0,
-    })).status).toBe(200)
     await s.fixture.runtime.dispatchPending()
     const published = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
       .estimates.find(item => item.requestId === s.stay.requestId)!
     expect(published.draft!.items).toHaveLength(4)
     expect(published.costs?.components.projectedTotalFen).toBe(314598)
-    // 首次发布的明确稿进入全住院费用后，沿实际后台周期再核对一次跟进依据。
-    await s.fixture.runtime.dispatchPending()
-    const beforeFollowup = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
-    expect(beforeFollowup.analysis?.basisFingerprint).toBe(beforeFollowup.basisFingerprint)
-    expect(beforeFollowup.status).toBe('succeeded')
   })
   beforeEach(async () => {
     await s.fixture.executeAngiography(s.stay)
@@ -529,7 +521,6 @@ describe('多手术计划的选型依据隔离', () => {
     })).json()).data.requests.at(-1)!
     const before = (await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema))
       .estimates.find(item => item.requestId === s.stay.requestId)!
-    const followupBeforeEdit = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
     const saved = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/save`, {
       requestId: planned.id, expectedDraftVersion: 1, parameters: { ...pciAgentParameters, requestId: planned.id,
         measurements: report.measurements.map(item => item.kind === 'lesion-length' ? { ...item, value: 17 } : item) },
@@ -547,10 +538,6 @@ describe('多手术计划的选型依据隔离', () => {
     const after = await s.fixture.read('inpatient-doctor', `${s.stay.path}/material-estimates`, inpatientMaterialEstimatesSchema)
     expect(after.estimates.find(item => item.requestId === s.stay.requestId)!.basisFingerprint).toBe(before.basisFingerprint)
     expect(after.estimates.find(item => item.requestId === planned.id)!.candidates.every(item => item.eligibility === 'inapplicable')).toBe(true)
-    const followup = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/agent`, inpatientDrgAgentSchema)
-    expect(followup.basisFingerprint).toBe(followupBeforeEdit.basisFingerprint)
-    expect(followup.lastAnalysis?.sources).toMatchObject({ selectionConfirmationId: confirmed.id, selectionVersion: confirmed.version })
-    expect(followup.missing.join(' ')).not.toContain('测量不在已核验仿真范围')
     const unboundResponse = await s.fixture.request('inpatient-doctor', `${s.stay.path}/pci-selection/confirm`, {
       expectedVersion: confirmed.version, parameters: pciAgentParameters,
     })

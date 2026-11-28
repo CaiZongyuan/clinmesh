@@ -50,9 +50,6 @@ describe('clinmesh process entrypoint', () => {
     expect(envelope.data.operations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'billing.case.get' }),
       expect.objectContaining({ id: 'payment.recover' }),
-      expect.objectContaining({ id: 'doctor.document-quality.get' }),
-      expect.objectContaining({ id: 'doctor.document-quality.check' }),
-      expect.objectContaining({ id: 'doctor.document-quality.retain' }),
       expect.objectContaining({ id: 'inpatient.surgery.catalog', version: 4 }),
       expect.objectContaining({ id: 'inpatient.surgery.read', version: 6 }),
       expect.objectContaining({ id: 'inpatient.surgery.request', version: 6 }),

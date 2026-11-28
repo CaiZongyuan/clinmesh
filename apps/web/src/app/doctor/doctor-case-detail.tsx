@@ -21,7 +21,6 @@ import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { CheckCircleIcon, CheckIcon, ClipboardPenIcon, FileSignatureIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import {
   getClinicalCatalog,
   previewClinicalSign
@@ -38,14 +37,11 @@ import { formatFen } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
 import {
-  ConsultationRecordingControls,
-} from './consultation-recording-controls.tsx'
-import {
   ClinicalDocumentPage,
   type ClinicalDocumentPageActions
 } from './clinical-document-page.tsx'
 import { type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
-import { DoctorAssistantSummary, assistantKindTarget, readyRecommendationCount } from './doctor-assistant-summary.tsx'
+import { DoctorAssistantSummary, readyRecommendationCount } from './doctor-assistant-summary.tsx'
 import {
   ConsultationPage,
   type ConsultationPageAction,
@@ -54,10 +50,8 @@ import { DiagnosisPage, type DiagnosisPageActions } from './diagnosis-page.tsx'
 import { doctorCaseStatusLabel } from './doctor-case-status.ts'
 import { caseDetailSectionByCompletionTarget, caseInvestigationRequests, encounterCompletionTargetElementIds, ErrorAlert, usesStructuredClinicalDocument, type DoctorAgentDraftHydrationRevisions, type InvestigationCategory, type InvestigationView } from './doctor-case-support.tsx'
 import { DoctorDraftScope, DoctorDraftField as Field } from './doctor-draft-fields.tsx'
-import { preparationKinds, useDoctorPreparation } from './doctor-preparation-state.tsx'
-import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
+import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { RevisitEditor } from './doctor-revisit-editor.tsx'
-import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, openIssues, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { ImagingPage, type ImagingPageActions } from './imaging-page.tsx'
 import { useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 import {
@@ -201,32 +195,12 @@ export function CaseDetail({
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
   const firstVisitForm = useRef<HTMLFormElement>(null)
-  useRegisterAgentForm({
-    viewId: 'consultation', selectionId: detail.caseId, name: 'firstVisit', values: null,
-    readValues: () => {
-      const form = firstVisitForm.current
-      if (form === null) return null
-      const data = new FormData(form)
-      return { assessment: String(data.get('assessment') ?? ''), historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? '') }
-    },
-  })
   const readOnly = detail.encounter.status !== 'in-progress'
   const visitNotStarted = detail.status === 'awaiting-doctor'
   const clinicalReadOnly = readOnly || visitNotStarted
   const preparation = useDoctorPreparation()
   const imagingDrafts = useManualInvestigationDrafts(JSON.stringify([recommendationScope, detail.caseId, detail.encounter.id, 'imaging']), 'imaging')
   const manualImagingIds = new Set(imagingDrafts.rows.flatMap(({ value }) => value.kind === 'imaging' ? [value.serviceId] : []))
-  const quality = useDocumentQualityControl({
-    detail, document: workingClinicalDocument, scope: recommendationScope,
-    enabled: !clinicalReadOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0
-  })
-  // 页签「助手 n」：各分区内待医生确认的推荐与质控待核实条数。
-  const assistantCounts: Partial<Record<DoctorCaseSection, number>> = clinicalReadOnly ? {} : { record: openIssues(quality).length }
-  if (!clinicalReadOnly && preparation !== undefined) for (const kind of preparationKinds) {
-    const section = caseDetailSectionByCompletionTarget[assistantKindTarget(kind)]
-    assistantCounts[section] = (assistantCounts[section] ?? 0) + readyRecommendationCount(preparation.jobs[kind], detail, preparation.preferences(kind))
-  }
-  const [pendingQualityIssue, setPendingQualityIssue] = useState<{ caseId: string; issue: QualityIssue }>()
   const sectionView = useWorkspaceCardView('doctor-case-section')
   const parsedSection = doctorCaseSectionSchema.safeParse(sectionView.tab)
   const activeSection = parsedSection.success ? parsedSection.data : 'record'
@@ -255,19 +229,6 @@ export function CaseDetail({
   }>()
   const detailRoot = useRef<HTMLDivElement>(null)
   const correctionNavigationKey = useRef<string | undefined>(undefined)
-  const navigateToQualityIssue = (issue: QualityIssue) => {
-    preparation?.closeDetails()
-    setActiveSection('record')
-    setPendingQualityIssue({ caseId: detail.caseId, issue })
-  }
-  useEffect(() => {
-    if (activeSection !== 'record' || pendingQualityIssue === undefined || pendingQualityIssue.caseId !== detail.caseId) return
-    const frame = requestAnimationFrame(() => {
-      if (detailRoot.current !== null) locateDocumentQualityIssue(detailRoot.current, pendingQualityIssue.issue)
-      setPendingQualityIssue(undefined)
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [activeSection, pendingQualityIssue, detail.caseId])
   const navigateInvestigationTarget = useCallback((target: EncounterCompletionTarget): void => {
     if (target === 'laboratory' || target === 'imaging' || target === 'pathology' || target === 'examination') {
       const requests = caseInvestigationRequests(detail)[target]
@@ -499,11 +460,6 @@ export function CaseDetail({
   return (
     <DoctorCaseLayout>
       <div ref={detailRoot} className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {preparation === undefined ? null : <DoctorPreparationDetailsDialog open={preparation.details.open}
-          onOpenChange={open => { if (!open) preparation.closeDetails() }} title={locale === 'zh-CN' ? '依据与说明' : 'Evidence and details'}>
-          {preparation.details.kind === 'quality' ? null : <DoctorRecommendationDetails job={preparation.jobs[preparation.details.kind]} locale={locale} />}
-          <DocumentQualityDetails quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} />
-        </DoctorPreparationDetailsDialog>}
         <PatientBanner
           patientActions={patientActions}
           workingDocument={workingClinicalDocument}
@@ -521,14 +477,6 @@ export function CaseDetail({
         )}
 
         <WorkspaceTabs id="doctor-case-section" locale={locale} value={activeSection}
-          trailing={detail.consultationRecording === undefined && clinicalDocumentActions.controlRecording?.error == null ? undefined : (
-            <ConsultationRecordingControls
-              recording={detail.consultationRecording}
-              action={clinicalDocumentActions.controlRecording}
-              disabled={clinicalReadOnly || (detail.clinicalDocument?.signed.length ?? 0) > 0 || detail.consultationRecording?.signingPreparation?.active === true}
-              messages={messages}
-            />
-          )}
           onValueChange={value => {
             const section = doctorCaseSectionSchema.safeParse(value)
             if (section.success) setActiveSection(section.data)
@@ -553,12 +501,10 @@ export function CaseDetail({
               : item.value === 'laboratory'
                 ? completion.data !== undefined && hasInvestigationActivity
                 : completion.data !== undefined
-            const assistant = assistantCounts[item.value as DoctorCaseSection] ?? 0
-            return { value: item.value, label: item.label, ...(assistant > 0 ? { assistant } : {}),
+            return { value: item.value, label: item.label,
               ...(item.value === 'consultation' || completion.data !== undefined ? { count: item.value === 'consultation' ? item.count ?? 0 : pending } : {}),
               status: item.value === activeSection ? 'current' : !known || pending > 0 ? 'pending' : 'completed' }
           })}>
-          <div className="empty:hidden shrink-0 px-4 pt-3"><DocumentQualityCompact quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} /></div>
 
           <span id="clinical-document-update-notice" className="sr-only" role="status">
             {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? '' : messages.clinicalDocumentHasUpdates}
@@ -617,7 +563,6 @@ export function CaseDetail({
                     openRevisionRequest={openRecordRevisionNonce}
                     detail={detail}
                     hideInlineActions
-                    hideRecordingControls
                     updates={clinicalDocumentUpdates}
                     elementId={encounterCompletionTargetElementIds['clinical-document']}
                     key={`structured-clinical-document:${detail.caseId}:${agentDraftHydrationRevisions.record ?? 0}`}
@@ -625,9 +570,6 @@ export function CaseDetail({
                     messages={messages}
                     onDocumentChange={onClinicalDocumentChange}
                     workingDocument={workingClinicalDocument}
-                    qualityScope={recommendationScope}
-                    quality={quality}
-                    {...(preparation === undefined ? {} : { onOpenQualityDetails: () => preparation.openDetails('quality') })}
                   />
                 )}
               </div>

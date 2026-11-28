@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures.ts'
 
-test('管理员在演示准备与患者库之间切换，保留准备输入和生成入口', async ({ page, browserApp }) => {
+test('管理员在演示准备与患者库之间切换，保留准备输入和重置入口', async ({ page, browserApp }) => {
   await page.goto(`${browserApp.origin}/scenario-data`)
   await page.getByLabel('账户邮箱').fill('admin@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
@@ -9,9 +9,7 @@ test('管理员在演示准备与患者库之间切换，保留准备输入和�
   await expect(preparation).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('form', { name: '场景虚拟时间', exact: true })).toBeVisible()
   await page.getByLabel('推进到（北京时间）', { exact: true }).fill('2026-11-01T08:00')
-  await page.getByRole('button', { name: '生成患者', exact: true }).click()
-  await expect(page.getByRole('dialog', { name: '生成患者', exact: true })).toBeVisible()
-  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: '生成患者', exact: true })).toHaveCount(0)
   await page.getByRole('tab', { name: '患者库', exact: true }).click()
   await expect(page.getByRole('tabpanel', { name: '患者库', exact: true })).toBeVisible()
   await expect(page.getByRole('form', { name: '场景虚拟时间', exact: true })).toHaveCount(0)

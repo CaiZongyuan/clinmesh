@@ -15,7 +15,6 @@ const runtime = await createClinMeshRuntime({
   ...(config.modelUsageControl === undefined ? {} : { modelUsageControl: config.modelUsageControl }),
   ...(config.modelPricing === undefined ? {} : { modelPricing: config.modelPricing }),
   ...(config.ai === undefined ? {} : { ai: config.ai }),
-  ...(config.dshModelBridge === undefined ? {} : { dshModelBridge: config.dshModelBridge }),
   ...(config.referenceReleaseId === undefined
     ? {}
     : { activeReferenceReleaseId: config.referenceReleaseId }),
@@ -23,7 +22,6 @@ const runtime = await createClinMeshRuntime({
   authSecret: config.authSecret,
   autoDispatchIntervalMs: 250,
   cursorSecret: config.cursorSecret,
-  ...(config.consultationRecordingModel === undefined ? {} : { consultationRecordingModel: config.consultationRecordingModel }),
   databasePath,
   guidelineDatabasePath: config.guidelineDatabasePath,
   guidelineNonCommercialUse: config.guidelineNonCommercialUse,
@@ -38,16 +36,10 @@ const runtime = await createClinMeshRuntime({
   imagingCatalogDirectory: resolve(config.imagingCatalogDirectory),
   pathologyAssetDirectory: resolve(config.pathologyAssetDirectory),
   pathologyCatalogDirectory: resolve(config.pathologyCatalogDirectory),
-  ...(config.dshBridgeSecret === undefined
-    ? {}
-    : { dshBridgeSecret: config.dshBridgeSecret }),
   migrationMode: 'verify',
   ...(config.referenceDatabasePath === undefined
     ? {}
     : { referenceDatabasePath: config.referenceDatabasePath }),
-  ...(config.syntheaProviderUrl === undefined
-    ? {}
-    : { syntheaProviderUrl: config.syntheaProviderUrl }),
   trustedOrigins: config.trustedOrigins,
   webRoot,
 })

@@ -18,7 +18,6 @@ import type { ImagingViewerSource } from './imaging/imaging-viewer.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { formatClinicalDateTime } from './doctor/clinical-date-time.ts'
 import { InpatientReportBody } from './inpatient-report-body.tsx'
-import { useInpatientAgentState } from './inpatient-agent-tools.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { reportDraftKey, reportIdentity, reportRecords, reportScope, reportSnapshot, ReportSelectionLimit, sameReport, useInpatientReportDrafts,
   type ReportRecord, type ReportRow } from './inpatient-report-reader-drafts.ts'
@@ -68,7 +67,6 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
     : admission.recordStatus === 'archived' ? text(['本次住院病历已归档，不能新增已阅确认；仍可恢复原已阅结果。', 'This admission record is archived. New acknowledgements are unavailable; original acknowledgement results can still be recovered.']) : null
   const readOnly = loading || submissionReason !== null
   const writer = useInpatientReportDrafts({ scope: reportScope(session, admission.patientId, admission.id), session, write, refresh, readOnly }), records = reportRecords(data, locale)
-  const agent = useInpatientAgentState()
   const [open, setOpen] = useState(false), [selectedId, setSelectedId] = useState<string | null>(null), [ready, setReady] = useState<Set<string>>(() => new Set())
   const [query, setQuery] = useState(''), [page, setPage] = useState(0), [filter, setFilter] = useState<'all' | 'unread' | 'progress'>('all')
   const [review, setReview] = useState<ReportRow[] | null>(null), [discard, setDiscard] = useState(false)
@@ -81,17 +79,6 @@ function ReportReaderSession({ admission, session, locale, write, data, refresh,
     queryFn: ({ signal }: { signal: AbortSignal }) => getImagingStudy(item.studyId, signal), gcTime: 0 })) })
   const unavailable = displayedStudies.filter((_, index) => studyStates[index]?.isError || studyStates[index]?.data?.available !== true).map(item => item.identity)
   const unavailableKey = JSON.stringify(unavailable)
-  const agentShown = records.flatMap(record => {
-    const current = reportSnapshot(record, admission.id)
-    return open && record.kind === 'imaging' && current && ready.has(reportIdentity(current)) && !unavailable.includes(reportIdentity(current))
-      ? [{ admissionId: admission.id, requestId: record.request.id, diagnosticReportId: current.input.diagnosticReportId, diagnosticReportVersion: current.input.diagnosticReportVersion }] : []
-  })
-  const agentShownKey = JSON.stringify(agentShown), setReportShown = agent?.setReportShown
-  useEffect(() => {
-    const reports: typeof agentShown = JSON.parse(agentShownKey)
-    for (const report of reports) setReportShown?.(report, true)
-    return () => { for (const report of reports) setReportShown?.(report, false) }
-  }, [agentShownKey, setReportShown])
   useEffect(() => {
     if (unavailableKey === '[]') return
     const identities: string[] = JSON.parse(unavailableKey)

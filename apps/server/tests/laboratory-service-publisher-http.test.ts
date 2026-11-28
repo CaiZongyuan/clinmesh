@@ -31,7 +31,6 @@ import {
 import { startSyntheticCaseResultSchema, syntheticCaseInstanceSchema } from '@clinmesh/contracts/scenario'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
 import type {
   JsonChatCompletionInput,
   JsonChatCompletionsProvider,
@@ -573,15 +572,21 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       expect(response.status, await response.clone().text()).toBe(200)
       return response.json()
     }
-    await post('/api/sim/v1/scenario-generation-jobs', administratorCookie, {
-      name: '合成检验病例', population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
-      providerId: 'synthea', seeds: { clinical: 7331, population: 4242 },
-      timeRange: { end: '2026-08-01', start: '2020-01-01' }, timeZone: 'Asia/Shanghai',
+    const adminContext = (await runtime.identity.resolveSessionContext(new Headers({ cookie: administratorCookie }))).actor
+    await runtime.scenarioData.enqueueGeneration({
+      context: adminContext,
+      idempotencyKey: randomUUID(),
+      request: {
+        moduleMode: 'all', modules: [],
+        name: '合成检验病例', population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+        providerId: 'synthea', seeds: { clinical: 7331, population: 4242 },
+        timeRange: { end: '2026-08-01', start: '2020-01-01' }, timeZone: 'Asia/Shanghai',
+      },
     })
     const generation = await runtime.scenarioData.processNextGenerationJob()
     expect(generation?.status).toBe('succeeded')
     const caseId = generation!.caseIds[0]!
-    await post(`/api/sim/v1/synthetic-cases/${caseId}/patient-persona-jobs`, administratorCookie, {})
+    await runtime.patientPersona.enqueue({ caseId, context: adminContext, idempotencyKey: randomUUID() })
     expect((await runtime.patientPersona.processNext())?.status).toBe('succeeded')
     const syntheticCase = syntheticCaseInstanceSchema.parse(await (await runtime.app.request(
       `/api/sim/v1/synthetic-cases/${caseId}`, { headers: { cookie: administratorCookie } },
@@ -1451,8 +1456,8 @@ describe('Laboratory Service Publisher HTTP contract', () => {
 
   it('pins LOINC enrichment when queued and skips model resolution for deterministic publication', async () => {
     const provider = new LaboratoryEnrichmentProvider()
-    const routeA = encodeModelRoute({ provider: 'synthetic-a', model: 'same-model' })
-    const routeB = encodeModelRoute({ provider: 'synthetic-b', model: 'same-model' })
+    const routeA = 'synthetic-a/same-model'
+    const routeB = 'synthetic-b/same-model'
     let route = routeA
     let resolutions = 0
     provider.resolveModel = async () => { resolutions++; return route }
@@ -1799,17 +1804,24 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     async function materializeOutpatientVisit(patient: SyntheticPatient) {
       nextPatient = patient
       const ready = current()
-      expect((await postJson('/api/sim/v1/scenario-generation-jobs', cookies.admin, {
-        name: '合成心内门诊病例',
-        population: { age: { maximum: 75, minimum: 1 }, count: 1, gender: 'any' },
-        providerId: 'synthea',
-        seeds: { clinical: Math.floor(Math.random() * 100_000) + 1, population: Math.floor(Math.random() * 100_000) + 1 },
-        timeRange: { end: '2026-08-01', start: '2020-01-01' },
-        timeZone: 'Asia/Shanghai',
-      })).status).toBe(200)
+      const adminContext = (await ready.identity.resolveSessionContext(new Headers({ cookie: cookies.admin }))).actor
+      await ready.scenarioData.enqueueGeneration({
+        context: adminContext,
+        idempotencyKey: randomUUID(),
+        request: {
+          moduleMode: 'all',
+          modules: [],
+          name: '合成心内门诊病例',
+          population: { age: { maximum: 75, minimum: 1 }, count: 1, gender: 'any' },
+          providerId: 'synthea',
+          seeds: { clinical: Math.floor(Math.random() * 100_000) + 1, population: Math.floor(Math.random() * 100_000) + 1 },
+          timeRange: { end: '2026-08-01', start: '2020-01-01' },
+          timeZone: 'Asia/Shanghai',
+        },
+      })
       const generated = await ready.scenarioData.processNextGenerationJob()
       const caseId = generated!.caseIds[0]!
-      expect((await postJson(`/api/sim/v1/synthetic-cases/${caseId}/patient-persona-jobs`, cookies.admin, {})).status).toBe(200)
+      await ready.patientPersona.enqueue({ caseId, context: adminContext, idempotencyKey: randomUUID() })
       expect((await ready.patientPersona.processNext())?.status).toBe('succeeded')
       const syntheticCase = syntheticCaseInstanceSchema.parse(await (await ready.app.request(
         `/api/sim/v1/synthetic-cases/${caseId}`,

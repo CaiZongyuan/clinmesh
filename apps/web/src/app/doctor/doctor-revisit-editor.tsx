@@ -10,7 +10,6 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ClipboardPenIcon, PlusIcon, Trash2Icon } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { inpatientFrequencyLabel } from '../inpatient-labels.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
@@ -63,14 +62,6 @@ export function RevisitEditor({ catalog, detail, locale, messages, onSave, pendi
     label: locale === 'zh-CN' ? item.nameZh : item.nameEn,
     value: item.id,
   }))
-  useRegisterAgentForm({
-    viewId: 'consultation', selectionId: detail.caseId, name: 'revisit',
-    values: {
-      diagnosis: { code: diagnosisCode, display: diagnosisDisplay },
-      document: { assessment, plan },
-      medications: medications.map(({ catalogItemId, doseText, frequencyCode, quantity, routeCode }) => ({ catalogItemId, doseText, frequencyCode, quantity, routeCode })),
-    },
-  })
   const updateMedication = (index: number, update: Partial<MedicationDraftLine>) => {
     setMedications(current => current.map((item, itemIndex) => (
       itemIndex === index ? { ...item, ...update } : item

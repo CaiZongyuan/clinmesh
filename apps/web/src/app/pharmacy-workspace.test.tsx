@@ -4,9 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useState } from 'react'
 import { PharmacyWorkspace } from './pharmacy-workspace.tsx'
-import { AgentPageRegistryProvider, useAgentPageRegistration } from './agent-page-context.tsx'
 
 const clients: QueryClient[] = []
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
@@ -15,18 +13,6 @@ const session: SessionContext = {
     practitionerId: 'pharmacist', practitionerRoleId: 'pharmacist-role', roleCode: 'pharmacist', scenarioRunId: 'run', workspaceId: 'workspace' },
   availableRoles: [{ code: 'pharmacist', id: 'pharmacist-role', locationId: 'pharmacy', organizationId: 'hospital', practitionerId: 'pharmacist', practitionerName: '合成药师' }],
   user: { id: 'pharmacist', email: 'pharmacist@example.test', name: '合成药师' },
-}
-
-function PharmacyWriteState() {
-  const page = useAgentPageRegistration()
-  const [attempt, setAttempt] = useState('idle')
-  return <><output aria-label="药房工具可写状态">{JSON.stringify(Object.fromEntries(
-    ['pharmacy.review.propose', 'pharmacy.dispense.propose', 'pharmacy.review.draft.set', 'pharmacy.dispense.draft.set'].map(id => [id, page?.actions[id]?.enabled ?? false]),
-  ))}</output><output aria-label="药房当前处方绑定">{JSON.stringify(page?.claim.selection ?? null)}</output>
-    <button onClick={() => { void Promise.resolve().then(() => page?.actions['pharmacy.dispense.draft.set']?.execute({ selections: [
-      { medicationRequestId: 'medication-request-1', lotId: 'lot-1', quantity: 1 },
-    ] }, new AbortController().signal)).then(() => setAttempt('allowed'), () => setAttempt('blocked')) }}>尝试过期发药草稿工具</button>
-    <output aria-label="过期发药草稿结果">{attempt}</output></>
 }
 
 function recoveryPrescription(index = 1, reviewed = true) {
@@ -64,7 +50,7 @@ it('retains the successful dispense receipt and blocks stale cached writes or ne
   }))
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
-  const { rerender } = render(<QueryClientProvider client={client}><AgentPageRegistryProvider><PharmacyWorkspace locale="zh-CN" session={session} /><PharmacyWriteState /></AgentPageRegistryProvider></QueryClientProvider>)
+  const { rerender } = render(<QueryClientProvider client={client}><PharmacyWorkspace locale="zh-CN" session={session} /></QueryClientProvider>)
   const user = userEvent.setup()
   const action = within(await screen.findByRole('region', { name: '当前操作' }))
   expect(screen.getByText('一片 · 每日两次（BID） · 口服（po）')).toBeTruthy()
@@ -76,12 +62,6 @@ it('retains the successful dispense receipt and blocks stale cached writes or ne
   expect(screen.queryByRole('spinbutton', { name: /^本次发放数量/ })).toBeNull()
   expect(action.getByRole('button', { name: '下一位' })).toHaveProperty('disabled', true)
   expect(screen.getByText(/SYN-RECOVERY-1.*本次.*10/)).toBeTruthy()
-  expect(JSON.parse(screen.getByLabelText('药房当前处方绑定').textContent ?? 'null')).toEqual({ kind: 'prescription', id: first.prescriptionId, version: '3' })
-  await waitFor(() => expect(JSON.parse(screen.getByLabelText('药房工具可写状态').textContent ?? '{}')).toEqual({
-    'pharmacy.review.propose': false, 'pharmacy.dispense.propose': false, 'pharmacy.review.draft.set': false, 'pharmacy.dispense.draft.set': false,
-  }))
-  await user.click(screen.getByRole('button', { name: '尝试过期发药草稿工具' }))
-  await waitFor(() => expect(screen.getByLabelText('过期发药草稿结果').textContent).toBe('blocked'))
   reads = 'stale'
   await user.click(screen.getByRole('button', { name: '重试发药队列' }))
   await waitFor(() => expect(writes).toBe(1))
@@ -95,11 +75,10 @@ it('retains the successful dispense receipt and blocks stale cached writes or ne
   expect(historicalReads).toBe(0)
   reads = 'initial'
   const otherSession = { ...session, actor: { ...session.actor, epoch: 'other-recovery-epoch' } }
-  rerender(<QueryClientProvider client={client}><AgentPageRegistryProvider><PharmacyWorkspace locale="zh-CN" session={otherSession} /><PharmacyWriteState /></AgentPageRegistryProvider></QueryClientProvider>)
+  rerender(<QueryClientProvider client={client}><PharmacyWorkspace locale="zh-CN" session={otherSession} /></QueryClientProvider>)
   await screen.findByRole('heading', { name: '恢复患者1' })
   expect(screen.getByRole('button', { name: '审阅发药' })).toHaveProperty('disabled', false)
   expect(screen.queryByText('本次发药', { exact: true })).toBeNull()
-  expect(JSON.parse(screen.getByLabelText('药房当前处方绑定').textContent ?? 'null')).toEqual({ kind: 'prescription', id: first.prescriptionId, version: '2' })
 })
 
 it('does not repeat an approved review or allow dispensing until the receipt version is projected', async () => {
@@ -122,7 +101,7 @@ it('does not repeat an approved review or allow dispensing until the receipt ver
   }))
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
-  render(<QueryClientProvider client={client}><AgentPageRegistryProvider><PharmacyWorkspace locale="zh-CN" session={session} /><PharmacyWriteState /></AgentPageRegistryProvider></QueryClientProvider>)
+  render(<QueryClientProvider client={client}><PharmacyWorkspace locale="zh-CN" session={session} /></QueryClientProvider>)
   const user = userEvent.setup()
   await user.type(await screen.findByLabelText('审核意见'), '人审冻结审核意见')
   await user.click(screen.getByRole('button', { name: '审核处方' }))
@@ -134,9 +113,6 @@ it('does not repeat an approved review or allow dispensing until the receipt ver
   expect(screen.queryByRole('button', { name: '审阅发药' })).toBeNull()
   expect(screen.queryByLabelText('审核意见')).toBeNull()
   expect(screen.queryByRole('spinbutton')).toBeNull()
-  await waitFor(() => expect(JSON.parse(screen.getByLabelText('药房工具可写状态').textContent ?? '{}')).toEqual({
-    'pharmacy.review.propose': false, 'pharmacy.dispense.propose': false, 'pharmacy.review.draft.set': false, 'pharmacy.dispense.draft.set': false,
-  }))
   reads = 'stale'
   await user.click(screen.getByRole('button', { name: '重试发药队列' }))
   await waitFor(() => expect(screen.getByRole('button', { name: '重试发药队列' })).toHaveProperty('disabled', false))
@@ -174,7 +150,7 @@ it('retains a partial dispense snapshot without inventing remaining quantity and
   }))
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); clients.push(client)
-  render(<QueryClientProvider client={client}><AgentPageRegistryProvider><PharmacyWorkspace locale="zh-CN" session={session} /><PharmacyWriteState /></AgentPageRegistryProvider></QueryClientProvider>)
+  render(<QueryClientProvider client={client}><PharmacyWorkspace locale="zh-CN" session={session} /></QueryClientProvider>)
   const user = userEvent.setup()
   await user.clear(await screen.findByRole('spinbutton'))
   await user.type(screen.getByRole('spinbutton'), '4')
@@ -186,9 +162,6 @@ it('retains a partial dispense snapshot without inventing remaining quantity and
   expect(screen.queryByRole('spinbutton')).toBeNull()
   expect(screen.queryByRole('button', { name: '审阅发药' })).toBeNull()
   expect(screen.getByRole('button', { name: '下一位' })).toHaveProperty('disabled', true)
-  await waitFor(() => expect(JSON.parse(screen.getByLabelText('药房工具可写状态').textContent ?? '{}')).toEqual({
-    'pharmacy.review.propose': false, 'pharmacy.dispense.propose': false, 'pharmacy.review.draft.set': false, 'pharmacy.dispense.draft.set': false,
-  }))
   reads = 'stale'
   await user.click(screen.getByRole('button', { name: '重试发药队列' }))
   await waitFor(() => expect(screen.getByRole('button', { name: '重试发药队列' })).toHaveProperty('disabled', false))

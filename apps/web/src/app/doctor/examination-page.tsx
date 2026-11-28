@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { FilePlus2, Trash2 } from 'lucide-react'
-import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import { ExaminationReportText } from './examination-report-text.tsx'
-import { useRegisterAgentForm } from '../agent-page-context.tsx'
-import { AgentReviewAnchor } from '../agent-review.tsx'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { DoctorCaseDetail, ExaminationRequest } from '@clinmesh/contracts/his'
 import { Alert, AlertTitle, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -100,13 +97,6 @@ export function ExaminationPage({
       setIndication('')
     }
   }, [detail.caseId, override, state?.draft?.indication, state?.draft?.service.id, state?.draftVersion])
-  const draftInput = agentToolInputSchemas['outpatient.examination.draft.set'].safeParse({ serviceId, indication })
-  useRegisterAgentForm({
-    name: 'examination',
-    selectionId: detail.caseId,
-    viewId: 'consultation',
-    values: readOnly || !draftInput.success ? null : draftInput.data,
-  })
   const [deleteReview, setDeleteReview] = useState<{
     version: number
     encounterVersion: string
@@ -295,7 +285,6 @@ export function ExaminationPage({
         }
       >
         {selected ? (
-          <AgentReviewAnchor id={`doctor-investigation:${selected.id}`}>
             <div className="flex flex-col gap-3">
               <h4>{selected.service.name}</h4>
               <p>
@@ -310,7 +299,6 @@ export function ExaminationPage({
               ) : null}
               {selected.report ? <ExaminationReportText report={selected.report} locale={locale} /> : null}
             </div>
-          </AgentReviewAnchor>
         ) : (
           <p>{zh ? '尚未开立功能检查' : 'No functional examination issued'}</p>
         )}

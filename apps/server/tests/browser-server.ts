@@ -9,7 +9,7 @@ import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
 
 export async function startBrowserServer(webRoot: string, options: Partial<Pick<CreateClinMeshRuntimeOptions,
   'activeReferenceReleaseId' | 'referenceDatabasePath' | 'guidelineDatabasePath' | 'guidelineLocalEvaluation' | 'syntheaProvider' | 'chatCompletionsProvider'
-  | 'patientPersonaModel' | 'dshBridgeSecret' | 'trustedOrigins' | 'dshModelBridge' | 'autoDispatchIntervalMs' | 'modelPricing' | 'drgRulesDirectory'
+  | 'consultationModel' | 'patientPersonaModel' | 'trustedOrigins' | 'autoDispatchIntervalMs' | 'modelPricing' | 'drgRulesDirectory'
   | 'imagingAssetDirectory' | 'imagingCatalogDirectory' | 'pathologyAssetDirectory' | 'pathologyCatalogDirectory'
 >> & { qualityCompletions?: NonNullable<CreateClinMeshRuntimeOptions['chatCompletionsProvider']>['completeJson'] } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-e2e-server-'))
@@ -38,7 +38,11 @@ export async function startBrowserServer(webRoot: string, options: Partial<Pick<
     const password = `Synthetic-${randomUUID()}-Aa1!`
     const runtimeOptions: CreateClinMeshRuntimeOptions = {
       ...options,
-      ...(options.chatCompletionsProvider === undefined ? {} : { chatCompletionsProvider: recordingFixtureProvider(options.chatCompletionsProvider, options.qualityCompletions) }),
+      ...(options.chatCompletionsProvider === undefined ? {} : {
+        chatCompletionsProvider: recordingFixtureProvider(options.chatCompletionsProvider, options.qualityCompletions),
+        consultationModel: options.consultationModel ?? 'synthetic-consultation',
+        patientPersonaModel: options.patientPersonaModel ?? 'synthetic-persona',
+      }),
       authBaseUrl: origin,
       authSecret: randomUUID() + randomUUID(),
       cursorSecret: randomUUID() + randomUUID(),

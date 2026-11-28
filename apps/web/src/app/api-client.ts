@@ -3,9 +3,8 @@ import {
   outpatientRiskAssessmentResponseSchema,
   type ClinicalRiskAssessmentFieldsInput,
 } from '@clinmesh/contracts/clinical-scores'
-import { clinicalQualityCheckSchema, type ClinicalOverrideInput, type ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
+import { type ClinicalOverrideInput, type ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
 import type { MedicationRoute } from '@clinmesh/contracts/medication-safety'
-import { guidelineTopicBundleSchema } from '@clinmesh/contracts/guideline-topics'
 import {
   orderSetDraftBundleSchema,
   type OrderSetTemplateId,
@@ -60,9 +59,6 @@ import {
   laboratoryRequestActionResponseSchema,
   clinicalDocumentDraftResponseSchema,
   confirmClinicalVisitKindResponseSchema,
-  clinicalDocumentQualityControlStateSchema,
-  clinicalDocumentQualityControlResponseSchema,
-  controlConsultationRecordingResponseSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   clinicalDocumentSignResponseSchema,
@@ -134,13 +130,8 @@ import {
 } from '@clinmesh/contracts/pathology'
 import {
   administratorCaseTruthSchema,
-  patientPersonaJobSchema,
   patientPersonaRevisionListSchema,
   patientPersonaRevisionSchema,
-  scenarioGenerationJobSchema,
-  scenarioGenerationRequestSchema,
-  scenarioGenerationTargetListSchema,
-  scenarioProviderCapabilitiesListSchema,
   startSyntheticCaseResultSchema,
   syntheticCaseRegistrationListSchema,
   syntheticPatientProfileDetailSchema,
@@ -148,33 +139,12 @@ import {
   syntheticSourceResourceDetailSchema,
   syntheticCaseInstanceSchema,
   syntheticPatientProfileListSchema,
-  type ScenarioGenerationRequest,
   type SyntheticPatientIdentity,
 } from '@clinmesh/contracts/scenario'
 import { referenceDataReleaseListSchema } from '@clinmesh/contracts/reference-data'
 import {
-  agentPageContextBindingSchema,
-  doctorAgentTaskPermitRequestSchema,
-  doctorAgentTaskPermitResponseSchema,
-  doctorRecordingSourceRequestSchema,
-  doctorRecordingSourceResponseSchema,
-  type DoctorAgentTaskPermitRequest,
-  agentPageContextRequestSchema,
-  agentReviewDecisionRequestSchema,
-  agentReviewDecisionResponseSchema,
-  agentToolAuthorizationRequestSchema,
-  agentToolAuthorizationResponseSchema,
-  agentToolCompletionResponseSchema,
-  agentToolResultRequestSchema,
-  agentDoctorQueryRequestSchema,
-  agentDoctorCaseReadSchema,
-  agentPageContextSnapshotSchema,
   doctorCaseHistorySchema,
   doctorCaseHistoryDetailSchema,
-  type AgentPageContextRequest,
-  type AgentReviewDecisionRequest,
-  type AgentToolAuthorizationRequest,
-  type AgentToolResultRequest,
 } from '@clinmesh/contracts/agent'
 import {
   referenceDiagnosisCatalogSearchSchema,
@@ -183,15 +153,10 @@ import {
 import { z } from 'zod'
 import { clearMultiChargeDrafts } from './billing-multi-charge-draft.ts'
 import {
-  doctorRecommendationStateSchema,
   confirmDoctorPreparationRequestSchema,
   confirmDoctorPreparationResponseSchema,
   type DoctorPreparationSelection,
-  generateDoctorRecommendationsResponseSchema,
-  setDoctorConsiderationDispositionResponseSchema,
   type DoctorRecommendationKind,
-  type DoctorRecommendationState,
-  type SetDoctorConsiderationDispositionRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 
 export const sessionQueryKey = ['session-context'] as const
@@ -227,33 +192,6 @@ function resolveApiPath(path: string, method = 'GET'): string {
   }
   if (path !== '/api' && !path.startsWith('/api/')) return path
   return `${configuredApiBasePath}${path.slice('/api'.length)}`
-}
-
-export function subscribeRecordingUpdates(caseId: string, onChange: () => void,
-  onConnection: (connected: boolean) => void): () => void {
-  const controller = new AbortController()
-  let retry: ReturnType<typeof setTimeout> | undefined
-  let revision: string | undefined
-  const poll = async () => {
-    try {
-      while (!controller.signal.aborted) {
-        const result = await apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/recording-events${revision === undefined ? '' : `?since=${revision}`}`,
-          z.object({ revision: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
-          AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]))
-        if (controller.signal.aborted) return
-        onConnection(true)
-        if (result.revision !== revision) onChange()
-        revision = result.revision
-      }
-    } catch {
-      if (!controller.signal.aborted) {
-        onConnection(false)
-        retry = setTimeout(() => { void poll() }, 1_000)
-      }
-    }
-  }
-  void poll()
-  return () => { clearTimeout(retry); controller.abort() }
 }
 
 export class ApiClientError extends Error {
@@ -323,7 +261,6 @@ async function requestApi<Result>(
       throw new ApiClientError(0, 'REQUEST_CANCELLED', 'The ClinMesh request was cancelled')
     }
     if (error instanceof ApiClientError) {
-      // The DSH execution-proof endpoint has a separate host session.
       if (error.status === 401 && requestAuthenticationRevision === authenticationRevision && path.startsWith('/api/')
         && path !== '/api/auth/context' && path !== '/api/auth/sign-in/email') {
         notifyAuthenticationFailure?.(error)
@@ -469,114 +406,6 @@ export function selectRole(practitionerRoleId: string): Promise<SessionContext> 
   )
 }
 
-export function createAgentPageContext(request: AgentPageContextRequest, signal?: AbortSignal) {
-  return apiMutation(
-    '/api/agent/v1/page-contexts',
-    agentPageContextBindingSchema,
-    agentPageContextRequestSchema.parse(request),
-    signal === undefined ? {} : { signal },
-  )
-}
-
-export function createDoctorTaskPermit(request: DoctorAgentTaskPermitRequest, signal?: AbortSignal) {
-  return apiMutation('/api/agent/v1/doctor-tasks/permit', doctorAgentTaskPermitResponseSchema,
-    doctorAgentTaskPermitRequestSchema.parse(request), signal === undefined ? {} : { signal })
-}
-
-export function recordDoctorSupplement(request: z.infer<typeof doctorRecordingSourceRequestSchema>, signal?: AbortSignal) {
-  return apiMutation('/api/agent/v1/doctor-inputs', doctorRecordingSourceResponseSchema,
-    doctorRecordingSourceRequestSchema.parse(request), signal === undefined ? {} : { signal })
-}
-
-export function queryAgentDoctor(request: z.infer<typeof agentDoctorQueryRequestSchema>, signal?: AbortSignal) {
-  return apiMutation('/api/agent/v1/doctor-queries', z.union([agentDoctorCaseReadSchema,
-    doctorCaseHistorySchema, doctorCaseHistoryDetailSchema, clinicalScoreBundleSchema,
-    guidelineTopicBundleSchema, clinicalQualityCheckSchema, orderSetDraftBundleSchema,
-    z.object({ context: agentPageContextSnapshotSchema }).strict()]), agentDoctorQueryRequestSchema.parse(request),
-    signal === undefined ? {} : { signal })
-}
-
-export function reviewAgentToolCall(request: AgentReviewDecisionRequest, signal?: AbortSignal) {
-  return apiMutation(
-    '/api/agent/v1/tool-calls/review',
-    agentReviewDecisionResponseSchema,
-    agentReviewDecisionRequestSchema.parse(request),
-    signal === undefined ? {} : { signal },
-  )
-}
-
-export function authorizeAgentToolCall(request: AgentToolAuthorizationRequest, signal?: AbortSignal) {
-  return apiMutation(
-    '/api/agent/v1/tool-calls',
-    agentToolAuthorizationResponseSchema,
-    agentToolAuthorizationRequestSchema.parse(request),
-    signal === undefined ? {} : { signal },
-  )
-}
-
-export function completeAgentToolCall(request: AgentToolResultRequest, signal?: AbortSignal) {
-  return apiMutation(
-    '/api/agent/v1/tool-calls/result',
-    agentToolCompletionResponseSchema,
-    agentToolResultRequestSchema.parse(request),
-    signal === undefined ? {} : { signal },
-  )
-}
-
-export async function issueAgentExecutionProof(input: {
-  contextId: string
-  previousProof?: string
-  pageRevision: string
-  scopeKey: string
-  signal?: AbortSignal
-  toolName: string
-}): Promise<string> {
-  const value = await requestApi('/clinmesh-agent-proof', {
-    body: JSON.stringify({
-      contextId: input.contextId,
-      pageRevision: input.pageRevision,
-      scopeKey: input.scopeKey,
-      toolName: input.toolName,
-      ...(input.previousProof === undefined ? {} : { previousProof: input.previousProof }),
-    }),
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    method: 'POST',
-    ...(input.signal === undefined ? {} : { signal: input.signal }),
-  }, response => parseResponse(
-    response,
-    z.object({ data: z.object({ proof: z.string().min(32) }).strict() }).strict(),
-  ))
-  return value.data.proof
-}
-
-export interface AgentToolHandoffTarget {
-  pageRevision: string
-  scopeKey: string
-  toolNames: string[]
-}
-
-export async function settleAgentToolHandoff(input: {
-  proof: string
-  target: AgentToolHandoffTarget
-  signal: AbortSignal
-}): Promise<void> {
-  await requestApi('/clinmesh-agent-handoff', {
-    body: JSON.stringify({ proof: input.proof, phase: 'settle', target: input.target }),
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    method: 'POST', signal: input.signal,
-  }, response => parseResponse(response,
-    z.object({ data: z.object({ permitted: z.literal(true) }).strict() }).strict(),
-  ))
-}
-
-export async function pauseAgentToolHandoff(proof: string): Promise<void> {
-  await requestApi('/clinmesh-agent-handoff', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ proof, phase: 'pause' }),
-  }, response => parseResponse(response,
-    z.object({ data: z.object({ paused: z.literal(true) }).strict() }).strict()))
-}
-
 export function getCurrentScenario(signal?: AbortSignal): Promise<ScenarioState> {
   return apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal)
 }
@@ -632,42 +461,6 @@ export function resetScenario(scenarioRunId: string, idempotencyKey: string, cle
     scenarioCommandResponseSchema,
     { clearPatientLibrary },
     { idempotencyKey },
-  )
-}
-
-export function getScenarioProviders(signal?: AbortSignal) {
-  return apiGet(
-    '/api/sim/v1/scenario-providers',
-    scenarioProviderCapabilitiesListSchema,
-    signal,
-  )
-}
-
-export function getScenarioGenerationTargets(signal?: AbortSignal) {
-  return apiGet(
-    '/api/sim/v1/admin/scenario-generation-targets',
-    scenarioGenerationTargetListSchema,
-    signal,
-  )
-}
-
-export function enqueueScenarioGenerationJob(
-  request: ScenarioGenerationRequest,
-  idempotencyKey: string,
-) {
-  return apiMutation(
-    '/api/sim/v1/scenario-generation-jobs',
-    commandResponseSchema(scenarioGenerationJobSchema),
-    scenarioGenerationRequestSchema.parse(request),
-    { idempotencyKey },
-  )
-}
-
-export function getScenarioGenerationJob(jobId: string, signal?: AbortSignal) {
-  return apiGet(
-    `/api/sim/v1/scenario-generation-jobs/${encodeURIComponent(jobId)}`,
-    scenarioGenerationJobSchema,
-    signal,
   )
 }
 
@@ -1141,23 +934,6 @@ export function getSyntheticCaseHistoryDetail(
   )
 }
 
-export function enqueuePatientPersona(caseId: string, idempotencyKey: string) {
-  return apiMutation(
-    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-jobs`,
-    commandResponseSchema(patientPersonaJobSchema),
-    {},
-    { idempotencyKey },
-  )
-}
-
-export function getPatientPersonaJob(jobId: string, signal?: AbortSignal) {
-  return apiGet(
-    `/api/sim/v1/patient-persona-jobs/${encodeURIComponent(jobId)}`,
-    patientPersonaJobSchema,
-    signal,
-  )
-}
-
 export function getPatientPersonaRevisions(caseId: string, signal?: AbortSignal) {
   return apiGet(
     `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-revisions`,
@@ -1501,22 +1277,6 @@ export function getDoctorCase(caseId: string, signal?: AbortSignal) {
   )
 }
 
-export function getDoctorRecommendations(caseId: string, kind: DoctorRecommendationKind, signal?: AbortSignal) {
-  return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/recommendations/${kind}`, doctorRecommendationStateSchema, signal)
-}
-
-export async function generateDoctorRecommendations(state: DoctorRecommendationState, refresh: boolean, continueOriginal = false) {
-  const response = await apiMutation(
-    `/api/his/v1/doctor/cases/${encodeURIComponent(state.caseId)}/recommendations/${state.kind}/actions/generate`,
-    generateDoctorRecommendationsResponseSchema,
-    { expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
-      input: { expectedInputFingerprint: state.inputFingerprint, refresh,
-        ...(continueOriginal ? { continueGeneration: state.generation } : {}) } },
-    { idempotencyKey: newIdempotencyKey() },
-  )
-  return response.data
-}
-
 export async function confirmDoctorPreparation(state: {
   caseId: string; kind: DoctorRecommendationKind; encounterId: string; encounterVersion: string
   generation?: number | undefined; inputFingerprint?: string | undefined
@@ -1551,14 +1311,6 @@ export async function getDoctorInvestigationConfirmation(caseId: string, kind: D
     throw new ApiClientError(502, 'INVALID_RESPONSE', 'The confirmation receipt does not match the original target')
   }
   return response.data
-}
-
-export async function setConsiderationDisposition(state: { caseId: string; kind: DoctorRecommendationKind }, label: string,
-  status: SetDoctorConsiderationDispositionRequest['input']['status']) {
-  return apiMutation(
-    `/api/his/v1/doctor/cases/${encodeURIComponent(state.caseId)}/recommendations/${state.kind}/considerations/disposition`,
-    setDoctorConsiderationDispositionResponseSchema, { input: { label, status } },
-  )
 }
 
 export function getEncounterCompletion(encounterId: string, signal?: AbortSignal) {
@@ -1754,17 +1506,6 @@ export function saveFirstVisitDraft(input: {
   )
 }
 
-export function controlConsultationRecording(input: {
-  action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry'; encounterId: string;
-  encounterVersion: string; expectedRecordingVersion: number;
-}, idempotencyKey: string) {
-  return apiMutation(`/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/consultation-recording/actions/control`,
-    controlConsultationRecordingResponseSchema, {
-      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
-      input: { action: input.action, expectedRecordingVersion: input.expectedRecordingVersion },
-    }, { idempotencyKey, method: 'POST' })
-}
-
 export function confirmClinicalVisitKind(input: {
   encounterId: string; encounterVersion: string; visitKind: 'initial' | 'follow-up'; reason: string
 }, idempotencyKey: string) {
@@ -1797,23 +1538,6 @@ export function saveClinicalDocumentDraft(input: {
     },
     { idempotencyKey, method: 'PUT' },
   )
-}
-
-export function getClinicalDocumentQuality(caseId: string, clientId?: string, signal?: AbortSignal) {
-  return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/document-quality-control${clientId === undefined ? '' : `?clientId=${encodeURIComponent(clientId)}`}`,
-    clinicalDocumentQualityControlStateSchema, signal)
-}
-
-export async function checkClinicalDocumentQuality(input: {
-  caseId: string; encounterId: string; encounterVersion: string; expectedDraftVersion: number;
-  document?: ClinicalDocumentContent; clientId?: string; clientRevision?: number; refresh?: boolean;
-}, signal?: AbortSignal) {
-  const { caseId, encounterId, encounterVersion, ...candidate } = input
-  const response = await apiMutation(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/document-quality-control/actions/check`,
-    clinicalDocumentQualityControlResponseSchema,
-    { expectedVersions: { [`Encounter/${encounterId}`]: encounterVersion }, input: candidate },
-    { idempotencyKey: newIdempotencyKey(), ...(signal === undefined ? {} : { signal }) })
-  return response.data
 }
 
 export function previewStructuredClinicalDocumentSign(input: {

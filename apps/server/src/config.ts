@@ -19,15 +19,8 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_MODEL_CONTROL_PATH: z.string().trim().min(1).optional(),
   CLINMESH_MODEL_PRICING_PATH: z.string().trim().min(1).optional(),
   CLINMESH_AI_API_KEY: z.string().min(1).optional(),
-  CLINMESH_AI_SOURCE: z.enum(['openai', 'dsh']).default('openai'),
-  CLINMESH_DSH_MODEL_ORIGIN: z.url().refine(value => {
-    const url = new URL(value)
-    return url.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(url.hostname)
-      && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash
-  }, 'DSH model origin must be an HTTP loopback origin').default('http://127.0.0.1:3080'),
   CLINMESH_AI_BASE_URL: httpUrlSchema.optional(),
   CLINMESH_AI_CONSULTATION_MODEL: z.string().trim().min(1).max(256).optional(),
-  CLINMESH_AI_RECORDING_MODEL: z.string().trim().min(1).max(1024).optional(),
   CLINMESH_AI_BRIEF_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_CATALOG_ENRICHMENT_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_INVESTIGATION_MODEL: z.string().trim().min(1).max(256).optional(),
@@ -47,7 +40,6 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_DEMO_PASSWORD: z.string().min(12),
   CLINMESH_DRG_RULES_DIRECTORY: z.string().trim().min(1).optional(),
   CLINMESH_DRG_RULES_REVIEW_PATH: z.string().trim().min(1).optional(),
-  CLINMESH_DSH_BRIDGE_SECRET: z.string().min(32).optional(),
   CLINMESH_HOST: z.string().trim().min(1).default('127.0.0.1'),
   CLINMESH_IMAGING_ASSET_DIRECTORY: z.string().trim().min(1).optional(),
   CLINMESH_IMAGING_CATALOG_DIRECTORY: z.string().trim().min(1).optional(),
@@ -61,19 +53,12 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_PUBLIC_ORIGIN: z.url().optional(),
   CLINMESH_REFERENCE_DATABASE_PATH: z.string().trim().min(1).optional(),
   CLINMESH_REFERENCE_RELEASE_ID: z.string().trim().min(1).max(256).optional(),
-  CLINMESH_SYNTHEA_PROVIDER_URL: httpUrlSchema.optional(),
   CLINMESH_TRUSTED_ORIGINS: z.string().trim().min(1).optional(),
   CLINMESH_WEB_ROOT: z.string().trim().min(1).optional(),
 }).superRefine((environment, context) => {
   if ((environment.CLINMESH_DRG_RULES_DIRECTORY === undefined) !== (environment.CLINMESH_DRG_RULES_REVIEW_PATH === undefined)) {
     context.addIssue({ code: 'custom', path: ['CLINMESH_DRG_RULES_REVIEW_PATH'],
       message: 'DRG runtime rules require both a package directory and an explicit review file' })
-  }
-  if (environment.CLINMESH_AI_SOURCE === 'dsh') {
-    if (environment.CLINMESH_DSH_BRIDGE_SECRET === undefined) {
-      context.addIssue({ code: 'custom', path: ['CLINMESH_DSH_BRIDGE_SECRET'], message: 'DSH model calls require a bridge secret' })
-    }
-    return
   }
   const values = [
     environment.CLINMESH_AI_API_KEY,
@@ -93,8 +78,6 @@ const serverEnvironmentSchema = z.object({
 export interface ServerConfig {
   modelUsageControl?: ModelUsagePolicyConfig
   modelPricing?: ModelPricingConfig
-  consultationRecordingModel?: string
-  dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   ai?: {
     apiKey: string
     baseUrl: string
@@ -116,7 +99,6 @@ export interface ServerConfig {
   demoPassword: string
   drgRulesDirectory?: string
   drgRulesReviewPath?: string
-  dshBridgeSecret?: string
   hostname: string
   imagingAssetDirectory: string
   imagingCatalogDirectory: string
@@ -125,7 +107,6 @@ export interface ServerConfig {
   port: number
   referenceDatabasePath?: string
   referenceReleaseId?: string
-  syntheaProviderUrl?: string
   trustedOrigins: string[]
   webRoot?: string
 }
@@ -231,14 +212,7 @@ export function readServerConfig(
     ...(parsed.CLINMESH_MODEL_CONTROL_PATH === undefined ? {} : {
       modelUsageControl: modelUsagePolicyConfigSchema.parse(JSON.parse(readFileSync(resolve(startDirectory, parsed.CLINMESH_MODEL_CONTROL_PATH), 'utf8'))),
     }),
-    ...(parsed.CLINMESH_AI_RECORDING_MODEL === undefined ? {} : { consultationRecordingModel: parsed.CLINMESH_AI_RECORDING_MODEL }),
-    ...(parsed.CLINMESH_AI_SOURCE === 'dsh' ? {
-      dshModelBridge: {
-        origin: parsed.CLINMESH_DSH_MODEL_ORIGIN, secret: parsed.CLINMESH_DSH_BRIDGE_SECRET!,
-        timeoutMs: Number(parsed.CLINMESH_AI_TIMEOUT_MS ?? 120_000), maxResponseBytes: Number(parsed.CLINMESH_AI_MAX_RESPONSE_BYTES),
-      },
-    } : {}),
-    ...(parsed.CLINMESH_AI_SOURCE === 'dsh' || parsed.CLINMESH_AI_BASE_URL === undefined
+    ...(parsed.CLINMESH_AI_BASE_URL === undefined
       ? {}
       : {
           ai: {
@@ -267,9 +241,6 @@ export function readServerConfig(
       drgRulesDirectory: parsed.CLINMESH_DRG_RULES_DIRECTORY,
       drgRulesReviewPath: parsed.CLINMESH_DRG_RULES_REVIEW_PATH!,
     }),
-    ...(parsed.CLINMESH_DSH_BRIDGE_SECRET === undefined
-      ? {}
-      : { dshBridgeSecret: parsed.CLINMESH_DSH_BRIDGE_SECRET }),
     hostname: parsed.CLINMESH_HOST,
     imagingAssetDirectory: parsed.CLINMESH_IMAGING_ASSET_DIRECTORY ?? defaultImagingAssetDirectory,
     imagingCatalogDirectory: parsed.CLINMESH_IMAGING_CATALOG_DIRECTORY ?? defaultImagingCatalogDirectory,
@@ -280,9 +251,6 @@ export function readServerConfig(
       ? {}
       : { referenceDatabasePath: parsed.CLINMESH_REFERENCE_DATABASE_PATH }),
     ...(referenceReleaseId === undefined ? {} : { referenceReleaseId }),
-    ...(parsed.CLINMESH_SYNTHEA_PROVIDER_URL === undefined
-      ? {}
-      : { syntheaProviderUrl: parsed.CLINMESH_SYNTHEA_PROVIDER_URL }),
     trustedOrigins,
     ...(parsed.CLINMESH_WEB_ROOT === undefined ? {} : { webRoot: parsed.CLINMESH_WEB_ROOT }),
   }

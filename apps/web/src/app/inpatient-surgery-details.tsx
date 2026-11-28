@@ -9,7 +9,6 @@ import type { inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatien
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
-import { InpatientGuidelineAdvicePanel } from './inpatient-guideline-advice.tsx'
 import { InpatientMaterialPlanBasisDetails } from './inpatient-material-plan.tsx'
 import { CoronaryAngiographyDisclosure } from './inpatient-pci-draft-fields.tsx'
 import { InpatientMaterialReservations } from './inpatient-surgery-reservations.tsx'
@@ -30,20 +29,20 @@ type Props = {
 export function InpatientSurgeryDetails({ admission, session, locale, write, plan, estimate, selection, report, onOpenUsage }: Props) {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const [open, setOpen] = useState(false)
-  const [detail, setDetail] = useState<'estimate' | 'guideline' | 'reservations' | null>(null)
+  const [detail, setDetail] = useState<'estimate' | 'reservations' | null>(null)
   const effectiveProcedure = plan.status === 'standby-pci' && plan.adHocPci?.status === 'converted' ? plan.adHocPci.procedure : plan.plannedProcedure
   const parameters = selection?.drafts?.find(draft => draft.requestId === plan.id)?.parameters
     ?? (selection?.confirmation?.parameters.requestId === plan.id ? selection.confirmation.parameters : undefined)
   const title = detail === 'estimate' ? t('完整预计依据与扩展参数', 'Estimate evidence and extended parameters')
-    : detail === 'guideline' ? t('完整指南依据', 'Full guideline evidence') : t('手工预留维护', 'Manual reservation maintenance')
+    : t('手工预留维护', 'Manual reservation maintenance')
   const writable = admission.status === 'admitted' && admission.recordStatus !== 'archived'
   const estimateError = detail === 'estimate' && write.mutation.variables?.operation === 'inpatient.material-estimate.request'
     && write.mutation.variables.input.admissionId === admission.id && write.mutation.variables.input.requestId === plan.id
     ? write.mutation.error : null
   const categoryNames = { guidewire: t('导丝', 'Guidewire'), 'guiding-catheter': t('指引导管', 'Guiding catheter'), balloon: t('球囊', 'Balloon'), stent: t('支架', 'Stent') }
-  const labels = [['estimate', t('预计依据', 'Estimate evidence')], ['guideline', t('指南详情', 'Guideline details')], ['reservations', t('手工预留维护', 'Manual reservations')]] as const
+  const labels = [['estimate', t('预计依据', 'Estimate evidence')], ['reservations', t('手工预留维护', 'Manual reservations')]] as const
   return <Dialog open={open} pending={write.mutation.isPending} onOpenChange={setOpen}>
-    {labels.filter(([kind]) => kind === 'reservations' || kind === 'estimate' && (estimate || parameters || report) || kind === 'guideline' && selection).map(([kind, label]) => <DialogTrigger key={kind} render={<Button type="button" variant="ghost" size="sm" />} onClick={() => { setDetail(kind); setOpen(true) }}>{label}</DialogTrigger>)}
+    {labels.filter(([kind]) => kind === 'reservations' || kind === 'estimate' && (estimate || parameters || report)).map(([kind, label]) => <DialogTrigger key={kind} render={<Button type="button" variant="ghost" size="sm" />} onClick={() => { setDetail(kind); setOpen(true) }}>{label}</DialogTrigger>)}
     <DialogContent keepMounted={detail !== null} className="h-[min(85svh,800px)] sm:max-w-[800px]" showCloseButton={!write.mutation.isPending}>
       <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{effectiveProcedure.coding.display}</DialogDescription></DialogHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
@@ -68,7 +67,6 @@ export function InpatientSurgeryDetails({ admission, session, locale, write, pla
             {writable && !['unknown', 'queued', 'running'].includes(estimate.status) ? <Button type="button" variant="outline" className="self-start" disabled={write.blocked} onClick={() => write.mutation.mutate({ operation: 'inpatient.material-estimate.request', input: { admissionId: admission.id, requestId: plan.id, expectedVersion: estimate.version, expectedRequestVersion: estimate.requestVersion, expectedBasisFingerprint: estimate.basisFingerprint } })}>{t('重新预计，保留耗材清单', 'Re-estimate and retain material list')}</Button> : null}
           </section> : null}
         </> : null}
-        {detail === 'guideline' ? <InpatientGuidelineAdvicePanel admission={admission} session={session} locale={locale} write={write} requestId={plan.id} canReassess={writable} active={open} /> : null}
         {detail === 'reservations' ? <InpatientMaterialReservations admission={admission} session={session} locale={locale} write={write} active={open} requestId={plan.id} /> : null}
       </div>
       <OrderComposerFooter hint={t('关闭后继续手术主流程', 'Close to continue the surgery workflow')}><DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{t('关闭', 'Close')}</DialogClose></OrderComposerFooter>

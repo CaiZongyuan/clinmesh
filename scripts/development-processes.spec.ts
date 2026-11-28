@@ -1,10 +1,18 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, it } from 'vitest'
-import { createDshCommandRunner } from './dev-dsh.ts'
+
+function runHarness(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(process.execPath, args, { cwd: process.cwd() }, (error, stdout, stderr) => {
+      if (error !== null) reject(new Error(`${error.message}\n${stderr}`))
+      else resolve(stdout)
+    })
+  })
+}
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch { return false }
@@ -71,7 +79,7 @@ while (survivors.length > 0 && Date.now() < deadline) {
 console.log('survivors=' + survivors.join(','))
 process.exitCode = 0
 `)
-    const output = await createDshCommandRunner()(process.execPath, ['--import', 'tsx', harness], process.cwd(), undefined, { quiet: true })
+    const output = await runHarness(['--import', 'tsx', harness])
     for (const role of ['first', 'second']) {
       const pid = Number(await readFile(join(directory, `${role}.pid`), 'utf8').catch(() => '0'))
       if (pid > 0) pids.push(pid)

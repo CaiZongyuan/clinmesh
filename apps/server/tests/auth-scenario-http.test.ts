@@ -4,9 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
-  scenarioProviderCapabilitiesListSchema,
-} from '@clinmesh/contracts/scenario'
-import {
   apiErrorSchema,
   createPatientResponseSchema,
   patientSearchSchema,
@@ -611,33 +608,6 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(apiErrorSchema.parse(await replayResponse.json())).toMatchObject({
       error: { code: 'IDEMPOTENCY_KEY_REUSED' },
     })
-  })
-
-  it('reports optional Scenario Provider capabilities only to an administrator', async () => {
-    const { password, runtime } = await createTestRuntime('clinmesh-scenario-provider-http-')
-    const adminCookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
-    const capabilitiesResponse = await runtime.app.request('/api/sim/v1/scenario-providers', {
-      headers: { cookie: adminCookie },
-    })
-
-    expect(capabilitiesResponse.status).toBe(200)
-    expect(scenarioProviderCapabilitiesListSchema.parse(await capabilitiesResponse.json())).toEqual({
-      items: [{
-        available: false,
-        maxPopulation: 10,
-        modules: [],
-        providerId: 'synthea',
-        providerName: 'Synthea',
-        targetedGeneration: false,
-        unavailableReason: '未配置 Synthea Provider',
-      }],
-    })
-
-    const registrarCookie = await signInSyntheticAccount(runtime, password, 'registrar@demo.clinmesh.local')
-    const forbiddenResponse = await runtime.app.request('/api/sim/v1/scenario-providers', {
-      headers: { cookie: registrarCookie },
-    })
-    expect(forbiddenResponse.status).toBe(403)
   })
 
   it('lets only an administrator reset to one deterministic new Epoch per idempotency key', async () => {

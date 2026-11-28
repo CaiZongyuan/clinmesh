@@ -11,9 +11,8 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/compone
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { CheckCircleIcon, CheckIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, RefreshCwIcon, StethoscopeIcon } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { agentViewRevision, useRegisterAgentPage } from '../agent-page-context.tsx'
 import {
   DoctorCompletedCaseLibrary
 } from '../doctor-completed-cases.tsx'
@@ -23,18 +22,11 @@ import {
   getWorkspaceErrorMessage,
   getWorkspaceErrorTitle,
 } from '../workspace-error.ts'
-import { formatFen } from '../workspace-format.ts'
+import { formatFen, stableViewKey } from '../workspace-format.ts'
 import { outpatientCaseFlowState } from '../workspace-flow.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { createWorkingClinicalDocument } from './clinical-document-content.ts'
-import { resolveOutpatientOrderPrerequisiteGate } from './outpatient-order-gate.tsx'
-import { doctorConsultationAgentActions } from './doctor-agent-consultation.tsx'
-import { doctorDiagnosisAgentActions } from './doctor-agent-diagnosis.tsx'
-import { doctorInvestigationsAgentActions } from './doctor-agent-investigations.tsx'
-import { doctorPrescriptionAgentActions } from './doctor-agent-prescription.tsx'
-import { doctorRecordAgentActions } from './doctor-agent-record.tsx'
-import { doctorWorkspaceAgentActions } from './doctor-agent-workspace.tsx'
 import { CaseDetail } from './doctor-case-detail.tsx'
 import { useDoctorCaseModel } from './doctor-case-model.tsx'
 import { type CompletedCaseCorrectionNavigation, type DoctorCaseControllerProps, type DoctorWorkspaceProps, type EncounterCompletionAction, ErrorAlert, emptyDoctorAgentDraftHydrationRevisions, usesStructuredClinicalDocument } from './doctor-case-support.tsx'
@@ -132,36 +124,28 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
   const {
     navigation,
     queueView,
-    onQueueViewChange,
     correctionNavigation,
     locale,
     onCorrectionNavigationHandled,
     onSelectedCaseIdChange,
     session,
     messages,
-    agentReview,
-    page,
     setPage,
     activeCaseSection,
     setActiveCaseSection,
     completionNavigate,
     setCompletionNavigateStable,
     caseDetailRoot,
-    queue,
     visibleQueue,
     setLaboratoryItemId,
     setIndicationCode,
     workingClinicalDocuments,
     setWorkingClinicalDocuments,
     agentDraftHydrationRevisions,
-    hydrateAgentDraft,
     activeCaseId,
     selectInvestigation,
     selectInvestigationRequest,
     pageScope,
-    laboratoryPendingDrafts,
-    imagingPendingDrafts,
-    pathologyPendingDrafts,
     imagingView,
     detail,
     investigationView,
@@ -170,10 +154,8 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     catalog,
     recommendationRevision,
     referenceCatalogSearches,
-    usesIndependentLaboratoryRequests,
     laboratoryCatalog,
     resolvedLaboratoryItemId,
-    resolvedLaboratoryItem,
     resolvedIndicationCode,
     refreshCaseById,
     completeCaseEncounter,
@@ -186,10 +168,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     saveLaboratoryRequest,
     issueRequest,
     deleteRequestDraft,
-    cancelRequest,
-    acknowledgeReport,
     correctReport,
-    controlRecording,
     confirmVisitKind,
     saveDocumentDraft,
     prepareClinicalDocumentSign,
@@ -213,7 +192,7 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
   } = model
   const [completionReview, setCompletionReview] = useState<{ caseId: string; signature: string }>()
   useEffect(() => { setCompletionReview(undefined) }, [pageScope])
-  const completionSignature = agentViewRevision(completion.data ?? {})
+  const completionSignature = stableViewKey(completion.data ?? {})
   // The completion trigger remounts when the review bar closes; focus it once it is back.
   const restoreCompletionTrigger = useRef(false)
   const closeCompletion = () => {
@@ -233,178 +212,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
     pending: completeCaseEncounter.isPending && completeCaseEncounter.variables?.caseId === activeCaseId,
     success: completeCaseEncounter.isSuccess && completeCaseEncounter.variables?.caseId === activeCaseId,
   }
-  const agentPage = useMemo(() => ({
-    actions: {
-      ...doctorWorkspaceAgentActions(model),
-      ...doctorConsultationAgentActions(model),
-      ...doctorDiagnosisAgentActions(model),
-      ...doctorInvestigationsAgentActions(model),
-      ...doctorPrescriptionAgentActions(model),
-      ...doctorRecordAgentActions(model),
-    },
-    claim: {
-      version: 1 as const,
-      viewId: 'consultation' as const,
-      activeSection: activeCaseSection,
-      viewRevision: agentViewRevision({
-        activeCaseId,
-        activeCaseSection,
-        investigationView,
-        laboratorySelection: { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
-        laboratoryPendingDrafts,
-        imagingPendingDrafts,
-        pathologyPendingDrafts,
-        clinicalDocument: currentClinicalDocument,
-        consultationVersion: detail.data?.consultation?.version,
-        firstVisitDraftVersion: detail.data?.drafts?.firstVisit?.version,
-        revisitDraftVersion: detail.data?.drafts?.revisit?.version,
-        revisitConditionVersion: detail.data?.drafts?.revisit?.conditionVersion,
-        documentDraftVersion: detail.data?.drafts?.document?.version,
-        prescriptionDraftVersion: detail.data?.drafts?.prescription?.version,
-        prescriptionDraftItems: detail.data?.drafts?.prescription?.items.map(item => [item.medicationRequestId, item.versionId]),
-        medicationDraftVersion: detail.data?.medicationConclusion?.draftVersion,
-        prescription: detail.data?.medicationConclusion?.prescription === undefined ? undefined : {
-          id: detail.data.medicationConclusion.prescription.id,
-          version: detail.data.medicationConclusion.prescription.version,
-          withdrawalVersion: detail.data.medicationConclusion.prescription.withdrawal?.version,
-          items: detail.data.medicationConclusion.prescription.items.map(item => [item.medicationRequestId, item.medicationRequestVersion]),
-        },
-        noMedicationVersion: detail.data?.medicationConclusion?.noMedication?.version,
-        diagnosisDraftVersion: detail.data?.diagnosis?.draftVersion,
-        diagnosisConfirmation: detail.data?.diagnosis?.confirmation === undefined ? undefined : {
-          id: detail.data.diagnosis.confirmation.id,
-          revision: detail.data.diagnosis.confirmation.revisionNumber,
-          entries: detail.data.diagnosis.confirmation.entries.map(entry => [entry.conditionId, entry.conditionVersion]),
-        },
-        signedDocuments: detail.data?.clinicalDocument?.signed.map(document => [document.compositionId, document.compositionVersion]),
-        encounterStatus: detail.data?.encounter.status,
-        encounterVersion: detail.data?.encounter.versionId,
-        taskVersion: detail.data?.taskVersion,
-        status: detail.data?.status,
-        patientVersion: detail.data?.patient.versionId,
-        examinationDraftVersion: detail.data?.examinationRequests?.draftVersion,
-        imagingDraftVersion: detail.data?.imagingRequests?.draftVersion,
-        pathologyDraftVersion: detail.data?.pathologyRequests?.draftVersion,
-        laboratoryDraftVersion: detail.data?.laboratoryRequests?.draftVersion,
-        requests: [
-          ...(detail.data?.examinationRequests?.requests ?? []),
-          ...(detail.data?.laboratoryRequests?.requests ?? []),
-          ...(detail.data?.imagingRequests?.requests ?? []),
-          ...(detail.data?.pathologyRequests?.requests ?? []),
-        ].map(request => ({
-          id: request.id, version: request.version, status: request.status,
-          serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion,
-          report: request.report === undefined ? undefined : [
-            request.report.diagnosticReportId, request.report.diagnosticReportVersion,
-            request.report.acknowledgement?.id,
-          ],
-        })),
-        page,
-      }),
-      ...(detail.data === undefined ? {} : {
-        selection: {
-          id: detail.data.caseId,
-          kind: 'case' as const,
-          version: detail.data.encounter.versionId,
-        },
-        ...(currentClinicalDocument === undefined ? {} : {
-          draft: {
-            dirty: true,
-            id: `${detail.data.caseId}:clinical-document`,
-            kind: 'clinical-document' as const,
-            revision: String(detail.data.clinicalDocument?.draft?.version ?? 0),
-          },
-        }),
-      }),
-      ui: {
-        status: queue.isPending || detail.isPending ? 'loading' as const
-          : queue.isError || detailUnavailable ? 'error' as const
-            : queue.data?.items.length === 0 ? 'empty' as const : 'ready' as const,
-      },
-    },
-    label: 'ClinMesh · 门诊医生',
-    feedbackSelectionId: activeCaseId ?? '',
-    readState: () => {
-      const gate = resolveOutpatientOrderPrerequisiteGate(detail.data)
-      return {
-        case: detail.data === undefined ? null : {
-          caseId: detail.data.caseId,
-          clinicalDocumentSignedCount: detail.data.clinicalDocument?.signed.length ?? 0,
-          consultation: detail.data.consultation ?? null,
-          diagnosis: detail.data.diagnosis ?? null,
-          encounter: detail.data.encounter,
-          examinationRequests: detail.data.examinationRequests ?? null,
-          imagingRequests: detail.data.imagingRequests ?? null,
-          laboratoryRequests: detail.data.laboratoryRequests ?? null,
-          orderPrerequisites: {
-            blockedCode: gate.code ?? null,
-            hasConfirmedPrimaryDiagnosis: !gate.missingConfirmedDiagnosis,
-            hasSignedInitialRecord: !gate.missingSignedRecord,
-          },
-          pathologyRequests: detail.data.pathologyRequests ?? null,
-          patient: detail.data.patient,
-          presentation: detail.data.presentation,
-        },
-        clinicalDocumentDraft: currentClinicalDocument ?? null,
-        laboratoryDraft: laboratoryPendingDrafts.at(-1)?.value ?? { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
-        laboratoryDrafts: laboratoryPendingDrafts,
-        imagingDrafts: imagingPendingDrafts,
-        pathologyDrafts: pathologyPendingDrafts,
-        queue: queue.data ?? null,
-        queueCount: queue.data?.total ?? 0,
-        section: activeCaseSection,
-        investigation: investigationView,
-      }
-    },
-  }), [
-    activeCaseId,
-    activeCaseSection,
-    setActiveCaseSection,
-    acknowledgeReport.mutateAsync,
-    agentReview,
-    askQuestion.isPending,
-    askQuestion.mutateAsync,
-    beginRevisit.mutateAsync,
-    cancelRequest.mutateAsync,
-    confirmCaseDiagnosis.mutateAsync,
-    correctReport.mutateAsync,
-    currentClinicalDocument,
-    detail.data,
-    laboratoryPendingDrafts,
-    imagingPendingDrafts,
-    pathologyPendingDrafts,
-    detailUnavailable,
-    detail.isPending,
-    canCorrectReports,
-    hydrateAgentDraft,
-    imagingView,
-    investigationView,
-    selectInvestigation,
-    issueOrder.mutateAsync,
-    issueRequest.mutateAsync,
-    issueRequest.isPending,
-    issueRequest.variables?.caseId,
-    saveLaboratoryRequest.isPending,
-    saveLaboratoryRequest.variables?.caseId,
-    messages,
-    onQueueViewChange,
-    onSelectedCaseIdChange,
-    page,
-    previewSign.mutateAsync,
-    queue.data,
-    queue.isError,
-    queue.isPending,
-    resolvedIndicationCode,
-    resolvedLaboratoryItem,
-    resolvedLaboratoryItemId,
-    retryPatientReply.isPending,
-    retryPatientReply.mutateAsync,
-    saveDraft.mutateAsync,
-    saveRevisit.mutateAsync,
-    start.mutateAsync,
-    usesIndependentLaboratoryRequests,
-  ])
-  useRegisterAgentPage(agentPage)
   return (
     <DoctorDraftMarksProvider><DoctorPreparationProvider session={session} detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
       inputRevision={recommendationRevision}
@@ -430,7 +237,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
             ? prepareClinicalDocumentSign.data?.data
             : undefined
           const signPreparing = currentSignPreview !== undefined
-            || activeCase?.consultationRecording?.signingPreparation?.active === true
             || (prepareClinicalDocumentSign.isPending && prepareClinicalDocumentSign.variables?.caseId === activeCase?.caseId)
           const cancelSignPending = cancelClinicalDocumentSign.isPending && cancelClinicalDocumentSign.variables?.caseId === activeCase?.caseId
           const saveDraftPendingForCase = saveDocumentDraft.isPending && saveDocumentDraft.variables?.caseId === activeCase?.caseId
@@ -580,11 +386,6 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
                   error: cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId ? cancelClinicalDocumentSign.error : null,
                   pending: cancelClinicalDocumentSign.isPending && cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId,
                   onSubmit: previewId => cancelClinicalDocumentSign.mutate({ caseId: detail.data.caseId, previewId }),
-                },
-                controlRecording: {
-                  error: controlRecording.variables?.caseId === detail.data.caseId ? controlRecording.error : null,
-                  pending: controlRecording.isPending && controlRecording.variables?.caseId === detail.data.caseId,
-                  onSubmit: action => controlRecording.mutate({ caseId: detail.data.caseId, action }),
                 },
                 save: {
                   error: saveDocumentDraft.variables?.caseId === detail.data.caseId ? saveDocumentDraft.error : null,

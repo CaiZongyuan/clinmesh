@@ -1,16 +1,13 @@
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { apiErrorSchema } from '@clinmesh/contracts/his'
-import { imagingCoverageSchema } from '@clinmesh/contracts/imaging'
 import {
   administratorPathologyAssetSchema,
   administratorPathologyPreparationSchema,
   pathologyCoverageSchema,
 } from '@clinmesh/contracts/pathology'
-import { scenarioGenerationTargetListSchema } from '@clinmesh/contracts/scenario'
 import jpeg from 'jpeg-js'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ScenarioGenerationProviderError } from '../src/application/scenario-data/provider.ts'
 import { reviewPathologyAssets } from '../src/infrastructure/imaging-assets/pathology-asset-store.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
 import {
@@ -364,14 +361,13 @@ describe('Pathology case preparation HTTP contract', () => {
   })
 
   it('excludes uninstalled slides from preparation and generation targets while keeping them visible in coverage', async () => {
-    const { install, pathologyAssetDirectory, runtime, syntheaProvider } = await createRuntime([
+    const { install, pathologyAssetDirectory, runtime } = await createRuntime([
       breastCaseBundle({ name: '相符切片未安装' }),
     ], { targetedGeneration: true })
     await install([{ assetId: luminal }, tripleNegativeSlide])
     await rm(join(pathologyAssetDirectory, 'installed', luminal), { recursive: true })
     const cookie = await signIn(runtime)
     const caseId = await generateCase(runtime, cookie)
-    const providerCallsBefore = syntheaProvider.keeps.length
 
     const [prepared] = (await preparePathology(runtime, cookie, [caseId])).prepared
     expect(prepared?.preparation?.exams[0]).toMatchObject({ reason: 'ASSET_NOT_INSTALLED', status: 'unsupported' })
@@ -382,15 +378,6 @@ describe('Pathology case preparation HTTP contract', () => {
       .toEqual([{ assetId: luminal, blockers: [], installed: false, published: true }])
     expect(coverage.profiles.find(profile => profile.id === tripleNegativeProfile)?.assets)
       .toEqual([{ assetId: tripleNegative, blockers: [], installed: true, published: true }])
-
-    const targets = scenarioGenerationTargetListSchema.parse(await (await runtime.app.request(
-      '/api/sim/v1/admin/scenario-generation-targets', { headers: { cookie } },
-    )).json())
-    expect(targets.items.map(item => item.profileId)).toEqual([tripleNegativeProfile])
-    expect((await generateTargeted(runtime, cookie, luminalProfile)).status).toBe(200)
-    expect(await runtime.scenarioData.processNextGenerationJob())
-      .toMatchObject({ caseIds: [], error: { code: 'IMAGING_TARGET_UNAVAILABLE' }, status: 'failed' })
-    expect(syntheaProvider.keeps).toHaveLength(providerCallsBefore)
   })
 
   it('re-prepares cases when slide installation changes and preserves started bindings and their supplements', async () => {
@@ -437,119 +424,6 @@ describe('Pathology case preparation HTTP contract', () => {
     expect(await preparePathology(runtime, cookie)).toEqual({ prepared: [], remaining: 0 })
   })
 
-  /** 缺省的病史起点满足条目要求的 45 年（结束日期 2026-08-01）。 */
-  function generateTargeted(runtime: Runtime, cookie: string, profileId: string, historyStart = '1981-08-01') {
-    return runtime.app.request('/api/sim/v1/scenario-generation-jobs', mutation(cookie, {
-      name: '定向病理患者',
-      population: { age: { maximum: 80, minimum: 45 }, count: 1, gender: 'female' },
-      providerId: 'synthea',
-      seeds: { clinical: 7331, population: 4242 },
-      target: { kind: 'pathology-profile', profileId },
-      timeRange: { end: '2026-08-01', start: historyStart },
-      timeZone: 'Asia/Shanghai',
-    }))
-  }
-
-  it('generates a patient for a selected receptor combination and leaves its pathology preparation ready', async () => {
-    const { install, runtime, syntheaProvider } = await createRuntime([
-      // Synthea 未能保留满足条件的患者，或得到的患者不满足条目（手术在本次就诊中）：都换 seed 重试。
-      new ScenarioGenerationProviderError('KEEP_NOT_SATISFIED', 'Synthea could not keep a matching patient'),
-      breastCaseBundle({ name: '手术在本次就诊', procedures: [{ ...lumpectomy, indexVisit: true }] }),
-      breastCaseBundle({ er: receptorNegative, n: '1229967007', name: '三阴性', pr: receptorNegative, t: '1228889001' }),
-    ], { targetedGeneration: true })
-    await install([{ assetId: luminal }, tripleNegativeSlide, { assetId: 'synthetic-slide-unpublished', clinical: { fish: 'Positive' }, published: false }])
-    const cookie = await signIn(runtime)
-
-    const targets = await runtime.app.request('/api/sim/v1/admin/scenario-generation-targets', { headers: { cookie } })
-    expect(targets.status).toBe(200)
-    const targetList = scenarioGenerationTargetListSchema.parse(await targets.json())
-    // 只有已发布切片的事实组合可选；选项只有条目名称与适用人群。
-    expect(targetList.items).toEqual([
-      {
-        ageRange: [45, 80],
-        kind: 'pathology-profile',
-        label: '乳腺切片会诊：ER 阴性 · PR 阴性 · HER2 阴性 · 淋巴结阴性 · T1',
-        minimumHistoryYears: 45,
-        profileId: tripleNegativeProfile,
-        sex: 'female',
-      },
-      {
-        ageRange: [45, 80],
-        kind: 'pathology-profile',
-        label: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2',
-        minimumHistoryYears: 45,
-        profileId: luminalProfile,
-        sex: 'female',
-      },
-    ])
-    expect(JSON.stringify(targetList)).not.toMatch(/synthetic-slide|\d{6,}/)
-
-    expect((await generateTargeted(runtime, cookie, tripleNegativeProfile)).status).toBe(200)
-    const processed = await runtime.scenarioData.processNextGenerationJob()
-    expect(processed).toMatchObject({ error: null, status: 'succeeded', warning: null })
-    // 保留条件：做过任一可送检手术，且五项 Observation 的编码值与条目一致。
-    expect(syntheaProvider.keeps).toEqual(Array.from({ length: 3 }, () => ({
-      activeAny: [lumpectomy.code, breastLesionExcision.code],
-      activeNone: [],
-      observations: [
-        { code: '85337-4', valueAny: [receptorNegative] },
-        { code: '85339-0', valueAny: [receptorNegative] },
-        { code: '85319-2', valueAny: [receptorNegative] },
-        { code: '21906-3', valueAny: ['1229967007'] },
-        { code: '21905-5', valueAny: ['1228889001'] },
-      ],
-    })))
-    // 任务完成时已经完成病理准备；放射影像准备不随病理目标运行。
-    const prepared = await preparationOf(runtime, cookie, processed!.caseIds[0]!)
-    expect(prepared.preparation?.exams[0]).toMatchObject({ matchingProfileId: tripleNegativeProfile, status: 'ready' })
-    expect(prepared.bindings.map(binding => binding.assetId)).toEqual([tripleNegative])
-    const imagingCoverage = imagingCoverageSchema.parse(await (await runtime.app.request(
-      '/api/sim/v1/admin/imaging-coverage',
-      { headers: { cookie } },
-    )).json())
-    expect(imagingCoverage.cases.prepared).toBe(0)
-  })
-
-  it('fails a pathology target that no generated patient satisfies and one that is not published', async () => {
-    const { install, runtime, syntheaProvider } = await createRuntime(
-      Array.from({ length: 10 }, () => breastCaseBundle({ name: '淋巴结阳性' })),
-      { targetedGeneration: true },
-    )
-    await install([{ assetId: luminal }, tripleNegativeSlide, { assetId: 'synthetic-slide-unpublished', clinical: { fish: 'Positive' }, published: false }])
-    const cookie = await signIn(runtime)
-
-    // 病史起点晚于结束日期前 45 年：Synthea 保留的患者可能缺少多年前的确诊与手术记录，调用 Provider 前即失败。
-    expect((await generateTargeted(runtime, cookie, tripleNegativeProfile, '1981-08-02')).status).toBe(200)
-    expect(await runtime.scenarioData.processNextGenerationJob())
-      .toMatchObject({ caseIds: [], error: { code: 'TARGET_HISTORY_TOO_SHORT' }, status: 'failed' })
-    expect(syntheaProvider.keeps).toHaveLength(0)
-
-    expect((await generateTargeted(runtime, cookie, tripleNegativeProfile)).status).toBe(200)
-    expect(await runtime.scenarioData.processNextGenerationJob())
-      .toMatchObject({ caseIds: [], error: { code: 'IMAGING_TARGET_NOT_MET' }, status: 'failed' })
-    expect(syntheaProvider.keeps).toHaveLength(10)
-
-    // 只有未发布切片的事实组合不是可选目标。
-    expect((await generateTargeted(runtime, cookie, 'breast-er-pos-pr-pos-her2-pos-ln-pos-t2')).status).toBe(200)
-    expect(await runtime.scenarioData.processNextGenerationJob())
-      .toMatchObject({ error: { code: 'IMAGING_TARGET_UNAVAILABLE' }, status: 'failed' })
-  })
-
-  it('keeps the generated patient and reports a warning when pathology preparation fails after generation', async () => {
-    const { install, runtime } = await createRuntime([breastCaseBundle({ name: '相符' })], { targetedGeneration: true })
-    await install([{ assetId: luminal }])
-    const cookie = await signIn(runtime)
-    expect((await generateTargeted(runtime, cookie, luminalProfile)).status).toBe(200)
-    // 任务排队期间管理员重置了场景：病理准备要求当前 Epoch，因而失败。
-    expect((await runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', mutation(cookie, {}))).status)
-      .toBe(200)
-
-    const processed = await runtime.scenarioData.processNextGenerationJob()
-    expect(processed).toMatchObject({ error: null, status: 'succeeded', warning: { code: 'PATHOLOGY_PREPARATION_FAILED' } })
-    const prepared = await preparePathology(runtime, await signIn(runtime), processed!.caseIds)
-    expect(prepared.prepared[0]?.preparation?.exams[0]?.status).toBe('ready')
-  })
-
   it('reports an unavailable or invalid catalog without preparing cases and without affecting radiology', async () => {
     const { install, pathologyCatalogDirectory, runtime } = await createRuntime([breastCaseBundle({ name: '相符' })])
     const cookie = await signIn(runtime)
@@ -561,10 +435,6 @@ describe('Pathology case preparation HTTP contract', () => {
     expect(apiErrorSchema.parse(await unavailable.json()).error.code).toBe('PATHOLOGY_CATALOG_UNAVAILABLE')
     expect(await coverageOf(runtime, cookie)).toEqual({ cases: { exams: [], prepared: 0, total: 1 }, catalog: null, gaps: [], profiles: [] })
     expect((await runtime.app.request('/api/sim/v1/admin/imaging-coverage', { headers: { cookie } })).status).toBe(200)
-    expect(scenarioGenerationTargetListSchema.parse(await (await runtime.app.request(
-      '/api/sim/v1/admin/scenario-generation-targets',
-      { headers: { cookie } },
-    )).json()).items).toEqual([])
 
     // 有素材但没有适配规则：素材可以复核，病例不参与匹配。
     await install([{ assetId: luminal }], false)
@@ -579,8 +449,6 @@ describe('Pathology case preparation HTTP contract', () => {
     expect(invalid.status).toBe(409)
     expect(apiErrorSchema.parse(await invalid.json()).error.code).toBe('PATHOLOGY_CATALOG_INVALID')
     expect((await preparationOf(runtime, cookie, caseId)).preparation).toBeNull()
-    expect((await runtime.app.request('/api/sim/v1/admin/scenario-generation-targets', { headers: { cookie } })).status)
-      .toBe(200)
   })
 
   it('re-prepares a waiting case when a published report is edited and signed again under the same revision', async () => {
@@ -602,20 +470,5 @@ describe('Pathology case preparation HTTP contract', () => {
       reviewerIsPathologist: true,
     })
     expect((await preparePathology(runtime, cookie)).prepared[0]?.preparation?.revision).toBe(2)
-  })
-
-  it('keeps pathology generation targets selectable when the radiology catalog is invalid', async () => {
-    const { catalogDirectory, install, runtime } = await createRuntime([])
-    await install([{ assetId: luminal }])
-    await mkdir(catalogDirectory, { recursive: true })
-    await writeFile(join(catalogDirectory, 'manifest.json'), '{"schemaVersion":1}\n')
-    const cookie = await signIn(runtime)
-
-    const targets = await runtime.app.request('/api/sim/v1/admin/scenario-generation-targets', { headers: { cookie } })
-    expect(targets.status).toBe(200)
-    expect(scenarioGenerationTargetListSchema.parse(await targets.json()).items.map(item => item.profileId))
-      .toEqual([luminalProfile])
-    const radiology = await runtime.app.request('/api/sim/v1/admin/imaging-coverage', { headers: { cookie } })
-    expect(apiErrorSchema.parse(await radiology.json()).error.code).toBe('IMAGING_CATALOG_INVALID')
   })
 })

@@ -16,8 +16,6 @@ import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { PlusIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useRegisterAgentForm } from '../agent-page-context.tsx'
-import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
   correctPathologyReport,
   deletePathologyRequestDraft,
@@ -206,7 +204,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly: _readOnly, re
     if (diagnosticReportId !== undefined) view.markShown(diagnosticReportId)
   }, [diagnosticReportId, view])
   return (
-    <li className="border-t py-3"><AgentReviewAnchor id={`doctor-investigation:${request.id}`}>
+    <li className="border-t py-3">
       <div className="flex flex-wrap items-center gap-2">
         <strong className="text-sm font-medium">{request.service.name}</strong>
         <Badge variant={request.status === 'acknowledged' ? 'success' : request.status === 'generation-failed' ? 'warning' : 'outline'}>
@@ -273,7 +271,7 @@ function PathologyRequestItem({ actions, active, locale, readOnly: _readOnly, re
         </>
       )}
 
-    </AgentReviewAnchor></li>
+    </li>
   )
 }
 
@@ -497,13 +495,6 @@ export function PathologyPage({ actions, active = true, actionContext, caseId, e
     if (state?.draft !== undefined && (target === 'all' || state.draft.service.id === target)) draftAction.mutate(target)
     else if (removeLocal(target)) setDiscardOpen(false)
   }
-  const lastDraft = manualDrafts.rows.at(-1)?.value
-  const draftInput = savePathologyRequestDraftRequestSchema.shape.input.safeParse(lastDraft?.kind === 'pathology'
-    ? { expectedDraftVersion: draftVersion, serviceId: lastDraft.serviceId, sourceProcedureReference: lastDraft.sourceProcedureReference, purpose: lastDraft.purpose } : null)
-  useRegisterAgentForm({
-    name: 'pathology', selectionId: caseId, viewId: 'consultation',
-    values: readOnly || !draftInput.success ? null : draftInput.data,
-  })
   const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion | PreparationDraft): string | undefined => {
     if (suggestion.kind !== 'pathology' || draftAction.isPending || services.isFetching) return messages.recommendationRequestTargetUnavailable
     const target = services.data?.items.find(item => item.service.id === suggestion.serviceId)

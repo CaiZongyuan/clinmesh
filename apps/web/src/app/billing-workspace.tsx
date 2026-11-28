@@ -1,7 +1,6 @@
 import { InsurancePanel } from './insurance-panel.tsx'
 import { multiChargePaymentResponseSchema, type BillingQueueItem, type SessionContext } from '@clinmesh/contracts/his'
 import { refundPreviewResponseSchema } from '@clinmesh/contracts/refunds'
-import { parseAgentToolInput } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -13,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { confirmPayment, getBillingCase, getBillingQueue, newIdempotencyKey, previewPayment, recoverPayment } from './api-client.ts'
 import { BillingCasePanel, BillingPaymentHistory, outpatientBillTotals, paymentMethodLabel, paymentAllocations } from './billing-case-panel.tsx'
 import { BillingMultiChargePanel } from './billing-multi-charge-panel.tsx'
@@ -23,10 +22,8 @@ import { CollectedMultiChargeDraftUnreadable, useInpatientWriteIntent } from './
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, stableViewKey } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
-import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
-import { useAgentReview } from './agent-review.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
 import { WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspaceQueueCard, useWorkspaceCardView, useWorkspaceConfirmation, announceHandoff } from './workspace-card-layout.tsx'
 import { outpatientFlow } from './workspace-flow.ts'
@@ -46,10 +43,9 @@ const emptyPaymentDraft: PaymentDraft = { simulatorRule: 'success', tenderAmount
 
 export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
-  const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
-  const identity = agentViewRevision({ accountId: session.user.id, actor: session.actor })
+  const identity = stableViewKey({ accountId: session.user.id, actor: session.actor })
   const identityOwner = useRef({ identity, revision: 0 })
   const selectionRevision = useRef(0)
   const historyRevision = useRef(0)
@@ -58,7 +54,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     selectionRevision.current += 1
     historyRevision.current += 1
   }
-  const refundScope = agentViewRevision(identityOwner.current)
+  const refundScope = stableViewKey(identityOwner.current)
   const [refundPreviews, setRefundPreviews] = useState({ scope: refundScope, cases: new Map<string, FrozenRefund>() })
   const setRefundPreview = (targetCaseId: string, frozen?: FrozenRefund) => {
     setRefundPreviews(current => {
@@ -108,7 +104,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   }
   const visibleMultiOutcome = multiOutcome?.scope === refundScope && (selectedCharge === undefined
     || (selectedCharge.caseId === multiOutcome.caseId && selectedCharge.patient.id === multiOutcome.patientId && selectedCharge.encounterId === multiOutcome.encounterId)) ? multiOutcome : undefined
-  const draftKey = agentViewRevision({ accountId: session.user.id, actor: session.actor, chargeItemId: selectedCharge?.chargeItemId })
+  const draftKey = stableViewKey({ accountId: session.user.id, actor: session.actor, chargeItemId: selectedCharge?.chargeItemId })
   const { simulatorRule, tenderAmounts } = paymentDrafts[draftKey] ?? emptyPaymentDraft
   const setSimulatorRule = (value: SimulatorRule) => setPaymentDrafts(current => ({ ...current,
     [draftKey]: { ...(current[draftKey] ?? emptyPaymentDraft), simulatorRule: value } }))
@@ -116,11 +112,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     const previous = current[draftKey] ?? emptyPaymentDraft
     return { ...current, [draftKey]: { ...previous, tenderAmounts: typeof value === 'function' ? value(previous.tenderAmounts) : value } }
   })
-  const formSignature = agentViewRevision({ simulatorRule, tenderAmounts })
+  const formSignature = stableViewKey({ simulatorRule, tenderAmounts })
   const latestForm = useRef(formSignature)
   latestForm.current = formSignature
   const caseId = selectedCharge?.caseId
-  const caseKey = agentViewRevision({ owner: refundScope, caseId })
+  const caseKey = stableViewKey({ owner: refundScope, caseId })
   const historyDisclosure = useRef<HTMLDetailsElement>(null)
   const [historyReview, setHistoryReview] = useState<{ caseKey: string; paymentId: string }>()
   const reviewPaymentId = historyReview?.caseKey === caseKey ? historyReview.paymentId : undefined
@@ -140,7 +136,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const mounted = useRef(false)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const latestView = useRef('')
-  latestView.current = agentViewRevision({ owner: refundScope, category, status, page, chargeItemId: selectedCharge?.chargeItemId })
+  latestView.current = stableViewKey({ owner: refundScope, category, status, page, chargeItemId: selectedCharge?.chargeItemId })
   const paymentMutationContext = () => ({
     chargeItemId: selectedCharge?.chargeItemId,
     identity: latestView.current,
@@ -157,7 +153,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const paymentContexts = useRef<Partial<Record<'confirm' | 'preview' | 'recover', ReturnType<typeof paymentMutationContext>>>>({})
   const ownsPaymentResult = (context: ReturnType<typeof paymentMutationContext> | undefined) =>
     mounted.current && context?.identity === latestView.current && context.revision === selectionRevision.current
-      && context.scope === agentViewRevision(identityOwner.current)
+      && context.scope === stableViewKey(identityOwner.current)
   const displaysPaymentResult = (context: ReturnType<typeof paymentMutationContext> | undefined) =>
     context?.chargeItemId !== undefined && context.chargeItemId === selectedCharge?.chargeItemId
       && context.scope === refundScope && context.revision === selectionRevision.current
@@ -350,167 +346,6 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   }
   const currentPreview = selectedCharge?.status !== 'cancelled' && preview.data?.data.chargeItemId === selectedCharge?.chargeItemId
     && displaysPaymentResult(paymentContexts.current.preview) ? preview.data?.data : undefined
-
-  const agentPage = useMemo(() => ({
-    actions: {
-      'billing.queue.read': {
-        description: 'Read the current authorized billing queue page.',
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => getBillingQueue(category, status, signal, page),
-      },
-      'billing.case.read': {
-        description: 'Read the selected bill with complete balances and display a payment history page (20 attempts per page).',
-        enabled: !paymentPending && selectedCharge !== undefined,
-        parameters: { type: 'object' as const, properties: { page: { type: 'integer', minimum: 1 } }, additionalProperties: false },
-        execute: async (raw: unknown, signal: AbortSignal) => {
-          if (paymentInFlight.current || selectedCharge === undefined) throw new Error(messages.paymentUnavailable)
-          const { page: requestedPage = paymentPage } = parseAgentToolInput('billing.case.read', raw)
-          const context = paymentMutationContext()
-          const revision = ++historyRevision.current
-          const result = await getBillingCase(selectedCharge.caseId, signal, requestedPage)
-          const pageCount = Math.max(1, Math.ceil(result.paymentsPagination.total / result.paymentsPagination.pageSize))
-          if (requestedPage > pageCount) throw new Error(`Payment history has ${pageCount} page(s); choose a page from 1 to ${pageCount}`)
-          if (!signal.aborted && !paymentInFlight.current && ownsPaymentResult(context) && revision === historyRevision.current) {
-            setHistoryPage({ caseKey, page: requestedPage })
-          }
-          return result
-        },
-      },
-      'billing.payment.recover.propose': {
-        description: 'Request human review to query the original unknown payment attempt.',
-        enabled: !paymentWriteBlocked && unknownAttempt !== undefined && unknownAttempt.kind !== 'multi-charge',
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          if (paymentWriteBlocked || unknownAttempt === undefined || unknownAttempt.kind === 'multi-charge') throw new Error(messages.paymentUnavailable)
-          const submission = recoverSubmission(unknownAttempt.paymentId)
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).recoverPayment,
-            description: locale => `${selectedCharge?.patient.name ?? ''} · ${unknownAttempt.paymentId} · ${formatFen(unknownAttempt.amountFen, locale)}`,
-            onConfirm: () => recover.mutateAsync(submission),
-            signal,
-            title: locale => getWorkspaceMessages(locale).recoverPayment,
-          })
-        },
-      },
-      'billing.item.select': {
-        description: 'Select one charge from the current billing queue.',
-        enabled: !paymentPending && (queue.data?.items.length ?? 0) > 0,
-        parameters: {
-          type: 'object' as const,
-          properties: { chargeItemId: { type: 'string', maxLength: 128 } },
-          required: ['chargeItemId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown) => {
-          if (paymentPending) throw new Error(messages.paymentUnavailable)
-          const chargeItemId = billingString(raw, 'chargeItemId')
-          if (!queue.data?.items.some(item => item.chargeItemId === chargeItemId)) {
-            throw new Error('Charge is not in the current billing queue')
-          }
-          selectCharge(chargeItemId)
-          return { chargeItemId, selected: true }
-        },
-      },
-      'billing.payment.preview': {
-        description: 'Generate a payment preview for the selected synthetic charge.',
-        enabled: !paymentCollectionBlocked && tenderErrors.size === 0 && selectedCharge !== undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: async () => {
-          if (paymentCollectionBlocked || selectedCharge === undefined) throw new Error(messages.paymentUnavailable)
-          return preview.mutateAsync(previewSubmission())
-        },
-      },
-      'billing.payment.confirm.propose': {
-        description: 'Open human review for the current payment preview.',
-        enabled: !paymentCollectionBlocked && currentPreview !== undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          if (paymentCollectionBlocked || currentPreview === undefined) throw new Error(messages.paymentUnavailable)
-          const submission = confirmSubmission()
-          const frozen = currentPreview
-          const amountFen = currentPreview.amountFen
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).submitPayment,
-            description: locale => `${selectedCharge?.patient.name ?? ''} · ${formatFen(amountFen, locale)} · ${frozen.tenders?.map(tender => `${paymentMethodLabel(tender.method, getWorkspaceMessages(locale))} ${formatFen(tender.amountFen, locale)}`).join(' + ') ?? ''}`,
-            onConfirm: () => confirm.mutateAsync(submission),
-            signal,
-            title: locale => getWorkspaceMessages(locale).confirmPaymentTitle,
-          })
-        },
-      },
-    },
-    claim: {
-      version: 1 as const,
-      viewId: 'billing' as const,
-      viewRevision: agentViewRevision({
-        owner: refundScope,
-        category,
-        page,
-        paymentPage,
-        previewId: currentPreview?.previewId,
-        selectedChargeId: selectedCharge?.chargeItemId,
-        simulatorRule,
-        tenderAmounts,
-        paymentPending,
-        unknownPaymentId: unknownAttempt?.paymentId,
-        status,
-      }),
-      activeSection: `${category}:${status}`,
-      ...(selectedCharge === undefined ? {} : {
-        selection: {
-          id: selectedCharge.chargeItemId,
-          kind: 'billing-item' as const,
-          version: String(selectedCharge.chargeVersion),
-        },
-      }),
-      ui: {
-        status: queue.isPending ? 'loading' as const
-          : queue.isError ? 'error' as const
-            : queue.data?.items.length === 0 ? 'empty' as const : 'ready' as const,
-      },
-    },
-    label: 'ClinMesh · 门诊收费',
-    readState: () => ({
-      category,
-      preview: currentPreview ?? null,
-      queueCount: queue.data?.total ?? 0,
-      selectedCharge: selectedCharge === undefined ? null : {
-        amountFen: selectedCharge.amountFen,
-        category: selectedCharge.category,
-        chargeItemId: selectedCharge.chargeItemId,
-        patientName: selectedCharge.patient.name,
-      },
-      simulatorRule,
-      bill: bill.data ?? null,
-      status,
-    }),
-  }), [
-    agentReview,
-    category,
-    confirm.mutateAsync,
-    locale,
-    messages,
-    page,
-    caseKey,
-    paymentPage,
-    currentPreview,
-    preview.mutateAsync,
-    preview.reset,
-    queue.data,
-    queue.isError,
-    queue.isPending,
-    selectedCharge,
-    simulatorRule,
-    tenderAmounts,
-    paymentPending,
-    paymentWriteBlocked,
-    paymentCollectionBlocked,
-    bill.data,
-    unknownAttempt,
-    recover.mutateAsync,
-    status,
-  ])
-  useRegisterAgentPage(agentPage)
 
   const activeConfirmation = paymentConfirmation !== undefined && ownsPaymentResult(paymentConfirmation.context) ? paymentConfirmation : undefined
   const activeRecovery = recoveryConfirmation !== undefined && ownsPaymentResult(recoveryConfirmation.context) ? recoveryConfirmation : undefined
@@ -774,7 +609,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     <div data-billing-non-receipt="" className="flex min-w-0 flex-wrap items-start gap-2">
     {bill.data === undefined || (status !== 'paid' && selectedCharge?.status !== 'paid' && outpatientBillTotals(bill.data).paid === 0 && frozenRefund === undefined && !pendingRefundForCase) ? null : <RefundDisclosure key={caseKey} label={locale === 'zh-CN' ? '费用更正与退款' : 'Fee corrections and refunds'} attention={frozenRefund?.preview.previewId ?? (pendingRefundForCase ? 'pending' : undefined)}><BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
       frozen={frozenRefund} onFrozenChange={setRefundPreview} /></RefundDisclosure>}
-    {selectedCharge === undefined ? null : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}
+    {selectedCharge === undefined ? null : <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{locale === 'zh-CN' ? '医保待遇' : 'Insurance'}</summary><div className="mt-4"><InsurancePanel key={stableViewKey({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/></div></details>}
     {caseId === undefined ? undefined : <details ref={historyDisclosure} onToggle={event => { if (!event.currentTarget.open) closePaymentReview(reviewPaymentId) }} className="min-w-0 rounded-md border px-3 py-2 open:basis-full"><summary className="cursor-pointer text-sm font-medium">{messages.paymentHistory}</summary><div className="mt-4">
       {bill.isPending ? <Skeleton className="h-32 w-full" /> : bill.isError ? <PaymentError action={<Button size="sm" variant="outline" onClick={() => void bill.refetch()}>{messages.refreshBill}</Button>} message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} />
         : bill.data === undefined ? null : <BillingPaymentHistory key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={recoverOriginal}
@@ -795,17 +630,6 @@ function RefundDisclosure({ attention, children, label }: { attention: string | 
   return <details className="min-w-0 rounded-md border px-3 py-2 open:basis-full" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className="cursor-pointer text-sm font-medium">{label}</summary><div className="mt-4">{children}</div>
   </details>
-}
-
-function billingString(value: unknown, key: string): string {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError('Billing Agent input must be an object')
-  }
-  const candidate = (value as Record<string, unknown>)[key]
-  if (typeof candidate !== 'string' || candidate.trim() === '') {
-    throw new TypeError(`${key} must be a non-empty string`)
-  }
-  return candidate.trim()
 }
 
 function paymentQueueStatus(payment: { outcome: 'success' | 'declined' | 'ambiguous'; status: string; remainingFen?: number | undefined }): BillingStatus {

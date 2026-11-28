@@ -5,12 +5,9 @@ import {
   doctorCaseDetailSchema,
   encounterCompletionPreviewSchema,
   examinationRequestSchema,
-  sessionContextSchema,
   triageQueueSchema,
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
-import { resolveAgentPageContext } from '../src/application/agent-context-policy.ts'
-import { SyntheticCaseRepository } from '../src/infrastructure/sqlite/synthetic-case-repository.ts'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import {
   inpatientInvestigationsSchema,
@@ -342,33 +339,6 @@ it('心血管病史无精确真值时拒绝正常报告，重试不能绕过来�
     }),
   )
   expect(retry.status).toBe(409)
-  const detail = await s.detail()
-  const session = sessionContextSchema.parse(
-    await (await s.runtime.app.request('/api/auth/context', { headers: { cookie: s.visit.doctor } })).json(),
-  )
-  const resolved = resolveAgentPageContext(
-    s.runtime.database,
-    new SyntheticCaseRepository(s.runtime.database),
-    {
-      actorId: session.actor.actorId,
-      epoch: session.actor.epoch,
-      ...(session.actor.practitionerRoleId === undefined ? {} : { practitionerRoleId: session.actor.practitionerRoleId }),
-      roleCode: session.actor.roleCode,
-      scenarioRunId: session.actor.scenarioRunId,
-      workspaceId: session.actor.workspaceId,
-    },
-    session.user.id,
-    {
-      version: 1,
-      viewId: 'consultation',
-      viewRevision: '1',
-      activeSection: 'laboratory',
-      ui: { status: 'ready' },
-      selection: { kind: 'case', id: s.visit.outpatientCaseId, version: detail.encounter.versionId },
-    },
-  )
-  expect(resolved?.allowedOperationIds).toContain('outpatient.examination.cancel.propose')
-  expect(resolved?.allowedOperationIds).not.toContain('outpatient.examination.retry.propose')
 })
 
 it.each([

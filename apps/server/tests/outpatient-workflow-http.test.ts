@@ -372,27 +372,29 @@ function getConsultationSessions(runtime: TestRuntime, password: string) {
 async function startSyntheticPatientConsultation(runtime: TestRuntime, password: string) {
   useSyntheticLaboratoryCatalog(runtime)
   const { adminCookie, doctorCookie, registrarCookie, triageCookie } = await getConsultationSessions(runtime, password)
-  const generationResponse = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', {
-    body: JSON.stringify({
+  const adminContext = (await runtime.identity.resolveSessionContext(new Headers({ cookie: adminCookie }))).actor
+  await runtime.scenarioData.enqueueGeneration({
+    context: adminContext,
+    idempotencyKey: randomUUID(),
+    request: {
+      moduleMode: 'all',
+      modules: [],
       name: '门诊演练患者',
       population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
       providerId: 'synthea',
       seeds: { clinical: 7331, population: 4242 },
       timeRange: { end: '2026-08-01', start: '2020-01-01' },
       timeZone: 'Asia/Shanghai',
-    }),
-    headers: commandHeaders(adminCookie),
-    method: 'POST',
+    },
   })
-  expect(generationResponse.status).toBe(200)
   const generated = await runtime.scenarioData.processNextGenerationJob()
   const syntheticCaseId = generated?.caseIds[0]
   if (syntheticCaseId === undefined) throw new Error('Synthetic Case was not generated')
-  const personaJobResponse = await runtime.app.request(
-    `/api/sim/v1/synthetic-cases/${encodeURIComponent(syntheticCaseId)}/patient-persona-jobs`,
-    { body: '{}', headers: commandHeaders(adminCookie), method: 'POST' },
-  )
-  expect(personaJobResponse.status).toBe(200)
+  await runtime.patientPersona.enqueue({
+    caseId: syntheticCaseId,
+    context: adminContext,
+    idempotencyKey: randomUUID(),
+  })
   const personaJob = await runtime.patientPersona.processNext()
   if (personaJob?.status !== 'succeeded') throw new Error(`Patient Persona was not generated: ${JSON.stringify(personaJob?.error)}`)
 
@@ -2196,40 +2198,6 @@ describe('outpatient workflow HTTP contract', () => {
     }
   })
 
-  it.each([true, false])('publishes a literal boolean laboratory result and preserves its report source (%s)', async detected => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-boolean-recording-source-'))
-    temporaryDirectories.push(directory)
-    const password = `Test-${randomUUID()}-Aa1!`
-    const runtime = await createClinMeshRuntime({ authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters', cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'), demoPassword: password, migrationMode: 'apply', trustedOrigins: ['http://localhost'],
-      chatCompletionsProvider: new QueuePersonaProvider(),
-      dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
-    })
-    runtimes.push(runtime)
-    // Configure the synthetic simulator fixture; assertions observe the published HTTP report.
-    runtime.database.driver.prepare(`UPDATE scenario_hidden_fact SET value_json = ? WHERE fact_code = 'respiratory-pathogen'`)
-      .run(JSON.stringify({ code: 'influenza-a', detected }))
-    const testCase = await createPaidLabCase(runtime, password)
-    const read = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(
-      `/api/his/v1/doctor/cases/${testCase.caseId}`, { headers: { cookie: testCase.doctorCookie } },
-    )).json())
-    const initial = await read()
-    const activated = await runtime.app.request(`/api/his/v1/encounters/${testCase.registration.encounterId}/consultation-recording/actions/control`, {
-      method: 'POST', headers: commandHeaders(testCase.doctorCookie), body: JSON.stringify({
-        expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: initial.encounter.versionId },
-        input: { action: 'activate', expectedRecordingVersion: 0 },
-      }),
-    })
-    expect(activated.status).toBe(200)
-    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ status: 'completed' })
-    const published = await read()
-    expect(published.report!.results.find(result => result.code === '80382-5')!.value).toBe(detected)
-    const source = published.consultationRecording!.sources!.find(source => source.kind === 'report')!
-    expect(source.messageText).toContain(`Influenza virus A Ag：${detected}。`)
-    expect(source.reportReference).toBe(`DiagnosticReport/${published.report!.id}/_history/1`)
-  })
-
   it('returns formal facts from a completed sign-and-complete case', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-legacy-facts-http-'))
     temporaryDirectories.push(directory)
@@ -3641,8 +3609,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/doctor/cases/${started.caseId}`,
       { headers: { cookie: doctorCookie } },
     )).json())
-    const { qualityControl: activeQuality, ...clinicalBefore } = caseBefore
-    expect(activeQuality?.caseId).toBe(started.caseId)
+    const { qualityControl: _activeQuality, ...clinicalBefore } = caseBefore
     expect(caseAfter.qualityControl).toBeUndefined()
     expect(caseAfter).toEqual({
       ...clinicalBefore,

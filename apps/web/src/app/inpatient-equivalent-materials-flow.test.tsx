@@ -9,8 +9,7 @@ import { inpatientAdmissionSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientDrgSimulationSchema, inpatientCostsSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
-import { inpatientSurgeryRequestSchema, inpatientSurgeryExecutionSchema, inpatientSurgeryCatalogSchema } from '@clinmesh/contracts/inpatient-surgery'
-import { IntraoperativeMaterialRows } from './inpatient-surgery-intraoperative.tsx'
+import { inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { InpatientSurgery } from './inpatient-surgery.tsx'
 import { InpatientDrgHeader } from './inpatient-drg-progress.tsx'
 import { InpatientDrgPanel } from './inpatient-drg.tsx'
@@ -147,31 +146,6 @@ it('等效保存回执延迟时仍可改数量与说明，迟到成功只消费�
   await user.click(within(material).getByRole('button', { name: '换回原耗材' }))
   await waitFor(() => expect(f.posts).toHaveLength(2))
   expect(f.posts[1]).toMatchObject({ expectedDraftRevision: 2, items: [{ materialId: 'stent-a', quantity: 2 }], note: '保存期间新增说明' })
-})
-
-
-it('术中从当前手术的确认候选给出等效建议，另一较新手术确认不会遮掉它', async () => {
-  const ownCandidates = candidates.map(candidate => ({ ...candidate, materialVersion: 1, category: 'stent', expectedAmountFen: candidate.item.chargeDefinition.priceFen }))
-  const { catalogVersion: _v, quantityBasis: _b, selected: _s, ...candidateA } = ownCandidates[0]!
-  const { catalogVersion: _v2, quantityBasis: _b2, selected: _s2, ...candidateB } = ownCandidates[1]!
-  let genericReads = 0
-  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
-    if (path.endsWith('/pci-selection')) { genericReads += 1; return Response.json({ ...selection, confirmation: { ...selection.confirmation!, parameters: { ...selection.confirmation!.parameters, requestId: 'plan-b' } } }) }
-    if (path.endsWith('/drg/agent')) return Response.json({ admissionId: admission.id, taskId: null, status: 'inactive', basisFingerprint: null, stage: null, missing: [], failureCode: null, costs: baseCosts, usage: [], analysis: null, confirmedPlan: null, planHistory: [],
-      intraoperativePlans: [{ requestId: 'plan-a', reference: 'InpatientMaterialPlan/plan-a', items: [{ materialId: 'stent-a', catalogVersion: 1, quantity: 1, display: from.display, unit: '枚', unitPriceFen: 73000, estimatedFen: 73000, quantityBasis: '医生确认一枚', reason: '合成依据', evidenceIds: ['synthetic-evidence'] }], candidates: [candidateA], alternatives: [candidateB] }], intraoperativeReviews: [] })
-    throw new Error(`Unexpected request ${path}`)
-  }))
-  const execution = inpatientSurgeryExecutionSchema.parse({ id: 'execution-a', admissionId: admission.id, requestId: 'plan-a', actualProcedure: procedure, performedAt: time, performedBy: 'doctor', practitionerRoleId: 'role-doctor', organizationId: 'org-1', note: '合成开始', materials: [], materialHistory: [] })
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); clients.push(client)
-  function Harness() { const write = useInpatientWriteIntent(session, () => undefined); return <IntraoperativeMaterialRows admissionId={admission.id} session={session} locale="zh-CN" execution={execution} catalog={inpatientSurgeryCatalogSchema.parse({ procedures: [plans[0]!.plannedProcedure], materials: [candidateA.item, candidateB.item] })} reservations={[]} active dataReady editable onCorrect={() => {}} write={write} requestVersion={1} /> }
-  render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>)
-  const user = userEvent.setup()
-  await user.click(screen.getByRole('button', { name: '登记计划外的其他耗材' }))
-  const material = screen.getByRole('combobox', { name: '耗材' }); material.focus(); await user.keyboard('{Enter}')
-  await user.click(await screen.findByRole('option', { name: '合成支架 A' }))
-  await user.click(await screen.findByRole('button', { name: '换成这个' }))
-  expect(material.textContent).toContain('合成支架 B')
-  expect(genericReads).toBe(0)
 })
 
 

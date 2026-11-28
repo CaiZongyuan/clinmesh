@@ -848,7 +848,6 @@ export class InpatientSurgery {
       )
       if (existingAdHoc?.status === 'converted') {
         this.owner.materialEstimates.cancelStageInTransaction(context, input.admissionId, row.request_id, 'ad-hoc-pci', effects)
-        this.owner.guidelineAdvice.cancel(context, input.admissionId, row.request_id)
       }
       this.updateRequestProjection(context, row.request_id, 'completed', effects, finalNote)
       if (row.preop_order_policy === 'stop-on-completion') {

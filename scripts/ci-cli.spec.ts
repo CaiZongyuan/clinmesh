@@ -10,7 +10,7 @@ const entry = fileURLToPath(new URL('./ci.ts', import.meta.url))
 const directories: string[] = []
 const serverTest = 'apps/server/tests/example.test.ts'
 const secondServerTest = 'apps/server/tests/second.test.ts'
-const browserTest = 'apps/dsh-web/src/client/example.browser.test.ts'
+const browserTest = 'apps/web/src/app/example.browser.test.ts'
 const e2eTest = 'apps/web/e2e/example.spec.ts'
 
 afterEach(async () => {
@@ -85,8 +85,8 @@ function readPlan(result: Awaited<ReturnType<typeof run>>): unknown {
 
 function commands() {
   const fixture = sandbox()
-  for (const directory of ['apps/server', 'apps/web', 'apps/dsh-web', 'apps/cli',
-    'apps/desktop', 'packages/contracts', 'packages/core', 'packages/ui', 'packages/views']) {
+  for (const directory of ['apps/server', 'apps/web', 'apps/cli',
+    'packages/contracts', 'packages/core', 'packages/ui']) {
     mkdirSync(join(fixture.directory, directory), { recursive: true })
   }
   for (const path of [serverTest, browserTest, e2eTest]) fixture.write(path, '// synthetic test entry\n')
@@ -229,14 +229,12 @@ describe('CI CLI with a real candidate merge', () => {
 })
 
 describe('CI command execution boundary', () => {
-  it('prepares generated DSH styles separately for every non-document execution runner', async () => {
+  it('does not run obsolete DSH style preparation for execution runners', async () => {
     const fixture = commands()
     expect((await run(fixture.directory, ['prepare'], {
       ...fixture.env, CI_PLAN: JSON.stringify(fullPlan),
     })).code).toBe(0)
-    expect(fixture.calls().map(call => call.args)).toEqual([
-      ['--filter', '@clinmesh/dsh-web', 'build:styles'],
-    ])
+    expect(fixture.calls()).toEqual([])
   })
 
   it('does not prepare UI artifacts for a documentation-only runner', async () => {
@@ -266,11 +264,11 @@ describe('CI command execution boundary', () => {
     expect(fixture.calls().map(call => call.args)).toEqual([['verify:boundaries'], ['typecheck']])
   })
 
-  it('executes the existing full checks, including the short budget gate and Mobile', async () => {
+  it('executes the existing full checks, including the short budget gate', async () => {
     const fixture = commands()
     expect((await run(fixture.directory, ['run', 'checks'], { ...fixture.env, CI_PLAN: JSON.stringify(fullPlan) })).code).toBe(0)
     expect(fixture.calls().map(call => call.args)).toEqual([
-      ['verify:boundaries'], ['typecheck'], ['lint'], ['perf:ci'], ['doc-sync'], ['build'], ['check:mobile'],
+      ['verify:boundaries'], ['typecheck'], ['lint'], ['perf:ci'], ['doc-sync'], ['build'],
     ])
   })
 

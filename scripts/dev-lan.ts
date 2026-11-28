@@ -1,35 +1,30 @@
 import spawn from 'cross-spawn'
+import { existsSync } from 'node:fs'
 import { isIPv4 } from 'node:net'
 import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
-import {
-  createSyntheaRuntimeDependencies,
-  formatProviderHealthSummary,
-  loadRepositoryEnvironment,
-  providerUrlFromEnvironment,
-  readProviderHealth,
-  runSyntheaRuntimeCommand,
-  type ProviderHealth,
-} from './synthea-runtime.ts'
-
 import { referenceDatabaseIsReady } from '../apps/server/src/reference-readiness.ts'
 import { runDevelopmentProcesses, type DevelopmentProcess } from './development-processes.ts'
 
 export interface DataSourceReadinessDependencies {
   environment: Readonly<Record<string, string | undefined>>
-  managedProviderUrl: string | undefined
-  readProviderHealth: (providerUrl: string) => Promise<ProviderHealth>
   referenceDatabaseReady: (configuredPath: string) => boolean
   runReferenceSync: () => Promise<void>
   runDrgReferenceSync: () => Promise<void>
   runGuidelinePrepare: () => Promise<void>
-  runSyntheaUp: () => Promise<void>
   write: (message: string) => void
 }
 
 type StatusMarker = 'ok' | 'warn'
+
+function loadRepositoryEnvironment(repositoryRoot: string): void {
+  const envFile = resolve(repositoryRoot, '.env')
+  if (existsSync(envFile) && typeof process.loadEnvFile === 'function') {
+    process.loadEnvFile(envFile)
+  }
+}
 
 export function supportsAnsiColor(
   output: { isTTY: boolean },
@@ -122,7 +117,6 @@ export function createLanDevelopmentPlan(
   }
 }
 
-/** 父进程在仓库根准备资料；Server 子进程切换目录后仍需使用同一组路径。 */
 export function resolveServerEnvironmentPaths(
   repositoryRoot: string,
   environment: Readonly<Record<string, string | undefined>>,
@@ -150,7 +144,6 @@ export async function ensureDataSourcesReady(
   }
   await dependencies.runGuidelinePrepare()
   writeStatus(dependencies, 'ok', '指南资料已就绪。')
-  await ensureSyntheaProvider(dependencies)
 }
 
 function writeStatus(
@@ -196,76 +189,6 @@ async function ensureReferenceDatabase(dependencies: DataSourceReadinessDependen
   return true
 }
 
-const loopbackHostnames = new Set(['127.0.0.1', 'localhost', '::1'])
-
-function isLocallyManagedProviderUrl(
-  providerUrl: string,
-  managedUrl: string | undefined,
-): boolean {
-  if (managedUrl === undefined) return false
-  const candidate = new URL(providerUrl)
-  const managed = new URL(managedUrl)
-  return loopbackHostnames.has(candidate.hostname) && candidate.port === managed.port
-}
-
-async function ensureSyntheaProvider(dependencies: DataSourceReadinessDependencies): Promise<void> {
-  const providerUrl = dependencies.environment.CLINMESH_SYNTHEA_PROVIDER_URL
-  if (providerUrl === undefined) {
-    writeStatus(
-      dependencies,
-      'warn',
-      '未配置 CLINMESH_SYNTHEA_PROVIDER_URL；ClinMesh 将继续启动，HIS 可正常使用，仅新的患者生成任务不可用。',
-    )
-    return
-  }
-
-  const health = await dependencies.readProviderHealth(providerUrl).catch(() => undefined)
-  if (health !== undefined) {
-    writeStatus(
-      dependencies,
-      'ok',
-      `Synthea Provider 已就绪：${providerUrl}（${formatProviderHealthSummary(health)}）。`,
-    )
-    return
-  }
-  if (!isLocallyManagedProviderUrl(providerUrl, dependencies.managedProviderUrl)) {
-    writeStatus(
-      dependencies,
-      'warn',
-      `Synthea Provider 不可达：${providerUrl}；ClinMesh 将继续启动，HIS 可正常使用，仅新的患者生成任务不可用。`,
-    )
-    return
-  }
-  try {
-    await dependencies.runSyntheaUp()
-  } catch (error) {
-    writeStatus(
-      dependencies,
-      'warn',
-      `Synthea Provider 自动拉起失败：${error instanceof Error ? error.message : String(error)}`,
-    )
-    writeStatus(
-      dependencies,
-      'warn',
-      'ClinMesh 将继续启动，HIS 可正常使用，仅新的患者生成任务不可用。可稍后运行 pnpm synthea:up。',
-    )
-  }
-}
-
-function managedProviderUrlFromEnvironment(
-  environment: Readonly<Record<string, string | undefined>>,
-  write: (message: string) => void,
-): string | undefined {
-  try {
-    return providerUrlFromEnvironment(environment)
-  } catch (error) {
-    write(
-      `${error instanceof Error ? error.message : String(error)}；将跳过 Synthea Provider 自动拉起。`,
-    )
-    return undefined
-  }
-}
-
 function runPackageManagerCommand(args: string[]): Promise<void> {
   const packageManager = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
   const repositoryRoot = resolve(import.meta.dirname, '..')
@@ -287,13 +210,6 @@ export function createDataSourceReadinessDependencies(
 ): DataSourceReadinessDependencies {
   return {
     environment: process.env,
-    managedProviderUrl: process.env.CLINMESH_SYNTHEA_PROVIDER_URL === undefined
-      ? undefined
-      : managedProviderUrlFromEnvironment(process.env, console.info),
-    readProviderHealth: providerUrl => readProviderHealth({
-      fetch: globalThis.fetch,
-      providerUrl,
-    }),
     referenceDatabaseReady: configuredPath => referenceDatabaseIsReady(resolve(repositoryRoot, configuredPath), repositoryRoot, process.env.CLINMESH_REFERENCE_RELEASE_ID),
     runReferenceSync: () => runPackageManagerCommand(['reference:sync', '--database', resolve(repositoryRoot, process.env.CLINMESH_REFERENCE_DATABASE_PATH!)]),
     runDrgReferenceSync: () => runPackageManagerCommand([
@@ -304,17 +220,13 @@ export function createDataSourceReadinessDependencies(
       '--filter', '@clinmesh/server', 'guidelines:prepare',
       '--database', resolve(repositoryRoot, process.env.CLINMESH_GUIDELINE_DATABASE_PATH ?? '.data/clinmesh-guidelines.sqlite'),
     ]),
-    runSyntheaUp: () => runSyntheaRuntimeCommand(
-      'up',
-      createSyntheaRuntimeDependencies(process.env, console.info),
-    ),
     write: console.info,
   }
 }
 
 export async function runLanDevelopment(): Promise<number> {
-  loadRepositoryEnvironment()
   const repositoryRoot = resolve(import.meta.dirname, '..')
+  loadRepositoryEnvironment(repositoryRoot)
   const color = supportsAnsiColor(process.stdout, process.env)
   console.info(renderHeading('ClinMesh 局域网开发环境', color))
   console.info('')

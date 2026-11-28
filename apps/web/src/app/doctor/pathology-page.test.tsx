@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { SessionContext, ImagingRequest, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
-import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
+import type { DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -209,60 +209,6 @@ describe('doctor pathology consultation page', () => {
       const scope = JSON.stringify([undefined, 'case-1', 'encounter-1', 'pathology'])
       await waitFor(() => expect(JSON.parse(sessionStorage.getItem(`clinmesh.outpatient-investigation.manual:${scope}`)!).rows).toEqual([]))
     }
-  })
-
-  it('confirms prepared pathology orders directly with the current draft version without writing a temporary draft', async () => {
-    const confirmations: unknown[] = []
-    const calls = stubFetch(({ path, body }) => {
-      if (path.endsWith('/pathology-services')) return Response.json(services)
-      if (path.endsWith('/actions/confirm')) {
-        confirmations.push(confirmDoctorPreparationRequestSchema.parse(body))
-        return Response.json(confirmDoctorPreparationResponseSchema.parse(commandResponse({ kind: 'pathology', draftVersion: 3, encounterVersion: '3', recordIds: ['request-new'] })))
-      }
-      return Response.json(recommendations())
-    })
-    const onChanged = vi.fn()
-    renderPage(<Page onChanged={onChanged} state={{ draftVersion: 2, requests: [request({ report })] }} />)
-    const panel = within(screen.getByRole('region', { name: '待开具病理会诊' }))
-    await panel.findByRole('checkbox', { name: '选择乳腺切片病理会诊' })
-    await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
-    await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-1': '3' }, input: {
-      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-pathology-suggestion', kind: 'pathology', reviewedService: { id: service.id, version: service.version, outpatientBilling: service.outpatientBilling ?? null }, serviceId: service.id, sourceProcedureReference: excision.sourceReference, purpose: '复核既往病灶切除的切片。' }],
-    } }]))
-    expect(calls.filter(call => call.method !== 'GET').map(call => call.path)).toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/pathology/actions/confirm'])
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(onChanged).not.toHaveBeenCalled()
-  })
-
-  it('keeps saved and unsaved procedure and purpose in the same list when recommendations refresh', async () => {
-    let current = recommendations()
-    stubFetch(({ method, path }) => {
-      if (path.endsWith('/pathology-services')) return Response.json(services)
-      if (method === 'POST' && path.endsWith('/actions/generate')) {
-        current = recommendations({ generation: 2, items: [{ ...current.items[0]!, rationale: '新的病理会诊建议。' }] })
-        return Response.json(commandResponse(current))
-      }
-      return Response.json(current)
-    })
-    renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 1, requests: [],
-      draft: { service, sourceProcedure: lumpectomy, purpose: '医生已保存的会诊目的。' },
-    }} />)
-    const user = userEvent.setup()
-    await openAdjustment(user)
-    const dialog = within(screen.getByRole('dialog'))
-    const purpose = dialog.getByLabelText('会诊目的')
-    await user.type(purpose, '追加未保存的核对内容。')
-    // 未确认关闭即弃置弹窗内输入，已保存草稿与清单不受影响。
-    await user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(screen.getByRole('region', { name: '待开具病理会诊' }).textContent).toContain('医生已保存的会诊目的。')
-    await user.click(screen.getByRole('button', { name: '刷新' }))
-    await user.click(screen.getByRole('button', { name: '依据与说明' }))
-    expect(await screen.findByText('新的病理会诊建议。')).toBeTruthy()
-    await user.keyboard('{Escape}')
-    await openAdjustment(user)
-    expect((within(screen.getByRole('dialog')).getByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('医生已保存的会诊目的。')
-    expect(within(screen.getByRole('dialog')).getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(lumpectomy.display)
   })
 
   it.each(['unavailable-service', 'unauthorized-procedure'] as const)('cannot issue a suggestion with an %s target', async reason => {
@@ -530,41 +476,6 @@ describe('doctor pathology consultation page', () => {
     const dialog = within(screen.getByRole('dialog'))
     expect((dialog.getByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('清单中修改的会诊目的')
     expect(dialog.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(lumpectomy.display)
-  })
-
-  it('preserves the manual consultation and its procedure when a different automatic consultation is edited', async () => {
-    const manualService = { ...service, id: 'manual-pathology', name: '人工病理复核' }
-    const calls = stubFetch(({ path }) => path.endsWith('/pathology-services')
-      ? Response.json({ items: [...services.items, { available: true, service: manualService, sourceProcedures: [lumpectomy] }] })
-      : path.endsWith('/actions/confirm')
-        ? Response.json(commandResponse({ kind: 'pathology', draftVersion: 3, encounterVersion: '3', recordIds: ['manual-new', 'adjusted-new'] }))
-        : Response.json(recommendations()))
-    renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 2, requests: [],
-      draft: { service: manualService, sourceProcedure: lumpectomy, purpose: '原人工会诊目的' } }} />)
-    const user = userEvent.setup()
-    await screen.findByRole('checkbox', { name: '选择乳腺切片病理会诊' })
-    await openAdjustment(user, 1)
-    const dialog = screen.getByRole('dialog', { name: '调整项目' })
-    const input = within(dialog).getByRole('textbox', { name: '会诊目的' })
-    await user.clear(input)
-    await user.type(input, '医生调整后的第二项会诊目的')
-    await user.click(within(dialog).getByRole('button', { name: '保留本次调整' }))
-    expect(screen.getByRole('checkbox', { name: '选择人工病理复核' })).toBeTruthy()
-    expect(screen.getByRole('checkbox', { name: '选择乳腺切片病理会诊' })).toBeTruthy()
-    // 人工草稿与手术未被第二项调整覆盖。
-    expect(screen.getByRole('checkbox', { name: '选择人工病理复核' })).toBeTruthy()
-    await user.click(within(screen.getByRole('group', { name: '人工病理复核' })).getByRole('button', { name: '调整' }))
-    const composer = within(screen.getByRole('dialog'))
-    expect((composer.getByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('原人工会诊目的')
-    expect(composer.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(lumpectomy.display)
-    await user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
-    await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
-    expect(calls.find(call => call.method !== 'GET')?.body).toMatchObject({ input: { selections: [
-      { source: 'manual', kind: 'pathology', serviceId: manualService.id, sourceProcedureReference: lumpectomy.sourceReference, purpose: '原人工会诊目的' },
-      { source: 'agent', kind: 'pathology', serviceId: service.id, sourceProcedureReference: excision.sourceReference, purpose: '医生调整后的第二项会诊目的', suggestionId: expect.any(String) },
-    ] } })
   })
 
   it('keeps completed consultations readable with corrections but without request writes', async () => {

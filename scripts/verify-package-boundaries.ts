@@ -34,16 +34,6 @@ const rules: Rule[] = [
     forbidden: /from\s+['"]@clinmesh\/core(?:\/|['"])/,
     message: 'ui primitives must not depend on business core',
   },
-  {
-    scope: 'packages/views/**/*.{ts,tsx}',
-    forbidden: /from\s+['"](?:vite|electron|expo|react-native|react-router-dom|next)(?:\/|['"])/,
-    message: 'shared views must receive platform capabilities through adapters',
-  },
-  {
-    scope: 'apps/mobile/**/*.{ts,tsx}',
-    forbidden: /from\s+['"]@clinmesh\/(?:ui|views)(?:\/|['"])/,
-    message: 'mobile must not import DOM UI or shared DOM views',
-  },
 ]
 
 for (const rule of rules) {

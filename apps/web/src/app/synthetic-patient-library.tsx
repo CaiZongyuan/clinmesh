@@ -1,13 +1,11 @@
 import { createAvatar } from '@dicebear/core'
 import * as lorelei from '@dicebear/lorelei'
-import { isLegacyPatientPersonaContent, latestTargetHistoryStart, type PatientPersonaContent } from '@clinmesh/contracts/scenario'
+import { isLegacyPatientPersonaContent, type PatientPersonaContent } from '@clinmesh/contracts/scenario'
 import { PatientPersonaEditor } from './patient-persona-editor.tsx'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { PciPreparation } from './pci-preparation.tsx'
 import { hasPendingPersonaCreation, usePatientPersonaWriteIntent } from './patient-persona-write-intent.ts'
 import type {
-  ScenarioGenerationRequest,
-  ScenarioProviderCapabilities,
   SyntheticPatientIdentity,
   SyntheticPatientProfileDetail,
 } from '@clinmesh/contracts/scenario'
@@ -15,7 +13,6 @@ import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/ale
 import { Avatar, AvatarFallback, AvatarImage } from '@clinmesh/ui/components/avatar'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import {
   Empty,
   EmptyContent,
@@ -26,23 +23,11 @@ import {
 } from '@clinmesh/ui/components/empty'
 import {
   Field,
-  FieldDescription,
-  FieldError,
   FieldGroup,
   FieldLabel,
-  FieldLegend,
-  FieldSet,
 } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@clinmesh/ui/components/input-group'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@clinmesh/ui/components/select'
 import {
   Sheet,
   SheetContent,
@@ -62,23 +47,16 @@ import {
   FileJsonIcon,
   ListFilterIcon,
   PencilIcon,
-  PlusIcon,
   SearchIcon,
   SparklesIcon,
   TriangleAlertIcon,
   UserPlusIcon,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   ApiClientError,
-  enqueuePatientPersona,
-  enqueueScenarioGenerationJob,
   getCurrentScenario,
-  getPatientPersonaJob,
   getPatientPersonaRevisions,
-  getScenarioGenerationJob,
-  getScenarioGenerationTargets,
-  getScenarioProviders,
   getSyntheticCaseHistory,
   getSyntheticCaseHistoryDetail,
   getSyntheticPatientProfile,
@@ -89,9 +67,6 @@ import {
   updateSyntheticPatientProfile,
 } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
-import { personaJobFailure, PersonaJobStatusNotice } from './persona-job-failure.tsx'
-import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
-import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { StartCaseVisitSheet } from './patient-library-start-visit.tsx'
 import { patientLibraryScope, usePatientLibraryVisitState, type PatientLibraryContinuation } from './patient-library-visit-state.ts'
@@ -105,18 +80,12 @@ import { ImagingCoveragePanel, PatientImagingPreparation } from './imaging-prepa
 import { PathologyCoveragePanel, PatientPathologyPreparation } from './pathology-preparation.tsx'
 import { PatientCaseTruth } from './patient-case-truth.tsx'
 
-import { ScenarioResetControl, resetImpact } from './scenario-reset-control.tsx'
-import { useAgentReview } from './agent-review.tsx'
+import { ScenarioResetControl } from './scenario-reset-control.tsx'
 import { VirtualTimeControl } from './virtual-time-control.tsx'
 import { WorkspaceCard, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspaceQueueCard, WorkspaceTabs, useWorkspaceCardView } from './workspace-card-layout.tsx'
 
 const profileListKey = ['synthetic-patient-profiles'] as const
-const providerKey = ['scenario-providers'] as const
-const generationTargetKey = ['scenario-generation-targets'] as const
-// 适配条目 profileId 不含下划线，用作“不定向”的哨兵值
-const untargeted = '_none'
 const currentScenarioKey = ['scenario-current'] as const
-const maximumScenarioSeed = 2_147_483_647
 const avatarCache = new Map<string, string>()
 
 const copy = {
@@ -204,10 +173,6 @@ function avatarUri(seed: string): string {
   const value = createAvatar(lorelei, { seed: `clinmesh:${seed}` }).toDataUri()
   avatarCache.set(seed, value)
   return value
-}
-
-function randomScenarioSeed(): number {
-  return Math.floor(Math.random() * (maximumScenarioSeed + 1))
 }
 
 function runtimeErrorMessage(error: unknown, locale: WorkspaceLocale): string {
@@ -405,12 +370,6 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session, contin
   const messages = copy[locale]
   const queryClient = useQueryClient()
   const scope = patientLibraryScope(session)
-  const jobId = useSyntheticPatientLibraryViewStore(
-    state => state.patientBriefJobIds[syntheticCase.caseId],
-  )
-  const setPatientPersonaJob = useSyntheticPatientLibraryViewStore(
-    state => state.setPatientPersonaJob,
-  )
   const [visitOpen, setVisitOpen] = useState(false)
   const [editing, setEditing] = useState<{ revision: number; content: PatientPersonaContent }>()
   const [manualOpen, setManualOpen] = useState(() => hasPendingPersonaCreation(session, syntheticCase.caseId))
@@ -418,31 +377,6 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session, contin
     queryFn: ({ signal }) => getPatientPersonaRevisions(syntheticCase.caseId, signal),
     queryKey: ['patient-persona-revisions', syntheticCase.caseId, scope],
   })
-  const generate = useMutation({
-    mutationFn: () => enqueuePatientPersona(syntheticCase.caseId, newIdempotencyKey()),
-    onSuccess: response => {
-      queryClient.setQueryData(['patient-brief-job', response.data.jobId, scope], response.data)
-      setPatientPersonaJob(syntheticCase.caseId, response.data.jobId)
-    },
-  })
-  const job = useQuery({
-    enabled: jobId !== undefined,
-    queryFn: ({ signal }) => jobId === undefined
-      ? Promise.reject(new Error('No Patient Persona job'))
-      : getPatientPersonaJob(jobId, signal),
-    queryKey: ['patient-brief-job', jobId ?? 'none', scope],
-    refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '')
-      ? 1_000
-      : false,
-  })
-  useEffect(() => {
-    if (job.data?.status !== 'succeeded') return
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['patient-persona-revisions', syntheticCase.caseId] }),
-      queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }),
-      queryClient.invalidateQueries({ queryKey: profileListKey }),
-    ])
-  }, [job.data?.status, profileId, queryClient, syntheticCase.caseId])
   const refreshPersona = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['patient-persona-revisions', syntheticCase.caseId] }),
@@ -452,13 +386,12 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session, contin
   }
   const selection = usePatientPersonaWriteIntent(session, syntheticCase.caseId, 'select', refreshPersona)
   const select = selection.mutation
-  const running = job.data?.status === 'queued' || job.data?.status === 'running'
   return (
     <section className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-semibold">{messages.brief}</h4>
         <div className="flex flex-wrap gap-2">
-          <Button disabled={generate.isPending || running || syntheticCase.status === 'started'} onClick={() => { setEditing(undefined); setManualOpen(true) }} size="sm" variant="outline">
+          <Button disabled={syntheticCase.status === 'started'} onClick={() => { setEditing(undefined); setManualOpen(true) }} size="sm" variant="outline">
             {locale === 'zh-CN' ? '手工创建患者档案' : 'Create manual persona'}
           </Button>
           {syntheticCase.status === 'brief-ready' && syntheticCase.activeBriefRevision !== null ? (
@@ -466,27 +399,8 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase, session, contin
               <UserPlusIcon data-icon="inline-start" />{messages.startVisit}
             </Button>
           ) : null}
-          <Button disabled={generate.isPending || running || syntheticCase.status === 'started'} onClick={() => generate.mutate()} size="sm" variant={syntheticCase.status === 'brief-ready' && syntheticCase.activeBriefRevision !== null ? 'outline' : 'default'}>
-            <SparklesIcon data-icon="inline-start" />{messages.briefGenerate}
-          </Button>
         </div>
       </div>
-      {generate.error === null ? null : (
-        <Alert className="mt-3" variant="destructive">
-          <CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle>
-          <AlertDescription>{runtimeErrorMessage(generate.error, locale)}</AlertDescription>
-        </Alert>
-      )}
-      {job.data === undefined ? null : (
-        <PersonaJobStatusNotice
-          error={job.data.error}
-          finishedAt={job.data.finishedAt}
-          label={messages.briefStatus[job.data.status]}
-          locale={locale}
-          status={job.data.status}
-        />
-      )}
-      {running ? <Skeleton className="mt-3 h-20 w-full" /> : null}
       {manualOpen ? <div className="mt-4"><PatientPersonaEditor
         caseId={syntheticCase.caseId} locale={locale} session={session}
         onCancel={() => setManualOpen(false)}
@@ -651,104 +565,6 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate, session, conti
   )
 }
 
-function GenerationSheet({ error, locale, onGenerate, onOpenChange, open, pending, providers }: {
-  error: unknown
-  locale: WorkspaceLocale
-  onGenerate: (request: ScenarioGenerationRequest) => void
-  onOpenChange: (open: boolean) => void
-  open: boolean
-  pending: boolean
-  providers: readonly ScenarioProviderCapabilities[]
-}) {
-  const messages = copy[locale]
-  const [request, setRequest] = useState<ScenarioGenerationRequest>({
-    moduleMode: 'all', modules: [],
-    name: locale === 'zh-CN' ? 'Synthea 中文患者批次' : 'Localized Synthea patient batch',
-    population: { age: { maximum: 80, minimum: 18 }, count: 1, gender: 'any' },
-    providerId: 'synthea', seeds: { clinical: 7331, population: 4242 },
-    timeRange: { end: '2026-08-01', start: '2011-08-01' }, timeZone: 'Asia/Shanghai',
-  })
-  useEffect(() => {
-    if (!open) return
-    setRequest(current => ({
-      ...current,
-      seeds: { clinical: randomScenarioSeed(), population: randomScenarioSeed() },
-    }))
-  }, [open])
-  const genderItems = [
-    { label: messages.genderAny, value: 'any' },
-    { label: messages.genderFemale, value: 'female' },
-    { label: messages.genderMale, value: 'male' },
-  ] as const
-  const provider = providers.find(item => item.providerId === 'synthea')
-  const unavailableReason = provider?.unavailableReason === '未配置 Synthea Provider'
-    ? messages.providerMissing
-    : provider?.unavailableReason === 'Synthea Provider 不可用' || !provider?.unavailableReason
-      ? messages.providerUnavailable
-      : provider.unavailableReason
-  const availableModules = provider?.modules ?? []
-  const filtered = request.moduleMode === 'filter'
-  const updatePopulation = (next: Partial<ScenarioGenerationRequest['population']>) => setRequest(current => ({ ...current, population: { ...current.population, ...next } }))
-  const updateModule = (module: string, checked: boolean) => setRequest(current => ({ ...current, modules: checked ? [...new Set([...current.modules, module])] : current.modules.length === 1 ? current.modules : current.modules.filter(item => item !== module) }))
-  // 定向病例只在 Provider 声明支持且存在可选条目时出现；否则请求体与不定向生成完全相同
-  const targetedGeneration = provider?.targetedGeneration === true
-  const targets = useQuery({
-    enabled: open && targetedGeneration,
-    queryFn: ({ signal }) => getScenarioGenerationTargets(signal),
-    queryKey: generationTargetKey,
-  })
-  const targetOptions = targetedGeneration ? targets.data?.items ?? [] : []
-  const [targetProfileId, setTargetProfileId] = useState(untargeted)
-  const target = targetOptions.find(item => item.profileId === targetProfileId)
-  const sexLabel = (sex: 'female' | 'male' | undefined) => sex === 'female' ? messages.genderFemale : sex === 'male' ? messages.genderMale : messages.targetSexAny
-  const formatTargetRange = (text: string, item: { ageRange: readonly [number, number]; sex?: 'female' | 'male' | undefined }) => text
-    .replace('{sex}', sexLabel(item.sex)).replace('{min}', String(item.ageRange[0])).replace('{max}', String(item.ageRange[1]))
-  const targetItems = [
-    { label: messages.targetNone, value: untargeted },
-    // 病理条目的名称已含会诊项目，放射条目加上检查类别前缀。
-    ...targetOptions.map(item => ({
-      label: item.kind === 'pathology-profile' ? item.label : messages.targetImaging.replace('{label}', item.label),
-      value: item.profileId,
-    })),
-  ]
-  const sexMismatch = target?.sex !== undefined && request.population.gender !== target.sex
-  const ageMismatch = target !== undefined && (request.population.age.minimum < target.ageRange[0] || request.population.age.maximum > target.ageRange[1])
-  // 条目的匹配事实（如多年前的确诊与手术）须落在导出的病史之内。
-  const latestHistoryStart = target?.minimumHistoryYears === undefined
-    ? undefined
-    : latestTargetHistoryStart(request.timeRange.end, target.minimumHistoryYears)
-  const historyMismatch = latestHistoryStart !== undefined && request.timeRange.start > latestHistoryStart
-  const targetError = target === undefined ? undefined
-    : sexMismatch ? formatTargetRange(messages.targetSexMismatch, target)
-      : ageMismatch ? formatTargetRange(messages.targetAgeMismatch, target)
-        : historyMismatch
-          ? messages.targetHistoryMismatch.replace('{date}', latestHistoryStart).replace('{years}', String(target.minimumHistoryYears))
-          : undefined
-  const selectTarget = (profileId: string) => {
-    setTargetProfileId(profileId)
-    const item = targetOptions.find(option => option.profileId === profileId)
-    if (item === undefined) return
-    const [minimum, maximum] = item.ageRange
-    const clamp = (value: number) => Math.min(Math.max(value, minimum), maximum)
-    setRequest((current) => {
-      const latest = item.minimumHistoryYears === undefined
-        ? undefined
-        : latestTargetHistoryStart(current.timeRange.end, item.minimumHistoryYears)
-      return {
-        ...current,
-        population: {
-          ...current.population,
-          age: { maximum: clamp(current.population.age.maximum), minimum: clamp(current.population.age.minimum) },
-          gender: item.sex ?? 'any',
-        },
-        timeRange: latest !== undefined && current.timeRange.start > latest ? { ...current.timeRange, start: latest } : current.timeRange,
-      }
-    })
-  }
-  const submit = () => onGenerate(target === undefined ? request : { ...request, target: { kind: target.kind, profileId: target.profileId } })
-  return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.generate}</SheetTitle><SheetDescription>{messages.emptyDescription}</SheetDescription></SheetHeader><div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4"><div className="border-b pb-3"><p className="text-sm font-semibold">Synthea</p><p className="mt-1 text-xs text-muted-foreground">{messages.allModules}</p></div>{targetOptions.length === 0 ? null : <Field data-invalid={targetError !== undefined}><FieldLabel htmlFor="patient-generation-target">{messages.target}</FieldLabel><Select items={targetItems} onValueChange={value => { if (value !== null) selectTarget(value) }} value={target === undefined ? untargeted : target.profileId}><SelectTrigger className="min-h-8 w-full whitespace-normal data-[size=default]:h-auto *:data-[slot=select-value]:line-clamp-none" id="patient-generation-target"><SelectValue className="min-w-0 wrap-anywhere" /></SelectTrigger><SelectContent align="start" alignItemWithTrigger={false}><SelectGroup>{targetItems.map(item => <SelectItem className="[&>:first-child]:min-w-0 [&>:first-child]:shrink [&>:first-child]:wrap-anywhere [&>:first-child]:whitespace-normal" key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select>{target === undefined ? null : <FieldDescription>{formatTargetRange(messages.targetPopulation, target)}</FieldDescription>}{targetError === undefined ? null : <FieldError>{targetError}</FieldError>}</Field>}<FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-batch-name">{messages.batch}</FieldLabel><Input id="patient-batch-name" maxLength={120} onChange={event => setRequest(current => ({ ...current, name: event.target.value }))} value={request.name} /></Field><Field><FieldLabel htmlFor="patient-count">{messages.patientCount}</FieldLabel><Input id="patient-count" max={10} min={1} onChange={event => updatePopulation({ count: Number(event.target.value) })} type="number" value={request.population.count} /></Field><Field><FieldLabel htmlFor="patient-min-age">{messages.minimumAge}</FieldLabel><Input aria-invalid={ageMismatch || undefined} id="patient-min-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, minimum: Number(event.target.value) } })} type="number" value={request.population.age.minimum} /></Field><Field><FieldLabel htmlFor="patient-max-age">{messages.maximumAge}</FieldLabel><Input aria-invalid={ageMismatch || undefined} id="patient-max-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, maximum: Number(event.target.value) } })} type="number" value={request.population.age.maximum} /></Field></FieldGroup><Field><FieldLabel htmlFor="patient-gender">{messages.gender}</FieldLabel><Select items={genderItems} onValueChange={value => { if (value !== null) updatePopulation({ gender: value }) }} value={request.population.gender}><SelectTrigger aria-invalid={sexMismatch || undefined} className="w-full" id="patient-gender"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{genderItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">{messages.advanced}</summary><FieldGroup className="mt-4"><Field orientation="horizontal"><Checkbox checked={filtered} disabled={availableModules.length === 0} id="patient-filter-modules" onCheckedChange={checked => setRequest(current => ({ ...current, moduleMode: checked === true ? 'filter' : 'all', modules: checked === true ? availableModules.slice(0, 1) : [] }))} /><FieldLabel htmlFor="patient-filter-modules">{messages.filterModules}</FieldLabel></Field>{filtered ? <FieldSet><FieldLegend variant="label">Synthea modules</FieldLegend><FieldGroup>{availableModules.map(module => <Field key={module} orientation="horizontal"><Checkbox checked={request.modules.includes(module)} id={`patient-module-${module}`} onCheckedChange={checked => updateModule(module, checked === true)} /><FieldLabel htmlFor={`patient-module-${module}`}>{module}</FieldLabel></Field>)}</FieldGroup></FieldSet> : null}<FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-population-seed">{messages.populationSeed}</FieldLabel><Input id="patient-population-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, population: Number(event.target.value) } }))} type="number" value={request.seeds.population} /></Field><Field><FieldLabel htmlFor="patient-clinical-seed">{messages.clinicalSeed}</FieldLabel><Input id="patient-clinical-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, clinical: Number(event.target.value) } }))} type="number" value={request.seeds.clinical} /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="patient-history-start">{messages.historyStart}</FieldLabel><Input aria-invalid={historyMismatch || undefined} id="patient-history-start" onChange={event => setRequest(current => ({ ...current, timeRange: { ...current.timeRange, start: event.target.value } }))} type="date" value={request.timeRange.start} /></Field></FieldGroup></FieldGroup></details>{provider?.available === false ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{unavailableReason}</AlertTitle></Alert> : null}{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(error, locale)}</AlertDescription></Alert>}</div><SheetFooter><Button disabled={pending || provider?.available !== true || targetError !== undefined} onClick={submit}><SparklesIcon data-icon="inline-start" />{messages.generate}</Button></SheetFooter></SheetContent></Sheet>
-}
-
 function EditProfileSheet({ error, locale, onOpenChange, onSave, open, pending, profile }: {
   error: unknown
   locale: WorkspaceLocale
@@ -781,19 +597,11 @@ function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceL
   const view = useWorkspaceCardView('scenario-data-sections')
   const section = view.tab === 'library' ? 'library' : 'preparation'
   const queryClient = useQueryClient()
-  const agentReview = useAgentReview()
   const scope = patientLibraryScope(session)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [submittedSearch, setSubmittedSearch] = useState('')
   const [selectedProfileId, setSelectedProfileId] = useState<string>()
-  const [generationOpen, setGenerationOpen] = useState(false)
-  const scenarioGenerationJobIds = useSyntheticPatientLibraryViewStore(
-    state => state.scenarioGenerationJobIds,
-  )
-  const setScenarioGenerationJob = useSyntheticPatientLibraryViewStore(
-    state => state.setScenarioGenerationJob,
-  )
   const [editOpen, setEditOpen] = useState(false)
   const profiles = useQuery({ queryFn: ({ signal }) => getSyntheticPatientProfiles(signal, page, submittedSearch), queryKey: [...profileListKey, scope, page, submittedSearch] })
   const scenario = useQuery({ queryFn: ({ signal }) => getCurrentScenario(signal), queryKey: [...currentScenarioKey, scope] })
@@ -849,124 +657,17 @@ function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceL
     void queryClient.invalidateQueries({ queryKey: [...profileListKey, scope, frozen.page, frozen.search] })
     if (frozen.next !== null) void queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', frozen.next.profileId, scope] })
   } })
-  const providers = useQuery({ queryFn: ({ signal }) => getScenarioProviders(signal), queryKey: [...providerKey, scope] })
-  const generationJobId = scenario.data === undefined
-    ? undefined
-    : scenarioGenerationJobIds[scenario.data.workspaceId]
-  const generate = useMutation({
-    mutationFn: (request: ScenarioGenerationRequest) => enqueueScenarioGenerationJob(
-      request,
-      newIdempotencyKey(),
-    ),
-    onSuccess: response => {
-      queryClient.setQueryData(['scenario-generation-job', response.data.jobId, scope], response.data)
-      setScenarioGenerationJob(response.data.workspaceId, response.data.jobId)
-      setGenerationOpen(false)
-    },
-  })
-  const generationJob = useQuery({ enabled: generationJobId !== undefined, queryFn: ({ signal }) => generationJobId === undefined ? Promise.reject(new Error('No generation job')) : getScenarioGenerationJob(generationJobId, signal), queryKey: ['scenario-generation-job', generationJobId ?? 'none', scope], refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '') ? 1_000 : false })
   const reset = useMutation({
     mutationFn: (clearPatientLibrary: boolean) => {
       if (scenario.data === undefined) throw new Error('当前模拟数据尚未加载。')
       return resetScenario(scenario.data.scenarioRunId, newIdempotencyKey(), clearPatientLibrary)
     },
     onSuccess: async () => {
-      useSyntheticPatientLibraryViewStore.getState().reset()
       setSelectedProfileId(undefined)
       setPage(1)
       await queryClient.resetQueries()
     },
   })
-  const agentPage = useMemo(() => ({
-    actions: {
-      'scenario.status.read': {
-        description: 'Read the current Scenario Run status.',
-        execute: () => scenario.data === undefined ? { status: 'loading' } : {
-          epoch: scenario.data.epoch, scenarioRunId: scenario.data.scenarioRunId,
-          status: scenario.data.status, virtualTime: scenario.data.virtualTime,
-        },
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-      },
-      'scenario.reset.propose': {
-        description: 'Review restarting clinical progress while retaining the patient library.',
-        enabled: scenario.data !== undefined,
-        execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
-          confirmLabel: locale => locale === 'zh-CN' ? '确认重置' : 'Confirm reset',
-          description: resetImpact, onConfirm: () => reset.mutateAsync(false), signal,
-          title: locale => locale === 'zh-CN' ? '确认重置数据' : 'Confirm data reset',
-        }),
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-      },
-      'scenario.providers.read': {
-        description: 'Read configured Scenario generation Provider availability.',
-        execute: (_raw: unknown, signal: AbortSignal) => getScenarioProviders(signal),
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-      },
-      'scenario.generation.status.read': {
-        description: 'Read the current Scenario generation job status when one is selected.',
-        execute: (_raw: unknown, signal: AbortSignal) => generationJobId === undefined
-          ? { status: 'idle' as const }
-          : getScenarioGenerationJob(generationJobId, signal),
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-      },
-    },
-    claim: {
-      version: 1 as const,
-      viewId: 'scenarioData' as const,
-      viewRevision: agentViewRevision({
-        section,
-        scenarioRunId: scenario.data?.scenarioRunId,
-        generationJobId,
-        generationStatus: generationJob.data?.status,
-        generationUpdatedAt: generationJob.data?.updatedAt,
-        providers: providers.data?.items.map(provider => ({
-          available: provider.available,
-          providerId: provider.providerId,
-        })),
-      }),
-      ...(generationJob.data === undefined ? {} : {
-        selection: {
-          id: generationJob.data.jobId,
-          kind: 'generation-job' as const,
-          version: generationJob.data.updatedAt,
-        },
-      }),
-      ui: {
-        status: providers.isPending || generationJob.isLoading ? 'loading' as const
-          : providers.isError || generationJob.isError ? 'error' as const : 'ready' as const,
-      },
-    },
-    label: 'ClinMesh · 合成患者库',
-    readState: () => ({
-      generation: generationJob.data === undefined ? null : {
-        error: generationJob.data.error,
-        jobId: generationJob.data.jobId,
-        status: generationJob.data.status,
-        updatedAt: generationJob.data.updatedAt,
-      },
-      providers: providers.data?.items.map(provider => ({
-        available: provider.available,
-        providerId: provider.providerId,
-        providerName: provider.providerName,
-        unavailableReason: provider.unavailableReason,
-      })) ?? [],
-    }),
-  }), [
-    section,
-    agentReview, locale, reset.mutateAsync, scenario.data,
-    generationJob.data,
-    generationJob.isError,
-    generationJob.isLoading,
-    generationJobId,
-    providers.data,
-    providers.isError,
-    providers.isPending,
-  ])
-  useRegisterAgentPage(agentPage)
-  useEffect(() => {
-    if (generationJob.data?.status !== 'succeeded') return
-    void queryClient.invalidateQueries({ queryKey: profileListKey })
-  }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
   const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId, scope], response.data); await queryClient.invalidateQueries({ queryKey: [...profileListKey, scope] }); if (mounted.current && currentProfile.current === response.data.profileId) setEditOpen(false) } })
   const changeQueuePage = (nextPage: number, nextSearch: string) => {
     setPage(nextPage)
@@ -1006,8 +707,6 @@ function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceL
   </section>
   return <WorkspaceCardLayout id="scenario-data" locale={locale} queue={section === 'library' ? queue : null}>
     <WorkspaceHeaderPatient>{section === 'library' ? profile.data?.identity.displayName : null}</WorkspaceHeaderPatient>
-    {generationJob.data === undefined ? null : <PersonaJobStatusNotice error={generationJob.data.error} finishedAt={generationJob.data.finishedAt} label={messages.generationStatus[generationJob.data.status]} locale={locale} status={generationJob.data.status} />}
-    {generationJob.data?.warning == null ? null : <GenerationWarning locale={locale} warning={generationJob.data.warning} />}
     <WorkspaceTabs id="scenario-data-sections" locale={locale} value={section} onValueChange={view.setTab} items={[
       { value: 'preparation', label: locale === 'zh-CN' ? '演示准备' : 'Demo preparation' },
       { value: 'library', label: locale === 'zh-CN' ? '患者库' : 'Patient library' },
@@ -1015,9 +714,9 @@ function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceL
       <TabsContent className={cn('min-h-0 flex-1 overflow-auto', section !== 'preparation' && 'hidden')} keepMounted value="preparation">
         <div className="flex flex-col gap-3">
           <VirtualTimeControl locale={locale} session={session} />
-          <WorkspaceCard title={locale === 'zh-CN' ? '演示准备' : 'Demo preparation'} description={messages.emptyDescription}
-            actions={<div className="flex flex-wrap gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /><Button variant="outline" onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div>}>
-            {generate.error ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(generate.error, locale)}</AlertDescription></Alert> : <p className="text-sm text-muted-foreground">{locale === 'zh-CN' ? '准备好患者后，到患者库查看档案、来源历史并开始就诊。' : 'After preparing patients, open Patient library to review personas and source history or start a visit.'}</p>}
+          <WorkspaceCard title={locale === 'zh-CN' ? '演示准备' : 'Demo preparation'} description={locale === 'zh-CN' ? '准备固定编排演示病例或重置当前模拟进度。' : 'Prepare curated authored demo cases or reset the current simulation run.'}
+            actions={<div className="flex flex-wrap gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /></div>}>
+            <p className="text-sm text-muted-foreground">{locale === 'zh-CN' ? '准备好患者后，到患者库查看档案、来源历史并开始就诊。' : 'After preparing patients, open Patient library to review personas and source history or start a visit.'}</p>
           </WorkspaceCard>
           <WorkspaceCard><PciPreparation locale={locale} session={session} onSourcePrepared={async profileId => {
             setSelectedProfileId(profileId); setPage(1); setSearch(''); setSubmittedSearch(''); view.setTab('library')
@@ -1061,13 +760,6 @@ function ScopedSyntheticPatientLibrary({ locale, session }: { locale: WorkspaceL
         </WorkspaceCard>
       </TabsContent>
     </WorkspaceTabs>
-    <GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />
     {profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}
   </WorkspaceCardLayout>
-}
-
-/** 成功任务的后续步骤未完成时的提示：患者已保存，管理员需要补做对应步骤。 */
-function GenerationWarning({ locale, warning }: { locale: WorkspaceLocale; warning: { code: string; message: string } }) {
-  const copy = personaJobFailure(warning, locale)
-  return <Alert><CircleAlertIcon /><AlertTitle>{copy.summary}</AlertTitle><AlertDescription>{copy.guidance}</AlertDescription></Alert>
 }

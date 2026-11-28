@@ -22,3 +22,7 @@ export function formatShanghaiMinute(value: string): string {
     .formatToParts(new Date(value)).map(part => [part.type, part.value]))
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
 }
+
+export function stableViewKey(value: unknown): string {
+  return JSON.stringify(value)
+}

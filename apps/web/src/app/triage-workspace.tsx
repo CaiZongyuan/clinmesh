@@ -1,5 +1,4 @@
 import type { SessionContext, TriageQueueItem } from '@clinmesh/contracts/his'
-import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -12,7 +11,7 @@ import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-gro
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckIcon, CircleAlertIcon, HeartPulseIcon, UserRoundCheckIcon } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { toast } from '@clinmesh/ui/components/toast'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { getTriageQueue, newIdempotencyKey, recordTriage } from './api-client.ts'
@@ -23,8 +22,6 @@ import { QueuePatientRow } from './queue-patient-row.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatShanghaiMinute } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
-import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
-import { useAgentReview } from './agent-review.tsx'
 import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspaceHeaderPatient, WorkspaceQueueCard, useWorkspaceCardView } from './workspace-card-layout.tsx'
 import { outpatientFlow, outpatientCaseFlowState } from './workspace-flow.ts'
 
@@ -78,7 +75,6 @@ const defaultDraft: TriageDraft = {
 
 export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
-  const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const draftScope = JSON.stringify([session.actor.actorId, ...scope, session.actor.practitionerRoleId])
@@ -197,187 +193,6 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
       }
     },
   })
-
-  const agentPage = useMemo(() => ({
-    actions: {
-      'triage.queue.read': {
-        description: 'Read the current authorized triage queue page.',
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => getTriageQueue(status, signal, page),
-      },
-      'triage.case.select': {
-        description: 'Select one case from the current triage queue.',
-        enabled: (queue.data?.items.length ?? 0) > 0,
-        parameters: {
-          type: 'object' as const,
-          properties: { caseId: { type: 'string', maxLength: 128 } },
-          required: ['caseId'],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown) => {
-          const { caseId } = agentToolInputSchemas['triage.case.select'].parse(raw)
-          if (!queue.data?.items.some(item => item.caseId === caseId)) {
-            throw new Error('Case is not in the current triage queue')
-          }
-          setCompletedSnapshot(undefined)
-          setSelectedCaseId(caseId)
-          return { caseId, selected: true }
-        },
-      },
-      'triage.draft.set': {
-        description: 'Fill the current triage draft without submitting an Observation.',
-        enabled: selectedCase !== undefined,
-        parameters: {
-          type: 'object' as const,
-          properties: {
-            acuityCode: { type: 'string', enum: acuities },
-            chiefComplaint: { type: 'string', maxLength: 500 },
-            diastolicMmHg: { type: 'number', minimum: 30, maximum: 180 },
-            heightCm: { type: 'number', minimum: 30, maximum: 260 },
-            oxygenSaturationPct: { type: 'number', minimum: 50, maximum: 100 },
-            pulseBpm: { type: 'number', minimum: 20, maximum: 250 },
-            respirationBpm: { type: 'number', minimum: 5, maximum: 80 },
-            systolicMmHg: { type: 'number', minimum: 50, maximum: 260 },
-            temperatureC: { type: 'number', minimum: 30, maximum: 45 },
-            weightKg: { type: 'number', minimum: 1, maximum: 400 },
-          },
-          required: [
-            'acuityCode', 'chiefComplaint', 'diastolicMmHg', 'oxygenSaturationPct',
-            'pulseBpm', 'respirationBpm', 'systolicMmHg', 'temperatureC',
-          ],
-          additionalProperties: false,
-        },
-        execute: (raw: unknown) => {
-          if (selectedCase === undefined || draftKey === undefined) throw new Error(messages.triageUnavailable)
-          const values = agentToolInputSchemas['triage.draft.set'].parse(raw)
-          setDrafts(current => ({ ...current, [draftKey]: {
-            acuityCode: values.acuityCode, chiefComplaint: values.chiefComplaint,
-            diastolicMmHg: String(values.diastolicMmHg), oxygenSaturationPct: String(values.oxygenSaturationPct),
-            pulseBpm: String(values.pulseBpm), respirationBpm: String(values.respirationBpm),
-            systolicMmHg: String(values.systolicMmHg), temperatureC: String(values.temperatureC),
-            weightKg: values.weightKg === undefined ? '' : String(values.weightKg),
-            heightCm: values.heightCm === undefined ? '' : String(values.heightCm),
-            assisted: [
-              'chiefComplaint', 'temperatureC', 'pulseBpm', 'respirationBpm', 'systolicMmHg', 'diastolicMmHg', 'oxygenSaturationPct', 'acuityCode',
-              ...(values.weightKg === undefined ? [] : ['weightKg' as const]),
-              ...(values.heightCm === undefined ? [] : ['heightCm' as const]),
-            ],
-          } }))
-          return { updated: true }
-        },
-      },
-      'triage.record.propose': {
-        description: 'Open human review for the current triage draft.',
-        enabled: canRecord,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          if (selectedCase === undefined || draftKey === undefined || !canRecord) throw new Error(messages.triageUnavailable)
-          return agentReview.request({
-            confirmLabel: locale => getWorkspaceMessages(locale).completeTriage,
-            description: locale => `${selectedCase.patient.name} · ${temperatureC} °C · ${getWorkspaceMessages(locale)[`acuity_${acuityCode.replace('-', '')}` as 'acuity_level1']}`,
-            onConfirm: () => mutation.mutateAsync({ item: selectedCase, draft, key: draftKey }),
-            signal,
-            title: locale => getWorkspaceMessages(locale).triageAssessment,
-          })
-        },
-      },
-    },
-    claim: {
-      version: 1 as const,
-      viewId: 'triage' as const,
-      viewRevision: agentViewRevision({
-        acuityCode,
-        chiefComplaint,
-        diastolicMmHg,
-        heightCm,
-        oxygenSaturationPct,
-        page,
-        pulseBpm,
-        respirationBpm,
-        selectedCaseId: selectedCase?.caseId,
-        status,
-        systolicMmHg,
-        temperatureC,
-        weightKg,
-      }),
-      activeSection: status,
-      ...(selectedCase === undefined ? {} : {
-        selection: {
-          id: selectedCase.caseId,
-          kind: 'triage-item' as const,
-          version: selectedCase.taskVersion,
-        },
-        draft: {
-          dirty: chiefComplaint !== '',
-          id: `${selectedCase.caseId}:triage`,
-          kind: 'triage' as const,
-          revision: agentViewRevision({
-            acuityCode,
-            chiefComplaint,
-            diastolicMmHg,
-            heightCm,
-            oxygenSaturationPct,
-            pulseBpm,
-            respirationBpm,
-            systolicMmHg,
-            temperatureC,
-            weightKg,
-          }),
-        },
-      }),
-      ui: {
-        status: queue.isPending ? 'loading' as const
-          : queue.isError ? 'error' as const
-            : queue.data?.items.length === 0 ? 'empty' as const : 'ready' as const,
-      },
-    },
-    label: 'ClinMesh · 门诊分诊',
-    readState: () => ({
-      draft: {
-        acuityCode,
-        chiefComplaint,
-        diastolicMmHg: Number(diastolicMmHg),
-        ...(heightCm.trim() === '' ? {} : { heightCm: Number(heightCm) }),
-        oxygenSaturationPct: Number(oxygenSaturationPct),
-        pulseBpm: Number(pulseBpm),
-        respirationBpm: Number(respirationBpm),
-        systolicMmHg: Number(systolicMmHg),
-        temperatureC: Number(temperatureC),
-        ...(weightKg.trim() === '' ? {} : { weightKg: Number(weightKg) }),
-      },
-      queueCount: queue.data?.total ?? 0,
-      selectedCase: selectedCase === undefined ? null : {
-        caseId: selectedCase.caseId,
-        encounterId: selectedCase.encounterId,
-        patientName: selectedCase.patient.name,
-      },
-      status,
-    }),
-  }), [
-    acuityCode,
-    agentReview,
-    chiefComplaint,
-    diastolicMmHg,
-    heightCm,
-    messages,
-    mutation.mutateAsync,
-    oxygenSaturationPct,
-    page,
-    pulseBpm,
-    queue.data,
-    queue.isError,
-    queue.isPending,
-    respirationBpm,
-    selectedCase,
-    status,
-    canRecord,
-    draft,
-    draftKey,
-    systolicMmHg,
-    temperatureC,
-    weightKg,
-  ])
-  useRegisterAgentPage(agentPage)
 
   const selectedAcuityLabel = acuityCode === '' ? undefined : messages[`acuity_${acuityCode.replace('-', '')}` as 'acuity_level1']
   const nextPendingCase = completedSnapshot === undefined

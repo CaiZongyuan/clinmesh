@@ -24,8 +24,8 @@ import {
   revokedAgentCapabilityGrantSchema,
 } from '@clinmesh/contracts/agent'
 
-const recordingContextOperations = ['encounter.consultation.ask', 'encounter.consultation.reply.retry',
-  'encounter.consultation-recording.control', 'encounter.clinical-document.sign.cancel']
+const doctorTaskContextOperations = ['encounter.consultation.ask', 'encounter.consultation.reply.retry',
+  'encounter.clinical-document.sign.cancel']
 
 export const syntheticAccounts = [
   {
@@ -233,13 +233,8 @@ export class IdentityService {
     this.auth = createAuth(database, options)
   }
 
-  consultationRecordingContextStatus(context: ActorContext): 'active' | 'inactive' | 'superseded' {
-    return this.#doctorTaskContextStatus(context, recordingContextOperations)
-  }
-
-  clinicalDocumentQualityContextStatus(context: ActorContext): 'active' | 'inactive' | 'superseded' {
-    return this.#doctorTaskContextStatus(context, [...recordingContextOperations,
-      'encounter.clinical-document.draft.set', 'doctor.document-quality.check', 'doctor.document-quality.retain'])
+  doctorTaskContextStatus(context: ActorContext): 'active' | 'inactive' | 'superseded' {
+    return this.#doctorTaskContextStatus(context, doctorTaskContextOperations)
   }
 
   modelTaskContextStatus(context: ActorContext, operations: readonly string[] = []): 'active' | 'inactive' | 'superseded' {

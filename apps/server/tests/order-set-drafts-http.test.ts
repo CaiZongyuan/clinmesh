@@ -323,18 +323,25 @@ describe('Cardiology Order Set Templates & Patient-Screened Draft Assembly HTTP'
   } = {}) {
     nextPatient = { birthDate: options.birthDate ?? '1965-04-12', gender: options.gender ?? 'male' }
     const ready = current()
-    expect((await postJson('/api/sim/v1/scenario-generation-jobs', cookies.admin, {
-      name: '合成专病组套门诊病例',
-      population: { age: { maximum: 75, minimum: 18 }, count: 1, gender: 'any' },
-      providerId: 'synthea',
-      seeds: { clinical: Math.floor(Math.random() * 100_000) + 1, population: Math.floor(Math.random() * 100_000) + 1 },
-      timeRange: { end: '2026-08-01', start: '2020-01-01' },
-      timeZone: 'Asia/Shanghai',
-    })).status).toBe(200)
+    const adminContext = (await ready.identity.resolveSessionContext(new Headers({ cookie: cookies.admin }))).actor
+    await ready.scenarioData.enqueueGeneration({
+      context: adminContext,
+      idempotencyKey: randomUUID(),
+      request: {
+        moduleMode: 'all',
+        modules: [],
+        name: '合成专病组套门诊病例',
+        population: { age: { maximum: 75, minimum: 18 }, count: 1, gender: 'any' },
+        providerId: 'synthea',
+        seeds: { clinical: Math.floor(Math.random() * 100_000) + 1, population: Math.floor(Math.random() * 100_000) + 1 },
+        timeRange: { end: '2026-08-01', start: '2020-01-01' },
+        timeZone: 'Asia/Shanghai',
+      },
+    })
     const generated = await ready.scenarioData.processNextGenerationJob()
     expect(generated, JSON.stringify(generated)).toMatchObject({ status: 'succeeded' })
     const syntheticCaseId = generated!.caseIds[0]!
-    expect((await postJson(`/api/sim/v1/synthetic-cases/${syntheticCaseId}/patient-persona-jobs`, cookies.admin, {})).status).toBe(200)
+    await ready.patientPersona.enqueue({ caseId: syntheticCaseId, context: adminContext, idempotencyKey: randomUUID() })
     expect((await ready.patientPersona.processNext())?.status).toBe('succeeded')
     const syntheticCase = syntheticCaseInstanceSchema.parse(await (await ready.app.request(
       `/api/sim/v1/synthetic-cases/${syntheticCaseId}`,

@@ -188,7 +188,7 @@ describe('trusted Web session workflow', () => {
 
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     expect(window.location.pathname).toBe('/registration')
-    expect(screen.getByText('助手未连接')).toBeTruthy()
+    expect(screen.queryByText('助手未连接')).toBeNull()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     expect(await screen.findByRole('menuitem', { name: '门诊挂号' })).toBeTruthy()
     expect(screen.queryByRole('menuitemradio', { name: '分诊护士' })).toBeNull()

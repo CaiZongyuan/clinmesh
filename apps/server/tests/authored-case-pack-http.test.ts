@@ -48,7 +48,6 @@ import {
 import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import {
   administratorCaseTruthSchema,
-  patientPersonaJobSchema,
   patientPersonaRevisionListSchema,
   patientPersonaRevisionSchema,
   startSyntheticCaseResultSchema,
@@ -669,12 +668,18 @@ it('幂等准备五例专病病例包，保持角色/世代/人工修订/兼容�
   const case2 = first.data.cases[1]!.case!
   s.runtime.database.driver.prepare('UPDATE synthetic_case_instance SET active_brief_revision=NULL, status=?, revision=1 WHERE case_id=?').run('brief-pending', case2.caseId)
   s.runtime.database.driver.prepare('DELETE FROM patient_persona_revision WHERE case_id=?').run(case2.caseId)
-  const queued = await s.mutate('admin', `/api/sim/v1/synthetic-cases/${case2.caseId}/patient-persona-jobs`, {})
-  expect(queued.status).toBe(200)
-  const job = patientPersonaJobSchema.parse((await queued.json()).data)
+  const parsedAdminActor = sessionContextSchema.parse(await (await s.get('admin', '/api/auth/context')).json()).actor
+  const adminContext = {
+    ...parsedAdminActor,
+    locationId: parsedAdminActor.locationId ?? 'location-administrator',
+    organizationId: parsedAdminActor.organizationId ?? 'organization-clinmesh',
+    practitionerId: parsedAdminActor.practitionerId ?? 'practitioner-administrator',
+    practitionerRoleId: parsedAdminActor.practitionerRoleId ?? 'practitioner-role-administrator',
+  }
+  const job = (await s.runtime.patientPersona.enqueue({ caseId: case2.caseId, context: adminContext, idempotencyKey: randomUUID() })).data
   const repaired = await s.preparePack('epoch-1')
   expect(repaired.effects).toContainEqual({ kind: 'updated', reference: `PatientPersonaJob/${job.jobId}`, versionId: 'failed' })
-  const stoppedJob = patientPersonaJobSchema.parse(await (await s.get('admin', `/api/sim/v1/patient-persona-jobs/${job.jobId}`)).json())
+  const stoppedJob = s.runtime.patientPersona.getJob(adminContext, job.jobId)
   expect(stoppedJob).toMatchObject({ error: { code: 'PERSONA_JOB_SUPERSEDED' }, status: 'failed' })
 
   // Backward compatibility: legacy pci/prepare works side by side without conflicts

@@ -18,8 +18,6 @@ import { getBatchFailureMessage } from './workspace-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { useInpatientOrderBatch, inpatientOrderBatchScope } from './inpatient-order-batch.ts'
 import { formatShanghaiMinute } from './workspace-format.ts'
-import { AgentReviewAnchor } from './agent-review.tsx'
-import { inpatientOrderAnchor } from './inpatient-agent-tools.tsx'
 
 export function InpatientVerification({ admission, session, locale, orders, loading, blocked, active, refresh, write }: {
   admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; orders: InpatientOrder[];
@@ -84,7 +82,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
       <Button variant="ghost" disabled={shownPage + 1 >= pageCount} onClick={() => setPage(shownPage + 1)}>{t('下一页', 'Next')}</Button>
     </div>
     {visible.map(order => <InpatientItemRow key={order.id} title={order.display} metadata={details(order)} badge={<Badge variant="outline">{t('待校对', 'Awaiting verification')}</Badge>}
-      actions={<Checkbox aria-label={t(`选择校对：${order.display}`, `Select verification: ${order.display}`)} checked={batch.rows.some(row => row.id === order.id && row.selected)} disabled={disabled} onCheckedChange={checked => select([order], checked)} />}><AgentReviewAnchor id={inpatientOrderAnchor(admission.id, order.id)} /></InpatientItemRow>)}
+      actions={<Checkbox aria-label={t(`选择校对：${order.display}`, `Select verification: ${order.display}`)} checked={batch.rows.some(row => row.id === order.id && row.selected)} disabled={disabled} onCheckedChange={checked => select([order], checked)} />} />)}
     {!loading && !visible.length ? <p className="text-sm text-muted-foreground">{pending.length ? t('没有匹配的新医嘱。', 'No matching new orders.') : t('暂无待校对的新医嘱。', 'No new orders to verify.')}</p> : null}
     {batch.rows.length || batch.failed ? <section aria-label={t('待校对清单', 'Verification draft list')} className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold">{t(`待校对清单 (${batch.rows.length}/20) · 已选 ${selected.length}`, `Drafts (${batch.rows.length}/20) · ${selected.length} selected`)}</h4><Button variant="ghost" disabled={batch.busy || unknown} onClick={() => setDiscard(true)}>{t('清空待校对清单', 'Discard verification drafts')}</Button></div>

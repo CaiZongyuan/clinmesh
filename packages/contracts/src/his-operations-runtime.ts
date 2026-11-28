@@ -25,12 +25,9 @@ import {
 } from './order-set-templates.ts'
 import { inpatientDrgRecordChecksSchema, inpatientDrgReviewSchema, inpatientDrgReviewResponseSchema, inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from './inpatient-drg-review.ts'
 import { inpatientDrgExplanationSchema, inpatientDrgExplainInputSchema, inpatientDrgExplanationResponseSchema } from './inpatient-drg-explanation.ts'
-import { inpatientGuidelineAdviceListSchema, inpatientGuidelineAdviceReadQuerySchema, inpatientGuidelineAdviceRequestInputSchema, inpatientGuidelineAdviceResponseSchema } from './inpatient-guideline-advice.ts'
-import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema, inpatientDrgAgentConfirmInputSchema } from './inpatient-drg-agent.ts'
 import { inpatientMaterialEstimatesSchema, inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimateRequestInputSchema,
   inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from './inpatient-material-estimate.ts'
 import { inpatientPciSelectionSchema, inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionResponseSchema, inpatientPciSelectionSaveInputSchema } from './inpatient-pci-selection.ts'
-import { inpatientDrgFollowupSchema, inpatientDrgFollowupResponseSchema, inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from './inpatient-drg-followup.ts'
 import { insuranceTargetSchema, insurancePlanCodeSchema, insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from './insurance.ts'
 import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema,
   inpatientFinancialInsuranceConfirmInputSchema } from './inpatient-finance.ts'
@@ -136,10 +133,6 @@ import {
   clinicalCatalogSchema,
   clinicalDocumentContentSchema,
   clinicalDocumentDraftResponseSchema,
-  checkClinicalDocumentQualityRequestSchema,
-  clinicalDocumentQualityControlStateSchema,
-  clinicalDocumentQualityControlResponseSchema,
-  retainClinicalDocumentQualityIssueRequestSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   clinicalDocumentSignResponseSchema,
@@ -193,8 +186,6 @@ import {
   registrationQueueSchema,
   registrationResponseSchema,
   saveClinicalDocumentDraftRequestSchema,
-  controlConsultationRecordingRequestSchema,
-  controlConsultationRecordingResponseSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
   savePrescriptionDraftRequestSchema,
@@ -422,13 +413,6 @@ const withdrawPrescriptionOperationInputSchema = z.object({
 const saveClinicalDocumentDraftOperationInputSchema = saveClinicalDocumentDraftRequestSchema.shape.input.extend({
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
-}).strict()
-
-const documentQualityCheckInputSchema = checkClinicalDocumentQualityRequestSchema.shape.input.safeExtend({
-  caseId: z.string().min(1), encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
-})
-const documentQualityRetainInputSchema = retainClinicalDocumentQualityIssueRequestSchema.shape.input.extend({
-  caseId: z.string().min(1), encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
 }).strict()
 
 const previewClinicalDocumentSignOperationInputSchema = previewClinicalDocumentSignRequestSchema.shape.input.extend({
@@ -709,9 +693,6 @@ const fhirSearchInputSchema = z.object({
   }
 })
 
-const controlConsultationRecordingOperationInputSchema = controlConsultationRecordingRequestSchema.shape.input.extend({
-  encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
-}).strict()
 const fhirBundleSchema = z.object({
   entry: z.array(z.object({
     fullUrl: z.url(),
@@ -750,15 +731,6 @@ function commandBody(
 }
 
 const bodyEncoders = {
-  'doctor.document-quality.check': (rawInput: unknown) => {
-    const { caseId: _caseId, encounterId, encounterVersion, ...input } = documentQualityCheckInputSchema.parse(rawInput)
-    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
-  },
-  'doctor.document-quality.retain': (rawInput: unknown) => {
-    const { caseId: _caseId, encounterId, encounterVersion, ...input } = documentQualityRetainInputSchema.parse(rawInput)
-    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
-  },
-
   'admin.laboratory-services.publish': (rawInput: unknown) => ({
     input: publishLaboratoryServicesOperationInputSchema.parse(rawInput),
   }),
@@ -844,10 +816,6 @@ const bodyEncoders = {
   },
   [clinicalDocumentOperationIds.draftSet]: (rawInput: unknown) => {
     const { encounterId, encounterVersion, ...input } = saveClinicalDocumentDraftOperationInputSchema.parse(rawInput)
-    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
-  },
-  'encounter.consultation-recording.control': (rawInput: unknown) => {
-    const { encounterId, encounterVersion, ...input } = controlConsultationRecordingOperationInputSchema.parse(rawInput)
     return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
   },
   [clinicalDocumentOperationIds.previewSign]: (rawInput: unknown) => {
@@ -1433,24 +1401,6 @@ const rawOperationRuntimeDefinitions = [
     output: outpatientRiskAssessmentResponseSchema,
   },
   {
-    http: { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/document-quality-control' },
-    id: 'doctor.document-quality.get',
-    input: caseIdInputSchema.extend({ clientId: z.string().min(1).max(128).optional() }),
-    output: clinicalDocumentQualityControlStateSchema,
-  },
-  {
-    http: { method: 'POST', path: '/api/his/v1/doctor/cases/:caseId/document-quality-control/actions/check' },
-    id: 'doctor.document-quality.check',
-    input: documentQualityCheckInputSchema,
-    output: clinicalDocumentQualityControlResponseSchema,
-  },
-  {
-    http: { method: 'POST', path: '/api/his/v1/doctor/cases/:caseId/document-quality-control/actions/retain' },
-    id: 'doctor.document-quality.retain',
-    input: documentQualityRetainInputSchema,
-    output: clinicalDocumentQualityControlResponseSchema,
-  },
-  {
     http: {
       method: 'GET',
       path: '/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory',
@@ -1567,12 +1517,6 @@ const rawOperationRuntimeDefinitions = [
     id: 'prescription.withdraw',
     input: withdrawPrescriptionOperationInputSchema,
     output: withdrawPrescriptionResponseSchema,
-  },
-  {
-    http: { method: 'POST', path: '/api/his/v1/encounters/:encounterId/consultation-recording/actions/control' },
-    id: 'encounter.consultation-recording.control',
-    input: controlConsultationRecordingOperationInputSchema,
-    output: controlConsultationRecordingResponseSchema,
   },
   {
     http: {
@@ -1859,26 +1803,19 @@ const rawOperationRuntimeDefinitions = [
   admOp('inpatient.record.submit', '/record/submit', inpatientRecordSubmitInputSchema, inpatientRecordResponseSchema),
   admOp('inpatient.record.review', '/record/review', inpatientRecordReviewInputSchema, inpatientRecordResponseSchema),
   admOp('inpatient.record.archive', '/record/archive', inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema),
-  admQuery('inpatient.guideline-advice.read', '/guideline-advice', inpatientGuidelineAdviceListSchema, inpatientGuidelineAdviceReadQuerySchema),
   admQuery('inpatient.guideline-topics.read', '/guideline-topics', guidelineTopicBundleSchema, inpatientGuidelineTopicsInputSchema),
-  admOp('inpatient.guideline-advice.request', '/guideline-advice/request', inpatientGuidelineAdviceRequestInputSchema, inpatientGuidelineAdviceResponseSchema),
   admQuery('inpatient.material-estimate.read', '/material-estimates', inpatientMaterialEstimatesSchema),
   admOp('inpatient.material-estimate.request', '/material-estimates/request', inpatientMaterialEstimateRequestInputSchema, inpatientMaterialEstimateResponseSchema),
   admOp('inpatient.material-estimate.cancel', '/material-estimates/cancel', inpatientMaterialEstimateRequestInputSchema, inpatientMaterialEstimateResponseSchema),
   admOp('inpatient.material-estimate.save', '/material-estimates/save', inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateResponseSchema),
   admOp('inpatient.material-estimate.confirm', '/material-estimates/confirm', inpatientMaterialEstimateConfirmInputSchema, inpatientMaterialEstimateResponseSchema),
   admOp('inpatient.drg.reservation.replace-batch', '/drg/reservations/replace-batch', inpatientMaterialReservationBatchInputSchema, commandResponseSchema(inpatientMaterialReservationListSchema)),
-  admQuery('inpatient.drg.agent.read', '/drg/agent', inpatientDrgAgentSchema),
-  admOp('inpatient.drg.agent.confirm', '/drg/agent/confirm', inpatientDrgAgentConfirmInputSchema, inpatientDrgAgentResponseSchema),
   admQuery('inpatient.drg.record-checks.read', '/drg/record-checks', inpatientDrgRecordChecksSchema),
   admQuery('inpatient.drg.record-checks.explanation.read', '/drg/record-checks/explanation', inpatientDrgExplanationSchema),
   admOp('inpatient.drg.record-checks.explain', '/drg/record-checks/explain', inpatientDrgExplainInputSchema, inpatientDrgExplanationResponseSchema),
   admOp('inpatient.drg.review.todo.act', '/drg/review/todos/act', inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewResponseSchema),
   admOp('inpatient.drg.review.handoff', '/drg/review/handoff', inpatientDrgReviewHandoffInputSchema, inpatientDrgReviewResponseSchema),
   admQuery('inpatient.drg.review.read', '/drg/review', inpatientDrgReviewSchema),
-  admQuery('inpatient.drg.followup.read', '/drg/followup', inpatientDrgFollowupSchema),
-  admOp('inpatient.drg.followup.start', '/drg/followup/start', inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupResponseSchema),
-  admOp('inpatient.drg.followup.stop', '/drg/followup/stop', inpatientDrgFollowupStopInputSchema, inpatientDrgFollowupResponseSchema),
   admQuery('inpatient.drg.pregroup', '/drg/pregroup', inpatientDrgPregroupResultSchema),
   {
     id:'inpatient.drg.simulate',

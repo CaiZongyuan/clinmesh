@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,15 +7,8 @@ import { z } from 'zod'
 import {
   agentCapabilityGrantSchema,
   agentClientSchema,
-  agentPageBindingRevision,
-  agentPageContextBindingSchema,
-  agentToolAuthorizationResponseSchema,
-  agentToolCatalog,
-  agentToolCompletionResponseSchema,
   doctorCaseHistorySchema,
   doctorCompletedHistoryDetailSchema,
-  type AgentPageContextBinding,
-  type AgentPageContextClaim,
 } from '@clinmesh/contracts/agent'
 import { clinicalQualityCheckSchema } from '@clinmesh/contracts/clinical-quality'
 import { clinicalScoreBundleSchema } from '@clinmesh/contracts/clinical-scores'
@@ -74,7 +67,6 @@ import { startSyntheticCaseResultSchema } from '@clinmesh/contracts/scenario'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
-const dshSecret = 'specialist-dsh-bridge-secret-with-at-least-32-chars'
 const leakPattern = /hiddenResources|caseTruth|rawBundle|angiography-conclusion|truth-stage/
 
 async function createSpecialistReferenceDb(directory: string) {
@@ -222,7 +214,6 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
   const unexpectedModelCalls: string[] = []
   const dialoguePayloads: Array<{ systemPrompt: string; userPayload: unknown }> = []
   let preparedPack!: z.infer<typeof authoredCasePackSummarySchema>
-  let clientRevisions = 0
 
   function assertNoCaseTruthLeak(text: string, label: string) {
     expect(text, `Case Truth leaked in ${label}`).not.toMatch(leakPattern)
@@ -281,135 +272,6 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     const json = JSON.parse(text) as unknown
     const validated = op.output.parse(json)
     return schema ? schema.parse(validated) : (validated as T)
-  }
-
-  function makeExecutionProof(binding: AgentPageContextBinding, operationId: string, callId = randomUUID()): string {
-    const definition = agentToolCatalog.find(item => item.operationId === operationId)!
-    const now = new Date()
-    const pageRevision = agentPageBindingRevision(binding.snapshot.claim)
-    const doctorOrigin = operationId.startsWith('outpatient.')
-      ? {
-          origin: {
-            request: { pageRevision, scopeKey: binding.snapshot.scopeKey },
-            task: {
-              acceptedAt: now.toISOString(),
-              messageId: `msg-${callId}`,
-              pageRevision,
-              rpcId: `rpc-${callId}`,
-              scopeKey: binding.snapshot.scopeKey,
-              turn: 1,
-            },
-          },
-        }
-      : {}
-    const payload = {
-      callId,
-      contextId: binding.snapshot.id,
-      dshSessionId: binding.snapshot.dshSessionId,
-      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-      issuedAt: now.toISOString(),
-      pageRevision,
-      scopeKey: binding.snapshot.scopeKey,
-      toolName: definition.toolName,
-      version: 3,
-      ...doctorOrigin,
-    }
-    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
-    const signature = createHmac('sha256', dshSecret).update(encoded).digest('base64url')
-    return `${encoded}.${signature}`
-  }
-
-  async function surfaceContext(role: string, claim: AgentPageContextClaim, dshSessionId = `dsh-${role}`): Promise<AgentPageContextBinding> {
-    const normalizedClaim: AgentPageContextClaim = claim.viewId === 'consultation' && claim.taskEpoch === undefined
-      ? { ...claim, taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc' }
-      : claim
-    const res = await runtime.app.request('/api/agent/v1/page-contexts', {
-      body: JSON.stringify({ claim: normalizedClaim, client: { id: `surface-${role}`, revision: ++clientRevisions }, dshSessionId }),
-      headers: { 'content-type': 'application/json', cookie: cookies.get(role)!, origin: 'http://localhost' },
-      method: 'POST',
-    })
-    const text = await res.clone().text()
-    expect(res.status, text).toBe(201)
-    assertNoCaseTruthLeak(text, `PageContext ${role}:${claim.viewId}`)
-    return agentPageContextBindingSchema.parse(JSON.parse(text))
-  }
-
-  async function surfaceDoctorQuery<T>(
-    binding: AgentPageContextBinding,
-    operationId: string,
-    input: Record<string, unknown>,
-    schema: z.ZodType<T>,
-  ): Promise<T> {
-    const cookie = cookies.get('doctor')!
-    const authRes = await runtime.app.request('/api/agent/v1/tool-calls', {
-      body: JSON.stringify({
-        contextToken: binding.token,
-        executionProof: makeExecutionProof(binding, operationId),
-        input,
-        operationId,
-      }),
-      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
-      method: 'POST',
-    })
-    expect(authRes.status, await authRes.clone().text()).toBe(201)
-    const authorized = agentToolAuthorizationResponseSchema.parse(await authRes.json())
-    const queryRes = await runtime.app.request('/api/agent/v1/doctor-queries', {
-      body: JSON.stringify({ contextToken: binding.token, input, receiptToken: authorized.receiptToken }),
-      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
-      method: 'POST',
-    })
-    const queryText = await queryRes.clone().text()
-    expect(queryRes.status, queryText).toBe(200)
-    assertNoCaseTruthLeak(queryText, `DSH doctor-queries ${operationId}`)
-    const parsed = schema.parse(JSON.parse(queryText))
-    const doneRes = await runtime.app.request('/api/agent/v1/tool-calls/result', {
-      body: JSON.stringify({ ok: true, receiptToken: authorized.receiptToken, result: JSON.parse(queryText) }),
-      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
-      method: 'POST',
-    })
-    expect(doneRes.status, await doneRes.clone().text()).toBe(200)
-    expect(agentToolCompletionResponseSchema.parse(await doneRes.json()).status).toBe('completed')
-    return parsed
-  }
-
-  async function surfaceInpatientQuery<T>(
-    role: string,
-    binding: AgentPageContextBinding,
-    operationId: string,
-    admissionId: string,
-    subPath: string,
-    input: Record<string, unknown>,
-    schema: z.ZodType<T>,
-  ): Promise<T> {
-    const cookie = cookies.get(role)!
-    const authRes = await runtime.app.request('/api/agent/v1/tool-calls', {
-      body: JSON.stringify({
-        contextToken: binding.token,
-        executionProof: makeExecutionProof(binding, operationId),
-        input,
-        operationId,
-      }),
-      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
-      method: 'POST',
-    })
-    expect(authRes.status, await authRes.clone().text()).toBe(201)
-    const authorized = agentToolAuthorizationResponseSchema.parse(await authRes.json())
-    const qs = new URLSearchParams(Object.entries(input).flatMap(([k, v]) => v === undefined ? [] : [[k, String(v)]])).toString()
-    const readRes = await runtime.app.request(`/api/his/v1/inpatient/admissions/${encodeURIComponent(admissionId)}${subPath}${qs ? `?${qs}` : ''}`, {
-      headers: { cookie },
-    })
-    const readText = await readRes.clone().text()
-    expect(readRes.status, readText).toBe(200)
-    assertNoCaseTruthLeak(readText, `DSH inpatient ${operationId}`)
-    const parsed = schema.parse(JSON.parse(readText))
-    const doneRes = await runtime.app.request('/api/agent/v1/tool-calls/result', {
-      body: JSON.stringify({ ok: true, receiptToken: authorized.receiptToken, result: JSON.parse(readText) }),
-      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
-      method: 'POST',
-    })
-    expect(doneRes.status, await doneRes.clone().text()).toBe(200)
-    expect(agentToolCompletionResponseSchema.parse(await doneRes.json()).status).toBe('completed')
-    return parsed
   }
 
   async function dispatchAll() {
@@ -964,7 +826,6 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       cursorSecret: randomUUID() + randomUUID(),
       databasePath: join(directory, 'specialist.sqlite'),
       demoPassword: password,
-      dshBridgeSecret: dshSecret,
       investigationModel: 'unexpected-investigation-model',
       migrationMode: 'apply',
       patientPersonaModel: 'synthetic',
@@ -1051,41 +912,12 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     assertNoCaseTruthLeak(dialoguePayloads[0]!.systemPrompt, 'dialogue systemPrompt')
     assertNoCaseTruthLeak(JSON.stringify(dialoguePayloads[0]!.userPayload), 'dialogue userPayload')
 
-    // Verify DSH Page Context section isolation (`laboratory` stays <= 32 without decision read tools; `diagnosis` exposes them)
-    const detail1 = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    const labCtx = await surfaceContext('doctor', {
-      activeSection: 'laboratory',
-      selection: { id: op.caseId, kind: 'case', version: detail1.encounter.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'consultation',
-      viewRevision: 'case1-lab',
-    })
-    expect(labCtx.snapshot.allowedOperationIds.length).toBeLessThanOrEqual(32)
-    expect(labCtx.snapshot.allowedOperationIds).not.toContain('outpatient.clinical-scores.read')
-    expect(labCtx.snapshot.allowedOperationIds).not.toContain('outpatient.clinical-quality.read')
-
-    const diagCtx = await surfaceContext('doctor', {
-      activeSection: 'diagnosis',
-      selection: { id: op.caseId, kind: 'case', version: detail1.encounter.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'consultation',
-      viewRevision: 'case1-diag',
-    })
-    expect(diagCtx.snapshot.allowedOperationIds).toEqual(expect.arrayContaining([
-      'outpatient.clinical-scores.read',
-      'outpatient.guideline-topics.read',
-      'outpatient.clinical-quality.read',
-      'outpatient.order-set-drafts.read',
-    ]))
-
-    // Before ECG & hs-cTnI: DSH `outpatient.clinical-quality.read` flags CHEST_PAIN_WORKUP_INCOMPLETE
-    const preWorkupQuality = await surfaceDoctorQuery(diagCtx, 'outpatient.clinical-quality.read', { gate: 'outpatient-completion' }, clinicalQualityCheckSchema)
+    // Before ECG & hs-cTnI: outpatient clinical-quality flags CHEST_PAIN_WORKUP_INCOMPLETE
+    const preWorkupQuality = await grantOp('doctor', 'encounter.clinical-quality.read', { encounterId: op.encounterId, gate: 'outpatient-completion' }, clinicalQualityCheckSchema)
     expect(preWorkupQuality.alerts).toContainEqual(expect.objectContaining({ code: 'CHEST_PAIN_WORKUP_INCOMPLETE', tier: 'alert' }))
 
-    // Read `chest-pain-stat-workup` via DSH `outpatient.order-set-drafts.read`, then run ECG + hs-cTnI x2 + baseline LDL-C & Scr
-    const opOrderSet = await surfaceDoctorQuery(diagCtx, 'outpatient.order-set-drafts.read', { templateId: 'chest-pain-stat-workup' }, orderSetDraftBundleSchema)
+    // Read `chest-pain-stat-workup` via `doctor.case.order-set-drafts.read`, then run ECG + hs-cTnI x2 + baseline LDL-C & Scr
+    const opOrderSet = await grantOp('doctor', 'doctor.case.order-set-drafts.read', { caseId: op.caseId, templateId: 'chest-pain-stat-workup' }, orderSetDraftBundleSchema)
     expect(opOrderSet.drafts[0]!.template.id).toBe('chest-pain-stat-workup')
 
     const preWorkupUnrevealedPattern = /I21\.4|急性非ST段抬高型心肌梗死|LAD 近段|90%|V2-V5/
@@ -1094,8 +926,6 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     for (const [label, payload] of [
       ['detail0', detail0],
       ['dialogue', dialogue],
-      ['labCtx', labCtx],
-      ['diagCtx', diagCtx],
       ['preWorkupQuality', preWorkupQuality],
       ['opOrderSet', opOrderSet],
     ] as const) {
@@ -1128,15 +958,7 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     await runOutpatientLabByGrant(op.caseId, op.encounterId, '1700404A')
 
     const postWorkupDetail = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    const postWorkupCtx = await surfaceContext('doctor', {
-      activeSection: 'record',
-      selection: { id: op.caseId, kind: 'case', version: postWorkupDetail.encounter.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'consultation',
-      viewRevision: 'case1-record-after-workup',
-    })
-    const postWorkupQuality = await surfaceDoctorQuery(postWorkupCtx, 'outpatient.clinical-quality.read', { gate: 'outpatient-completion' }, clinicalQualityCheckSchema)
+    const postWorkupQuality = await grantOp('doctor', 'encounter.clinical-quality.read', { encounterId: op.encounterId, gate: 'outpatient-completion' }, clinicalQualityCheckSchema)
     expect(postWorkupQuality).toMatchObject({ alerts: [], redLines: [], status: 'pass' })
 
     // Referral & complete initial outpatient visit -> inpatient admission & receive
@@ -1252,15 +1074,6 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     const tteReported = (await grantOp('inpatient-doctor', 'inpatient.investigation.read', { admissionId: admReg.id }, inpatientInvestigationsSchema)).examinationRequests[0]!
     expect(tteReported.report?.results.find(r => r.code === 'lvef')?.value).toBe(52)
 
-    const admForInvCtx = (await grantOp('inpatient-doctor', 'inpatient.admission.read', { admissionId: admReg.id }, inpatientDetailSchema)).admission
-    const invCtx = await surfaceContext('inpatient-doctor', {
-      activeSection: 'investigations',
-      selection: { id: admReg.id, kind: 'inpatient-admission', version: admForInvCtx.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'inpatient',
-      viewRevision: 'case1-ip-inv',
-    })
     const ackInput = {
       diagnosticReportId: tteReported.report!.diagnosticReportId,
       diagnosticReportVersion: tteReported.report!.diagnosticReportVersion,
@@ -1269,23 +1082,6 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       serviceRequestVersion: tteReported.serviceRequestVersion,
       taskVersion: tteReported.taskVersion,
     }
-    const ackAuthRes = await runtime.app.request('/api/agent/v1/tool-calls', {
-      body: JSON.stringify({
-        contextToken: invCtx.token,
-        executionProof: makeExecutionProof(invCtx, 'inpatient.report.acknowledge.propose'),
-        input: ackInput,
-        operationId: 'inpatient.report.acknowledge.propose',
-      }),
-      headers: { 'content-type': 'application/json', cookie: cookies.get('inpatient-doctor')!, origin: 'http://localhost' },
-      method: 'POST',
-    })
-    expect(ackAuthRes.status, await ackAuthRes.clone().text()).toBe(201)
-    const ackAuthorized = agentToolAuthorizationResponseSchema.parse(await ackAuthRes.json())
-    expect((await runtime.app.request('/api/agent/v1/tool-calls/review', {
-      body: JSON.stringify({ decision: 'approved', receiptToken: ackAuthorized.receiptToken }),
-      headers: { 'content-type': 'application/json', cookie: cookies.get('inpatient-doctor')!, origin: 'http://localhost' },
-      method: 'POST',
-    })).status).toBe(200)
     const ackCmd = await runtime.app.request(`/api/his/v1/inpatient/admissions/${admReg.id}/investigations/acknowledge`, {
       body: JSON.stringify({ input: ackInput }),
       headers: {
@@ -1297,43 +1093,19 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       method: 'POST',
     })
     expect(ackCmd.status).toBe(200)
-    const ackCmdJson = await ackCmd.json() as { auditId: string; requestId: string }
-    expect((await runtime.app.request('/api/agent/v1/tool-calls/result', {
-      body: JSON.stringify({ ok: true, receiptToken: ackAuthorized.receiptToken, result: { approved: true, data: ackCmdJson } }),
-      headers: { 'content-type': 'application/json', cookie: cookies.get('inpatient-doctor')!, origin: 'http://localhost' },
-      method: 'POST',
-    })).status).toBe(200)
 
-    // GRACE & TIMI UA/NSTEMI scores + `acute-chest-pain-acs` guideline topic via DSH inpatient read tools
-    const admForOrdersCtx = (await grantOp('inpatient-doctor', 'inpatient.admission.read', { admissionId: admReg.id }, inpatientDetailSchema)).admission
-    const ordersCtx = await surfaceContext('inpatient-doctor', {
-      activeSection: 'orders',
-      selection: { id: admReg.id, kind: 'inpatient-admission', version: admForOrdersCtx.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'inpatient',
-      viewRevision: 'case1-ip-orders',
-    })
-    const ipScores = await surfaceInpatientQuery('inpatient-doctor', ordersCtx, 'inpatient.clinical-scores.read', admReg.id, '/clinical-scores', {}, clinicalScoreBundleSchema)
+    // GRACE & TIMI UA/NSTEMI scores + `acute-chest-pain-acs` guideline topic via inpatient read ops
+    const ipScores = await grantOp('inpatient-doctor', 'inpatient.clinical-scores.read', { admissionId: admReg.id }, clinicalScoreBundleSchema)
     expect(ipScores.scores.find(s => s.id === 'grace-acs')?.status).toBe('complete')
     expect(ipScores.scores.find(s => s.id === 'timi-ua-nstemi')?.status).toBe('complete')
-    const ipTopics = await surfaceInpatientQuery('inpatient-doctor', ordersCtx, 'inpatient.guideline-topics.read', admReg.id, '/guideline-topics', { topicId: 'acute-chest-pain-acs' }, guidelineTopicBundleSchema)
+    const ipTopics = await grantOp('inpatient-doctor', 'inpatient.guideline-topics.read', { admissionId: admReg.id, topicId: 'acute-chest-pain-acs' }, guidelineTopicBundleSchema)
     expect(ipTopics.items[0]!.topic.id).toBe('acute-chest-pain-acs')
 
-    // Multivessel angiography (`inpatient.angiography-reports.read` via BOTH Agent Grant & DSH Surface tool) + PCI
+    // Multivessel angiography (`inpatient.angiography-reports.read`) + PCI
     const angio = await executeAngiographyByGrant(admReg.id)
     expect(angio.vessels).toContainEqual(expect.objectContaining({ segment: 'LAD 近段', stenosisPercent: 90, timiFlow: 2, vessel: 'LAD' }))
-    const admForSurgCtx = (await grantOp('inpatient-doctor', 'inpatient.admission.read', { admissionId: admReg.id }, inpatientDetailSchema)).admission
-    const surgCtx = await surfaceContext('inpatient-doctor', {
-      activeSection: 'surgery',
-      selection: { id: admReg.id, kind: 'inpatient-admission', version: admForSurgCtx.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'inpatient',
-      viewRevision: 'case1-ip-surgery',
-    })
-    const dshAngio = await surfaceInpatientQuery('inpatient-doctor', surgCtx, 'inpatient.angiography-reports.read', admReg.id, '/angiography-reports', {}, inpatientAngiographyReportsSchema)
-    expect(dshAngio.reports[0]!.id).toBe(angio.id)
+    const readAngio = await grantOp('inpatient-doctor', 'inpatient.angiography-reports.read', { admissionId: admReg.id }, inpatientAngiographyReportsSchema)
+    expect(readAngio.reports[0]!.id).toBe(angio.id)
 
     await executeSingleStentPciByGrant(admReg.id)
     const ipPostPciScores = await grantOp('inpatient-doctor', 'inpatient.clinical-scores.read', { admissionId: admReg.id }, clinicalScoreBundleSchema)
@@ -1400,16 +1172,7 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
       encounterVersion: revDetailBeforeRx.encounter.versionId,
       expectedDraftVersion: revRxDraft.draftVersion,
     }, issuePrescriptionResponseSchema)).data
-    const revDetail3 = await grantOp('doctor', 'doctor.case.get', { caseId: revisit.caseId }, doctorCaseDetailSchema)
-    const revRxCtx = await surfaceContext('doctor', {
-      activeSection: 'prescription',
-      selection: { id: revisit.caseId, kind: 'case', version: revDetail3.encounter.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'consultation',
-      viewRevision: 'case1-revisit-rx',
-    })
-    const revScoresBeforeDispense = await surfaceDoctorQuery(revRxCtx, 'outpatient.clinical-scores.read', {}, clinicalScoreBundleSchema)
+    const revScoresBeforeDispense = await grantOp('doctor', 'doctor.case.clinical-scores.read', { caseId: revisit.caseId }, clinicalScoreBundleSchema)
     expect(revScoresBeforeDispense.scores.find(s => s.id === 'ascvd-ldl-target')?.status).toBe('complete')
 
     // Complete revisit, pay & dispense DAPT prescription -> outpatient PRECISE-DAPT also becomes complete
@@ -1497,18 +1260,10 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     expect(angio3.vessels).toContainEqual(expect.objectContaining({ ffr: 0.86, stenosisPercent: 60, vessel: 'LAD' }))
 
     const adm3BeforePci = (await grantOp('inpatient-doctor', 'inpatient.admission.read', { admissionId: stay3.admissionId }, inpatientDetailSchema)).admission
-    const surg3Ctx = await surfaceContext('inpatient-doctor', {
-      activeSection: 'surgery',
-      selection: { id: stay3.admissionId, kind: 'inpatient-admission', version: adm3BeforePci.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'inpatient',
-      viewRevision: 'case3-ip-surgery',
-    })
-    const dshSurgeryList = await surfaceInpatientQuery('inpatient-doctor', surg3Ctx, 'inpatient.surgery.read', stay3.admissionId, '/surgeries', {}, inpatientSurgerySchema)
-    expect(dshSurgeryList.requests[0]?.consentConfirmation?.document?.templateId).toBe('coronary-angiography')
-    const dshPciPreflight = await surfaceInpatientQuery('inpatient-doctor', surg3Ctx, 'inpatient.clinical-quality.read', stay3.admissionId, '/clinical-quality', { gate: 'inpatient-pci-plan' }, clinicalQualityCheckSchema)
-    expect(dshPciPreflight.alerts).toContainEqual(expect.objectContaining({ code: 'PCI_NON_ISCHEMIC_LESION', tier: 'alert' }))
+    const surgeryList3 = await grantOp('inpatient-doctor', 'inpatient.surgery.read', { admissionId: stay3.admissionId }, inpatientSurgerySchema)
+    expect(surgeryList3.requests[0]?.consentConfirmation?.document?.templateId).toBe('coronary-angiography')
+    const pciPreflight3 = await grantOp('inpatient-doctor', 'inpatient.clinical-quality.read', { admissionId: stay3.admissionId, gate: 'inpatient-pci-plan' }, clinicalQualityCheckSchema)
+    expect(pciPreflight3.alerts).toContainEqual(expect.objectContaining({ code: 'PCI_NON_ISCHEMIC_LESION', tier: 'alert' }))
 
     const surgCatalog = await grantOp('inpatient-doctor', 'inpatient.surgery.catalog', {}, inpatientSurgeryCatalogSchema)
     const pciProc = surgCatalog.procedures.find(item => item.coding.code === '36.0700')!
@@ -1531,18 +1286,9 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     })
     expect((await grantOp('inpatient-doctor', 'inpatient.surgery.read', { admissionId: stay3.admissionId }, inpatientSurgerySchema)).requests.filter(r => r.plannedProcedure.coding.code === '36.0700')).toHaveLength(0)
 
-    // Switch to conservative GDMT orders -> verify discharge quality check via DSH tool -> discharge + outpatient follow-up
+    // Switch to conservative GDMT orders -> verify discharge quality check -> discharge + outpatient follow-up
     await issueSecondaryPreventionLongOrders(stay3.admissionId, false)
-    const adm3BeforeDischarge = (await grantOp('inpatient-doctor', 'inpatient.admission.read', { admissionId: stay3.admissionId }, inpatientDetailSchema)).admission
-    const dis3Ctx = await surfaceContext('inpatient-doctor', {
-      activeSection: 'discharge',
-      selection: { id: stay3.admissionId, kind: 'inpatient-admission', version: adm3BeforeDischarge.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'inpatient',
-      viewRevision: 'case3-ip-discharge',
-    })
-    const dis3Quality = await surfaceInpatientQuery('inpatient-doctor', dis3Ctx, 'inpatient.clinical-quality.read', stay3.admissionId, '/clinical-quality', { gate: 'inpatient-discharge' }, clinicalQualityCheckSchema)
+    const dis3Quality = await grantOp('inpatient-doctor', 'inpatient.clinical-quality.read', { admissionId: stay3.admissionId, gate: 'inpatient-discharge' }, clinicalQualityCheckSchema)
     expect(dis3Quality).toMatchObject({ alerts: [], redLines: [], status: 'pass' })
 
     await dischargeDepartAndOptionallyClear(stay3.admissionId)
@@ -1587,23 +1333,12 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     expect(egfrBase).toMatchObject({ status: 'complete', tierCode: 'G3b' })
     if (egfrBase.status === 'complete') expect(egfrBase.value).toBeCloseTo(36.1, 1)
 
-    // Read `cin-perioperative-hydration` via DSH `inpatient.order-set-drafts.read` and issue 0.9% NaCl hydration order
+    // Read `cin-perioperative-hydration` via `inpatient.order-set-drafts.read` and issue 0.9% NaCl hydration order
     const admBeforeHydration = (await grantOp('inpatient-doctor', 'inpatient.admission.read', { admissionId: stay4.admissionId }, inpatientDetailSchema)).admission
-    const orders4Ctx = await surfaceContext('inpatient-doctor', {
-      activeSection: 'orders',
-      selection: { id: stay4.admissionId, kind: 'inpatient-admission', version: admBeforeHydration.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'inpatient',
-      viewRevision: 'case4-ip-orders',
-    })
-    const hydrationBundle = await surfaceInpatientQuery(
+    const hydrationBundle = await grantOp(
       'inpatient-doctor',
-      orders4Ctx,
       'inpatient.order-set-drafts.read',
-      stay4.admissionId,
-      '/order-set-drafts',
-      { templateId: 'cin-perioperative-hydration' },
+      { admissionId: stay4.admissionId, templateId: 'cin-perioperative-hydration' },
       orderSetDraftBundleSchema,
     )
     const salineItem = hydrationBundle.drafts[0]!.items.find(item => item.key === 'isotonic-saline-hydration')!
@@ -1674,21 +1409,12 @@ describe('专病临床内核 CLI / Agent Capability Grant / DSH Surface 五例�
     expect((await runOutpatientLabByGrant(op.caseId, op.encounterId, '1400605A', true)).report!.results.find(r => r.code === '1400605A')?.value).toBe(4.8)
     expect((await runOutpatientLabByGrant(op.caseId, op.encounterId, '2000404A', true)).report!.results.find(r => r.code === '2000404A')?.value).toBe(3.1)
 
-    // Read eGFR = 26.0 (G4) & `t2dm-renal-medication` guideline topic via DSH `doctor-queries`
-    const d2 = await grantOp('doctor', 'doctor.case.get', { caseId: op.caseId }, doctorCaseDetailSchema)
-    const rxCtx = await surfaceContext('doctor', {
-      activeSection: 'prescription',
-      selection: { id: op.caseId, kind: 'case', version: d2.encounter.versionId },
-      ui: { status: 'ready' },
-      version: 1,
-      viewId: 'consultation',
-      viewRevision: 'case5-rx',
-    })
-    const scores5 = await surfaceDoctorQuery(rxCtx, 'outpatient.clinical-scores.read', {}, clinicalScoreBundleSchema)
+    // Read eGFR = 26.0 (G4) & `t2dm-renal-medication` guideline topic
+    const scores5 = await grantOp('doctor', 'doctor.case.clinical-scores.read', { caseId: op.caseId }, clinicalScoreBundleSchema)
     const egfr5 = scores5.scores.find(s => s.id === 'ckd-epi-2021-egfr')!
     expect(egfr5).toMatchObject({ status: 'complete', tierCode: 'G4' })
     if (egfr5.status === 'complete') expect(egfr5.value).toBeCloseTo(26.0, 1)
-    const topics5 = await surfaceDoctorQuery(rxCtx, 'outpatient.guideline-topics.read', { topicId: 't2dm-renal-medication' }, guidelineTopicBundleSchema)
+    const topics5 = await grantOp('doctor', 'doctor.case.guideline-topics.read', { caseId: op.caseId, topicId: 't2dm-renal-medication' }, guidelineTopicBundleSchema)
     expect(topics5.items[0]!.topic.id).toBe('t2dm-renal-medication')
 
     // Hard Tier-1 red-line block on metformin & dapagliflozin EVEN when `clinicalOverride` is passed!

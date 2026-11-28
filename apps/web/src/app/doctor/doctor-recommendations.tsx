@@ -1,18 +1,13 @@
 import { formatMedicationFrequency, formatMedicationRoute } from '@clinmesh/core/medication-safety'
 import { medicationRouteSchema, type MedicationRoute } from '@clinmesh/contracts/medication-safety'
 import {
-  considerationLabelKey, doctorPreparationSelectionSchema, type DoctorCaseEvidence, type DoctorPreparationSelection, type DoctorRecommendationConsideration,
+  doctorPreparationSelectionSchema, type DoctorPreparationSelection,
   type DoctorRecommendationKind,
-  type DoctorRecommendationNotice,
   type DoctorRecommendationState, type DoctorRecommendationSuggestion,
   type DoctorReviewedInvestigationService,
-  type GuidelineEvidence,
-  type SetDoctorConsiderationDispositionRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import { outpatientOrderPrerequisiteCodeSchema, type DoctorCaseDetail } from '@clinmesh/contracts/his'
 import type { ClinicalOverrideInput } from '@clinmesh/contracts/clinical-quality'
-import { doctorInpatientHistoryRecordSchema } from '@clinmesh/contracts/agent'
-import { InpatientHistorySummary } from './doctor-history-panel.tsx'
 import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -22,25 +17,23 @@ import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
-import { Separator } from '@clinmesh/ui/components/separator'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { replaceEqualDeep, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BookOpenIcon, PauseIcon, PlayIcon, RefreshCwIcon } from 'lucide-react'
+import { RefreshCwIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ApiClientError, confirmDoctorPreparation, getDoctorInvestigationConfirmation, newIdempotencyKey, setConsiderationDisposition } from '../api-client.ts'
+import { ApiClientError, confirmDoctorPreparation, getDoctorInvestigationConfirmation, newIdempotencyKey } from '../api-client.ts'
 import { ClinicalQualityBanner, extractClinicalQualityError } from '../clinical-quality-banner.tsx'
 import { getPrescriptionIssueErrorMessage, getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { OutpatientOrderGateGuidance, type OutpatientOrderPrerequisiteGate } from './outpatient-order-gate.tsx'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { indicationLabel as laboratoryIndicationLabel } from './laboratory-page.tsx'
-import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { DoctorDraftEditorScope, DoctorDraftItem, DoctorDraftField as Field, useDoctorDraftItemEdit } from './doctor-draft-fields.tsx'
 import { useOrderDetails } from './doctor-order-workspace.tsx'
 import { doctorPreparationItemIdentity as identity } from './doctor-preparation-identity.ts'
-import { useDoctorPreparation, useDoctorPreparationJob, type DoctorPreparationJob, type DraftPreferences, type PreparationDraft } from './doctor-preparation-state.tsx'
+import { useDoctorPreparation, useDoctorPreparationJob, type DraftPreferences, type PreparationDraft } from './doctor-preparation-state.tsx'
 import { prepareInvestigationConfirmationIntent, useInvestigationConfirmationIntent, useInvestigationPreferences, type InvestigationConfirmationIntent } from './investigation-draft-storage.ts'
 
 export type { PreparationDraft } from './doctor-preparation-state.tsx'
@@ -48,17 +41,6 @@ export type { PreparationDraft } from './doctor-preparation-state.tsx'
 export const doctorRecommendationKindTitles: Record<DoctorRecommendationKind, [string, string]> = {
   laboratory: ['待开具检验', 'Laboratory orders'], imaging: ['待开具放射检查', 'Imaging orders'], pathology: ['待开具病理会诊', 'Pathology orders'],
   diagnosis: ['待确认诊断', 'Diagnoses to confirm'], prescription: ['待开具处方', 'Prescription to issue'],
-}
-const documentTypes: Record<GuidelineEvidence['documentType'], [string, string]> = {
-  'national-standard': ['国家标准', 'National standard'], 'health-standard': ['卫生行业标准', 'Health industry standard'],
-  'official-protocol': ['诊疗方案', 'Clinical protocol'], guideline: ['临床指南', 'Clinical guideline'],
-  'product-information': ['药品说明书', 'Product information'],
-  'expert-consensus': ['专家共识', 'Expert consensus'], 'scientific-statement': ['科学声明', 'Scientific statement'],
-  'decision-pathway': ['决策路径', 'Decision pathway'], 'position-paper': ['立场文件', 'Position paper'],
-}
-const noticeTitles: Record<DoctorRecommendationNotice['category'], [string, string]> = {
-  guideline: ['指南覆盖', 'Guideline coverage'], catalog: ['院内目录', 'Hospital catalog'],
-  verification: ['核验未通过', 'Verification not passed'], processing: ['系统处理限制', 'Processing limitations'],
 }
 const evidenceSignature = (state: DoctorRecommendationState, item: DoctorRecommendationSuggestion) => JSON.stringify([
   [...new Set(item.caseEvidenceIds.map(id => { const evidence = state.caseEvidence.find(evidence => evidence.id === id); return JSON.stringify([evidence?.kind, evidence?.text]) }))].toSorted(),
@@ -117,150 +99,6 @@ function summary(item: PreparationDraft, zh: boolean) {
   if (item.kind === 'laboratory') return indicationLabel(item.indicationCode, zh)
   return item.kind === 'imaging' ? item.indication : item.purpose
 }
-function reasoning(item: DoctorRecommendationConsideration, zh: boolean, evidenceLabels?: ReadonlyMap<string, string>) {
-  // 叙述文本中的证据 id 引用映射为人读来源；未命中的文本原样保留。
-  const readable = (value: string) => {
-    if (evidenceLabels === undefined) return value
-    let text = value
-    for (const [id, label] of [...evidenceLabels].toSorted(([left], [right]) => right.length - left.length)) text = text.split(id).join(label)
-    return text
-  }
-  const sections = [
-    { label: zh ? '支持信息' : 'Supporting information', values: item.supportingInformation },
-    { label: zh ? '反对信息' : 'Information against', values: item.opposingInformation },
-    { label: zh ? '待核实事项' : 'Clarifications', values: item.missingInformation },
-  ]
-  return <><p>{readable(item.rationale)}</p>{sections.map(({ label, values }) => values.length === 0 ? null : <div key={label}><p className="font-medium">{label}</p><ul className="list-inside list-disc">{values.map(value => <li key={value}>{readable(value)}</li>)}</ul></div>)}</>
-}
-// 证据文本复用模型的原始输入，结构化形状在此渲染为人读内容；识别不了的 JSON 折叠在原始数据里保持可审计。
-function EvidenceContent({ source, locale }: { source: DoctorCaseEvidence; locale: WorkspaceLocale }) {
-  const zh = locale === 'zh-CN'
-  let parsed: unknown
-  try { parsed = JSON.parse(source.text) } catch { /* 纯文本证据按原文展示。 */ }
-  if (typeof parsed === 'object' && parsed !== null) {
-    if ('speaker' in parsed && 'text' in parsed) {
-      const turn = parsed as { text: unknown; recordedAt?: unknown }
-      if (typeof turn.text === 'string') return <div className="flex min-w-0 flex-col gap-1">
-        <p className="whitespace-pre-wrap break-words">{turn.text}</p>
-        {typeof turn.recordedAt === 'string' ? <p className="text-xs text-muted-foreground">{formatClinicalDateTime(turn.recordedAt, locale)}</p> : null}
-      </div>
-    }
-    if ('entries' in parsed && Array.isArray((parsed as { entries: unknown }).entries)) return <ul className="flex list-inside list-disc flex-col gap-1">
-      {(parsed as { entries: unknown[] }).entries.map((entry, index) => {
-        const item = entry as { entryId?: unknown; clinicalDate?: unknown; title?: unknown; fieldPath?: unknown; record?: unknown }
-        const record = typeof item.record === 'object' && item.record !== null ? item.record as Record<string, unknown> : undefined
-        const inpatient = doctorInpatientHistoryRecordSchema.safeParse(record)
-        const date = typeof item.clinicalDate === 'string' ? item.clinicalDate : typeof record?.completedAt === 'string' ? record.completedAt : undefined
-        const key = `${typeof item.entryId === 'string' ? item.entryId : index}:${typeof item.fieldPath === 'string' ? item.fieldPath : ''}`
-        const title = [typeof item.title === 'string' && item.title.length > 0 ? item.title : undefined,
-        typeof item.fieldPath === 'string' ? item.fieldPath : undefined].find(value => value !== undefined) ?? (typeof item.entryId === 'string' ? item.entryId : `${index + 1}`)
-        return <li key={key}>{date === undefined ? null : <span className="text-muted-foreground">{formatClinicalDateTime(date, locale)} · </span>}<span>{title}</span>
-          {record === undefined ? null : inpatient.success ? <InpatientHistorySummary record={inpatient.data} locale={locale} /> : <details><summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '查看完整记录' : 'View full record'}</summary>
-            <p className="font-mono text-xs whitespace-pre-wrap break-all">{JSON.stringify(record, null, 2)}</p></details>}
-        </li>
-      })}
-    </ul>
-    if (Array.isArray(parsed)) return <ul className="flex list-inside list-disc flex-col gap-1">
-      {(parsed as unknown[]).map((entry, index) => {
-        const item = typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : undefined
-        const date = typeof item?.recordedDate === 'string' ? item.recordedDate : undefined
-        const display = typeof item?.display === 'string' ? item.display : item === undefined ? (typeof entry === 'string' ? entry : JSON.stringify(entry)) : JSON.stringify(entry)
-        return <li key={index}>{date === undefined ? null : <span className="text-muted-foreground">{formatClinicalDateTime(date, locale)} · </span>}<span className="break-words">{display}</span></li>
-      })}
-    </ul>
-    return <details><summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '查看原始数据' : 'View raw data'}</summary>
-      <p className="font-mono text-xs whitespace-pre-wrap break-all">{source.text}</p></details>
-  }
-  return <p className="whitespace-pre-wrap break-words">{source.text}</p>
-}
-// 证据默认折叠为一行来源摘要（问诊附时间、历史附条数），展开才铺开原文，避免长文与多思路重复引用淹没弹窗。
-function evidenceSummary(source: DoctorCaseEvidence, locale: WorkspaceLocale) {
-  const zh = locale === 'zh-CN'
-  try {
-    const parsed: unknown = JSON.parse(source.text)
-    if (typeof parsed === 'object' && parsed !== null) {
-      const shape = parsed as { recordedAt?: unknown; entries?: unknown }
-      if (typeof shape.recordedAt === 'string') return formatClinicalDateTime(shape.recordedAt, locale)
-      if (Array.isArray(shape.entries)) return zh ? `${shape.entries.length} 条记录` : `${shape.entries.length} records`
-      if (Array.isArray(parsed)) return zh ? `${parsed.length} 条记录` : `${parsed.length} records`
-    }
-  } catch { /* 纯文本证据不加摘要。 */ }
-  return undefined
-}
-function EvidenceDisclosure({ source, locale }: { source: DoctorCaseEvidence; locale: WorkspaceLocale }) {
-  const summary = evidenceSummary(source, locale)
-  return <details className="min-w-0">
-    <summary className="cursor-pointer text-xs text-muted-foreground break-words">{source.label}{summary === undefined ? null : <span> · {summary}</span>}</summary>
-    <div className="pt-1"><EvidenceContent source={source} locale={locale} /></div>
-  </details>
-}
-function recoveryMessage(state: DoctorRecommendationState | undefined, zh: boolean) {
-  if (state?.errorCode === 'MODEL_OUTCOME_UNKNOWN' || state?.recovery?.status === 'unknown') return zh
-    ? state.recovery?.canContinue ? '上次请求结果未知，自动处理已停止。可继续原任务或重新生成。' : '上次请求结果未知，自动处理已停止。请明确重新生成。'
-    : state.recovery?.canContinue ? 'The last request has an unknown outcome. Continue the original task or regenerate.' : 'The last request has an unknown outcome. Regenerate to start a new task.'
-  if (state?.recovery?.status === 'exhausted') return zh ? '助手暂未完成本轮建议准备，不影响手动开具与接诊（自动准备已达单次尝试上限，可直接添加或点击重新生成）。' : 'This task reached its request limit. Automatic processing stopped.'
-  return undefined
-}
-export function DoctorRecommendationDetails({ job, locale = 'zh-CN' }: { job: DoctorPreparationJob; locale?: WorkspaceLocale }) {
-  const zh = locale === 'zh-CN', state = job.state ?? job.previous
-  const recovery = recoveryMessage(state, zh)
-  const client = useQueryClient()
-  const evidenceLabels = new Map((state?.caseEvidence ?? []).map(source => [source.id, source.label] as const))
-  const dispositions = state?.considerationDispositions ?? []
-  const dispositionByKey = new Map(dispositions.map(entry => [entry.labelKey, entry] as const))
-  const activeConsiderations = (state?.considerations ?? []).filter(item => !dispositionByKey.has(considerationLabelKey(item.label)))
-  const disposition = useMutation({
-    mutationFn: async (input: SetDoctorConsiderationDispositionRequest['input']) => {
-      if (state === undefined) throw new Error(zh ? '当前病例建议状态不可用。' : 'The recommendation state is unavailable.')
-      return setConsiderationDisposition({ caseId: state.caseId, kind: state.kind }, input.label, input.status)
-    },
-    onSuccess: () => {
-      void client.invalidateQueries({
-        predicate: query =>
-          query.queryKey[0] === 'doctor-recommendations' && query.queryKey.includes(state?.caseId) && query.queryKey.includes(state?.kind)
-      })
-    },
-  })
-  return <div className="flex min-w-0 flex-col gap-4 text-sm">
-    <p role="status">{job.paused ? zh ? '自动准备已暂停；已启动的核对仍可完成。' : 'Automatic preparation is paused; work already started may finish.'
-      : recovery !== undefined ? recovery
-        : job.error !== null || state?.status === 'failed' ? zh ? '更新失败，医生草稿已保留。' : 'Update failed. Your draft is preserved.'
-          : job.pending ? zh ? '正在按最新资料核对。' : 'Checking the latest information.'
-            : state?.stale ? zh ? '资料有变化，旧自动项目等待重新核对。' : 'Information changed; previous automatic items need another check.'
-              : zh ? '仅使用当前医生可见资料，正式提交由医生确认。' : 'Uses information visible to this doctor. The doctor confirms all formal actions.'}</p>
-    {state === undefined ? null : <section aria-label={zh ? '准备记录' : 'Preparation record'} className="flex flex-col gap-2">
-      <h4 className="font-medium">{state.generation === 0 ? zh ? '尚未开始准备' : 'Preparation has not started' : zh ? `第 ${state.generation} 轮准备` : `Preparation ${state.generation}`}</h4>
-      {state.stale ? <p>{zh ? '资料或目录已更新，本轮结果等待重新核对。' : 'Information or catalog changed; this result needs another check.'}</p> : null}
-      <p>{zh ? `已读取 ${state.caseEvidence.length} 份病例依据、${state.guidelines.length} 条指南依据。` : `${state.caseEvidence.length} case sources and ${state.guidelines.length} guideline sources available.`}</p>
-      {state.status === 'ready' && !state.stale ? <p>{zh ? `独立核验后发布 ${state.items.length} 项，另有 ${activeConsiderations.length} 项待核实思路。` : `${state.items.length} verified items published; ${activeConsiderations.length} considerations.`}</p> : null}
-    </section>}
-    {state?.notices?.map((notice, index) => <Alert aria-label={noticeTitles[notice.category][zh ? 0 : 1]} key={`${notice.category}:${index}`}><AlertTitle>{noticeTitles[notice.category][zh ? 0 : 1]}</AlertTitle><AlertDescription>{notice.message}</AlertDescription></Alert>)}
-    {!state?.notices?.length && state?.missingInformation.length ? <Alert aria-label={zh ? '补充说明' : 'Additional notes'}><AlertTitle>{zh ? '补充说明' : 'Additional notes'}</AlertTitle><AlertDescription>{state.missingInformation.map(note => <p key={note}>{note}</p>)}</AlertDescription></Alert> : null}
-    {state?.items.map(item => <section className="flex min-w-0 flex-col gap-2" key={item.id}>
-      <h4 className="font-medium">{item.label}</h4>{reasoning(item, zh, evidenceLabels)}
-      {item.guidelineEvidenceIds.map(id => { const source = state.guidelines.find(source => source.id === id); return source === undefined ? null : <div key={id} className="flex flex-col gap-1"><Badge variant="secondary">{documentTypes[source.documentType][zh ? 0 : 1]}</Badge><a className="underline" href={source.url} rel="noreferrer noopener" target="_blank">{source.title} · {source.version} · {source.locator}</a><p className="text-xs text-muted-foreground">{source.publisher} · {source.scope}</p><p>{source.text}</p></div> })}
-      {item.caseEvidenceIds.map(id => { const source = state.caseEvidence.find(source => source.id === id); return source === undefined ? null : <EvidenceDisclosure key={id} source={source} locale={locale} /> })}<Separator />
-    </section>)}
-    {activeConsiderations.length > 0 ? <section aria-label={zh ? '待核实思路' : 'Considerations'} className="flex flex-col gap-4"><h4 className="font-medium">{zh ? '待核实思路' : 'Considerations'}</h4>{activeConsiderations.map(item => <article aria-label={item.label} key={item.id} className="flex flex-col gap-2"><h5>{item.label}</h5>{reasoning(item, zh, evidenceLabels)}{item.caseEvidenceIds.map(id => { const source = state?.caseEvidence.find(source => source.id === id); return source === undefined ? null : <EvidenceDisclosure key={id} source={source} locale={locale} /> })}
-      <div className="flex flex-wrap gap-2">
-        <Button aria-label={`${zh ? '已核实' : 'Verified'}：${item.label}`} disabled={disposition.isPending} onClick={() => disposition.mutate({ label: item.label, status: 'verified' })} size="sm" type="button" variant="outline">{zh ? '已核实' : 'Verified'}</Button>
-        <Button aria-label={`${zh ? '忽略' : 'Dismiss'}：${item.label}`} disabled={disposition.isPending} onClick={() => disposition.mutate({ label: item.label, status: 'dismissed' })} size="sm" type="button" variant="ghost">{zh ? '忽略' : 'Dismiss'}</Button>
-      </div>
-    </article>)}</section> : null}
-    {dispositions.length > 0 ? <details aria-label={zh ? '已处理思路' : 'Processed considerations'} className="min-w-0">
-      <summary className="cursor-pointer text-xs text-muted-foreground">{zh ? `已处理思路（${dispositions.length}）` : `Processed considerations (${dispositions.length})`}</summary>
-      <ul className="flex list-inside list-disc flex-col gap-1 pt-1">{dispositions.map(entry => <li className="flex min-w-0 flex-wrap items-center gap-2" key={entry.labelKey}>
-        <span className="break-words">{entry.label}</span>
-        <Badge variant="outline">{entry.status === 'verified' ? zh ? '已核实' : 'Verified' : zh ? '已忽略' : 'Dismissed'}</Badge>
-        <Button aria-label={`${zh ? '撤销' : 'Undo'}：${entry.label}`} disabled={disposition.isPending} onClick={() => disposition.mutate({ label: entry.label, status: 'clear' })} size="sm" type="button" variant="ghost">{zh ? '撤销' : 'Undo'}</Button>
-      </li>)}</ul>
-    </details> : null}
-  </div>
-}
-
-export function DoctorPreparationDetailsDialog({ open, onOpenChange, title, children }: { open: boolean; onOpenChange: (open: boolean) => void; title: string; children: ReactNode }) {
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{title === '依据与说明' ? '按需查看项目来源、核对结果和病历问题。' : 'Review sources, checks and document issues when needed.'}</DialogDescription></DialogHeader><div className="min-h-0 overflow-y-auto px-4 py-3">{children}</div></DialogContent></Dialog>
-}
 
 export type ManualPreparedItem = { label: string; value: PreparationDraft }
 type PreparedRow = { key: string; label: string; value: PreparationDraft; signature: string; item?: DoctorRecommendationSuggestion }
@@ -312,7 +150,6 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const currentStoredPreferences = (previous: DraftPreferences) => preparation?.reconcilePreferences(kind, previous) ?? previous
   const preferences = currentStoredPreferences(storedPreferences.value)
   const update = (fn: (value: typeof preferences) => typeof preferences) => storedPreferences.save(previous => fn(currentStoredPreferences(previous)))
-  const [localDetails, setLocalDetails] = useState(false)
   const [editing, setEditing] = useState<{ key: string; label: string; value: PreparationDraft; sourceValue: string; fingerprint: string; view: number; fields?: Record<string, string> }>()
   const [editError, setEditError] = useState(false)
   const [editDirty, setEditDirty] = useState(false)
@@ -745,35 +582,16 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   }
   const confirmationControls = (<CardFooter className="flex flex-wrap items-center justify-between gap-3">{inlineEditing && editDirty ? <p className="text-xs text-muted-foreground">{zh ? '有未保存调整，请保留后再开具。' : 'Keep the pending edits before confirming.'}</p> : null}<OutpatientOrderGateGuidance gate={orderGateBlocked ? orderGate : undefined} locale={locale} /><p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button data-unavailable={confirmDisabled ? '' : undefined} disabled={confirmDisabled} onClick={() => submitSelection()} type="button" variant="outline">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>)
   if (!enabled) return null
-  const toolLabels = {
-    refresh: refreshRecords ? (zh ? '刷新记录' : 'Refresh records') : state?.status === 'failed' ? (zh ? '重新生成' : 'Regenerate') : (zh ? '刷新' : 'Refresh'),
-    pause: job.paused ? (zh ? '恢复自动准备' : 'Resume') : (zh ? '暂停自动准备' : 'Pause'),
-    details: zh ? '依据与说明' : 'Evidence and details',
-  }
-  const isDegraded = recoveryMessage(state, zh) !== undefined || failed
-  const statusLine = completedIntent ? zh ? `已完成${kind === 'diagnosis' ? '确认' : '开具'}，${recordsUpdated ? '记录已更新。' : '记录暂未刷新，请刷新查看。'}` : recordsUpdated ? 'Confirmed; records are up to date.' : 'Confirmed; refresh the records to see the result.' : job.paused ? zh ? '自动准备已暂停' : 'Preparation paused' : pending ? zh ? '正在按最新资料更新，旧自动项目暂不可开具。' : 'Updating; previous automatic items cannot be submitted yet.'
-    : recoveryMessage(state, zh) !== undefined ? recoveryMessage(state, zh)
-      : failed ? zh ? '更新或提交未完成，草稿已保留。' : 'Update or submission failed. Your draft is preserved.'
-        : state?.stale ? zh ? '资料有变化，等待重新核对。' : 'Information changed; another check is needed.'
-          : state?.status === 'ready' && job.ready ? rows.length === 0
-            ? state.considerations?.length ? zh ? '本轮仅有待核实思路，见“依据与说明”。' : 'Only considerations are available; see the details.'
-              : zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'
-            : undefined
-            : state?.status === 'missing-evidence' ? zh ? '暂无可直接开具的项目，可查看说明。' : 'No executable items; see the details.'
-              : zh ? '尚未完成核对。' : 'Checks are not complete.'
-  const compactSettled = itemResults === undefined && originalIntent.value === null && rows.length === 0 && (issuedCatalogItemIds?.size ?? 0) > 0 && !isDegraded && !pending && !job.paused && !state?.considerations?.length && submissionError === null
+  const isDegraded = failed
+  const statusLine = completedIntent ? zh ? `已完成${kind === 'diagnosis' ? '确认' : '开具'}，${recordsUpdated ? '记录已更新。' : '记录暂未刷新，请刷新查看。'}` : recordsUpdated ? 'Confirmed; records are up to date.' : 'Confirmed; refresh the records to see the result.'
+    : failed ? zh ? '更新或提交未完成，草稿已保留。' : 'Update or submission failed. Your draft is preserved.'
+      : undefined
+  const compactSettled = itemResults === undefined && originalIntent.value === null && rows.length === 0 && (issuedCatalogItemIds?.size ?? 0) > 0 && !isDegraded && !pending && submissionError === null
   return <>
-    <Card aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]} role="region" size="sm" className={isDegraded ? 'min-w-0 border-dashed border-warning/60 bg-warning/10' : 'min-w-0 border-info/40 bg-info/10'} data-agent-phase={job.pending ? 'working' : 'ready'}>
+    <Card aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]} role="region" size="sm" className={isDegraded ? 'min-w-0 border-dashed border-warning/60 bg-warning/10' : 'min-w-0 border-info/40 bg-info/10'} data-agent-phase="ready">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2"><CardTitle>{doctorRecommendationKindTitles[kind][zh ? 0 : 1]}</CardTitle><CardAction className="m-0"><div className="flex flex-wrap items-center gap-1">
         {manualControls}
-        {state?.recovery?.canContinue ? <Button disabled={pending || job.paused || state.stale} onClick={job.continueOriginal} size="sm" type="button" variant="outline">{zh ? '继续原任务' : 'Continue original task'}</Button> : null}
-        <Button aria-label={toolLabels.refresh} className="h-7 gap-1 px-2 text-xs" disabled={refreshRecords ? false : pending || job.paused || state === undefined} onClick={() => {
-          if (refreshRecords) { void synchronize(submission.data, submission.variables); return }
-          if (!succeeded) submission.reset()
-          job.refresh()
-        }} size="sm" title={toolLabels.refresh} type="button" variant="outline"><RefreshCwIcon data-icon="inline-start" /><span>{toolLabels.refresh}</span></Button>
-        {preparation === undefined ? null : <Button aria-label={toolLabels.pause} className="h-7 gap-1 px-2 text-xs" onClick={preparation.togglePaused} size="sm" title={toolLabels.pause} type="button" variant="outline">{job.paused ? <PlayIcon data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}<span>{job.paused ? (zh ? '恢复' : 'Resume') : (zh ? '暂停' : 'Pause')}</span></Button>}
-        <Button aria-label={toolLabels.details} className="h-7 gap-1 px-2 text-xs" onClick={() => preparation === undefined ? setLocalDetails(true) : preparation.openDetails(kind)} size="sm" title={toolLabels.details} type="button" variant="outline"><BookOpenIcon data-icon="inline-start" /><span>{toolLabels.details}</span></Button>
+        {refreshRecords ? <Button aria-label={zh ? '刷新记录' : 'Refresh records'} className="h-7 gap-1 px-2 text-xs" onClick={() => { void synchronize(submission.data, submission.variables) }} size="sm" title={zh ? '刷新记录' : 'Refresh records'} type="button" variant="outline"><RefreshCwIcon data-icon="inline-start" /><span>{zh ? '刷新记录' : 'Refresh records'}</span></Button> : null}
       </div></CardAction></CardHeader>
       {compactSettled ? null : <CardContent className="flex min-w-0 flex-col gap-3">
         {originalIntent.failed || storedPreferences.failed ? <p role="alert">{zh ? '待开记录无法读取或保存，已停止新开立。请恢复浏览器存储后重试。' : 'Pending records could not be read or saved. Restore browser storage before issuing orders.'}</p> : null}
@@ -798,7 +616,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           {itemResults.map(item => <p key={item.selectionIndex}>{submission.variables?.rows[item.selectionIndex]?.label} · {item.status === 'succeeded' ? zh ? '已开立' : 'Issued' : <>{zh ? '失败：' : 'Failed: '}{getWorkspaceErrorMessage(new ApiClientError(409, item.code, item.message, undefined, undefined, item.reason), workspaceMessages)}</>}</p>)}
         </section>}
         {rows.length === 0 ? (
-          completedIntent || statusLine !== undefined || (state?.status === 'ready' && job.ready && !state.considerations?.length && !job.paused && !pending && recoveryMessage(state, zh) === undefined && !failed && !state.stale) ? null : (
+          completedIntent || statusLine !== undefined ? null : (
             <p className="text-xs text-muted-foreground">{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p>
           )
         ) : <div className="flex flex-col gap-1.5">
@@ -852,7 +670,6 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       </CardContent>}
       {pendingDetailVisible || compactSettled ? null : confirmationControls}
     </Card>
-    {preparation === undefined ? <DoctorPreparationDetailsDialog open={localDetails} onOpenChange={setLocalDetails} title={zh ? '依据与说明' : 'Evidence and details'}><DoctorRecommendationDetails job={job} locale={locale} /></DoctorPreparationDetailsDialog> : null}
     {inlineEditing ? orderDetails.host === null || activeEditing === undefined ? null : createPortal(
       <section aria-label={zh ? '待开具项目详情' : 'Pending item details'} className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
         <h4 className="font-semibold">{activeEditing.label}</h4>

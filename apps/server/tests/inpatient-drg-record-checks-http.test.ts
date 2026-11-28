@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
-import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { getHisOperation } from '@clinmesh/contracts/his-operations'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
@@ -42,8 +41,6 @@ describe('独立分组记录核对公共 HTTP', () => {
     expect(incompatible.simulation?.grouping.formal.status).toBe('ungroupable')
     expect(incompatible.issues).toContainEqual(expect.objectContaining({ kind: 'grouping-incomplete', explanation: expect.any(String) }))
     expect(incompatible.sources).toContainEqual(expect.objectContaining({ target: 'orders', display: expect.stringContaining('E05.90') }))
-    const followup = inpatientDrgFollowupSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/followup`)).json())
-    expect(followup.task).toBeNull()
   })
 
   it('分组成功但无该病组支付参数时单独说明金额暂不可估，规则缺失也不冒充无差异', async () => {
@@ -117,15 +114,12 @@ describe('独立分组记录核对公共 HTTP', () => {
     expect(inpatientFullClinicalSchema.parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())).toEqual(before.clinical)
     expect(inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())).toEqual(before.surgery)
     expect(inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json())).toEqual(before.charges)
-    expect(inpatientDrgFollowupSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/followup`)).json()).task).toBeNull()
     expect((await s.request(s.cashier, `${s.path}/drg/record-checks`)).status).toBe(403)
     expect((await s.request(s.registrar, `${s.path}/drg/record-checks`)).status).toBe(403)
     const records = await s.login('medical-records')
-    for (const [operation, suffix] of [['inpatient.drg.record-checks.read', ''], ['inpatient.drg.record-checks.explanation.read', '/explanation']] as const) {
-      expect(getHisOperation(operation).roles).toEqual(['inpatient-doctor', 'medical-records'])
-      expect((await s.request(s.nurse, `${s.path}/drg/record-checks${suffix}`)).status).toBe(403)
-      expect((await s.request(records, `${s.path}/drg/record-checks${suffix}`)).status).toBe(200)
-    }
+    expect(getHisOperation('inpatient.drg.record-checks.read').roles).toEqual(['inpatient-doctor', 'medical-records'])
+    expect((await s.request(s.nurse, `${s.path}/drg/record-checks`)).status).toBe(403)
+    expect((await s.request(records, `${s.path}/drg/record-checks`)).status).toBe(200)
   })
 
   it('原计划造影改为术中 PCI 时，推演与来源同时反映术中实际操作且不改正式分组', async () => {

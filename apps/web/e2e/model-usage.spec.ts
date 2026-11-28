@@ -1,18 +1,12 @@
 import { modelUsageControlSchema, modelUsageOverviewSchema, modelUsageListSchema, modelUsageRetentionSchema } from '@clinmesh/contracts/model-usage'
-import { agentPageContextBindingSchema } from '@clinmesh/contracts/agent'
-import { randomUUID } from 'node:crypto'
-import { isDoctorDelegation } from '../../dsh-web/src/doctor-delegation.ts'
-import { syntheticRecognitionLlm } from '../../dsh-web/src/doctor-input-fixture.ts'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
-import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
+import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { OpenAIChatCompletionsClient } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { expect, test } from './fixtures.ts'
 
 test('reads persisted synthetic model usage from the real Settings entry and survives reload', async ({ page, webRoot }) => {
-  const secret = 'synthetic-host-usage-e2e-secret-at-least-32-characters'
   const server = await startBrowserServer(webRoot, {
-    dshBridgeSecret: secret,
-    modelPricing: { prices: [{ provider: 'synthetic-host', model: 'host-classifier', version: 'host-price-v1', currency: 'USD', rates: { input: 2, output: 4 } }],
+    modelPricing: { prices: [{ provider: 'openai', model: 'synthetic-model', version: 'price-v1', currency: 'USD', rates: { input: 2, output: 4 } }],
       exchangeRates: [{ currency: 'USD', version: 'fx-v1', cnyPerUnit: 7 }] },
     syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'synthetic-model',
     chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid',
@@ -20,29 +14,7 @@ test('reads persisted synthetic model usage from the real Settings entry and sur
     }),
   })
   try {
-    const started = await startConsultationCase(server.runtime, server.password, server.origin)
-    const doctor = await signIn(server.runtime, 'doctor@demo.clinmesh.local', server.password, server.origin)
-    const headers = { cookie: doctor, origin: server.origin, 'content-type': 'application/json' }
-    const visit = await server.runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/start-first-visit`, {
-      method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({ expectedVersions: {
-        [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' }, input: {} }),
-    })
-    expect(visit.status).toBe(200)
-    const version = (await visit.json()).data.encounterVersion
-    const context = agentPageContextBindingSchema.parse(await (await server.runtime.app.request('/api/agent/v1/page-contexts', {
-      method: 'POST', headers, body: JSON.stringify({ client: { id: randomUUID(), revision: 1 }, dshSessionId: 'usage-e2e-host',
-        claim: { taskEpoch: randomUUID(), activeSection: 'consultation', version: 1, viewId: 'consultation',
-          viewRevision: 'usage-e2e', ui: { status: 'ready' }, selection: { kind: 'case', id: started.outpatientCaseId, version } } }),
-    })).json())
-    const permit = (await (await server.runtime.app.request('/api/agent/v1/doctor-tasks/permit', { method: 'POST', headers,
-      body: JSON.stringify({ contextToken: context.token, content: '替我问清头晕的诱因。', rpcId: randomUUID() }) })).json()).permit
-    const host = { llm: syntheticRecognitionLlm(async function* () {
-      yield { type: 'text-delta', index: 0, text: '{"intent":"discuss","evidence":""}' }
-      yield { type: 'usage', usage: { inputTokens: 12, outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 15 } }
-      yield { type: 'finish', reason: { kind: 'stop' } }
-    }) } as unknown as Parameters<typeof isDoctorDelegation>[0]
-    await isDoctorDelegation(host, { provider: 'synthetic-host', model: 'host-classifier' }, '替我问清头晕的诱因。',
-      new AbortController().signal, { upstreamOrigin: server.origin, secret, permit })
+    await startConsultationCase(server.runtime, server.password, server.origin)
     await page.goto(`${server.origin}/settings`)
     await page.getByLabel('账户邮箱').fill('admin@demo.clinmesh.local')
     await page.getByLabel('账户密码').fill(server.password)
@@ -52,11 +24,9 @@ test('reads persisted synthetic model usage from the real Settings entry and sur
     const response = await page.request.get(`${server.origin}/api/model-usage/overview`)
     expect(response.status()).toBe(200)
     const usage = modelUsageOverviewSchema.parse(await response.json())
-    expect(usage.totals.requests).toBe(2)
-    expect(usage.totals).toMatchObject({ knownInputTokens: 12, knownOutputTokens: 3, unknownInputTokenRequests: 1, unknownOutputTokenRequests: 1 })
-    await expect(page.getByRole('region', { name: '已派发请求' })).toContainText('2')
-    await expect(page.getByRole('region', { name: '已知输入 Token', exact: true })).toContainText('12')
-    await expect(page.getByRole('region', { name: '已知输出 Token', exact: true })).toContainText('3')
+    expect(usage.totals.requests).toBe(1)
+    expect(usage.totals).toMatchObject({ knownInputTokens: 0, knownOutputTokens: 0, unknownInputTokenRequests: 1, unknownOutputTokenRequests: 1 })
+    await expect(page.getByRole('region', { name: '已派发请求' })).toContainText('1')
     await expect(page.getByRole('region', { name: '已知输出 Token', exact: true })).toContainText('1 次请求的此项用量不完整')
     for (const name of ['调用趋势', '功能分布']) {
       const table = page.getByRole('table', { name, exact: true })
@@ -64,16 +34,6 @@ test('reads persisted synthetic model usage from the real Settings entry and sur
       await expect(table.getByRole('columnheader', { name: '已知输出 Token', exact: true })).toBeVisible()
     }
     await page.getByRole('tab', { name: '请求明细', exact: true }).click()
-    await page.getByRole('combobox', { name: '功能', exact: true }).click()
-    await page.getByRole('option', { name: '医生代问识别', exact: true }).click()
-    await page.getByRole('button', { name: '应用筛选' }).click()
-    await expect(page.getByRole('button', { name: '查看请求详情' })).toHaveCount(1)
-    await page.getByRole('button', { name: '查看请求详情' }).click()
-    await expect(page.getByRole('region', { name: '请求详情' }).getByText('host-classifier', { exact: true }).first()).toBeVisible()
-    await expect(page.getByRole('region', { name: '请求详情' }).getByText('doctor_delegation', { exact: true })).toBeVisible()
-    await expect(page.getByRole('region', { name: '请求详情' }).getByText('host-price-v1', { exact: true })).toBeVisible()
-    await expect(page.getByRole('region', { name: '请求详情' }).getByText('fx-v1', { exact: true })).toBeVisible()
-    await expect(page.getByRole('region', { name: '请求详情' }).getByText('0.000036', { exact: true })).toBeVisible()
     await page.getByRole('combobox', { name: '功能', exact: true }).click()
     await page.getByRole('option', { name: '患者人设', exact: true }).click()
     await page.getByRole('button', { name: '应用筛选' }).click()
@@ -90,15 +50,13 @@ test('reads persisted synthetic model usage from the real Settings entry and sur
     expect(reconciled).toMatchObject({ usage: { totalTokens: null }, accounting: { totalTokens: 150, cny: 0 },
       corrections: [{ kind: 'reconcile', evidence: 'bill:synthetic-e2e' }] })
     await page.reload()
-    await expect(page.getByRole('region', { name: '已派发请求' })).toContainText('2')
-    await expect(page.getByRole('region', { name: '已知输入 Token', exact: true })).toContainText('12')
-    await expect(page.getByRole('region', { name: '已知输出 Token', exact: true })).toContainText('3')
+    await expect(page.getByRole('region', { name: '已派发请求' })).toContainText('1')
     await page.setViewportSize({ width: 390, height: 844 })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     await page.getByRole('tab', { name: '额度与策略' }).click()
     await expect(page.getByRole('region', { name: '工作区控制', exact: true }).getByText('无限', { exact: true })).toHaveCount(6)
     await page.getByRole('tab', { name: '计价说明', exact: true }).click()
-    await expect(page.getByRole('table', { name: '计价说明', exact: true }).getByText('host-price-v1', { exact: true })).toBeVisible()
+    await expect(page.getByRole('table', { name: '计价说明', exact: true }).getByText('price-v1', { exact: true })).toBeVisible()
     await expect(page.getByRole('textbox')).toHaveCount(0)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   } finally { await server.close() }

@@ -1,16 +1,10 @@
-import { createHmac, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
-  agentPageBindingRevision,
-  agentPageContextBindingSchema,
-  agentToolAuthorizationResponseSchema,
-} from '@clinmesh/contracts/agent'
-import {
   administratorCaseTruthSchema,
-  patientPersonaJobSchema,
   patientPersonaRevisionListSchema,
   scenarioGenerationJobSchema,
   startSyntheticCaseResultSchema,
@@ -41,7 +35,6 @@ import {
   type LaboratoryRequest,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
-import { dshDefaultModel, encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
 import type {
   ScenarioGenerationProvider,
   SourcePatientCorpus,
@@ -51,7 +44,6 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { OutboxRepository } from '../src/infrastructure/sqlite/outbox-repository.ts'
 import { CommandExecutor } from '../src/application/command-executor.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
-import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { satisfyOutpatientOrderPrerequisites } from './fixtures/outpatient-order-gate.ts'
 import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 import type {
@@ -73,31 +65,6 @@ const translationWarning = {
   }],
   message: 'The Synthea Bundle contains untranslated clinical displays' as const,
   truncated: false,
-}
-
-function agentExecutionProof(input: {
-  callId: string
-  contextId: string
-  pageRevision: string
-  dshSessionId: string
-  scopeKey: string
-  toolName: string
-}, now = new Date()): string {
-  const payload = {
-    ...input,
-    origin: { request: { scopeKey: input.scopeKey, pageRevision: input.pageRevision },
-      task: { scopeKey: input.scopeKey, pageRevision: input.pageRevision,
-        acceptedAt: now.toISOString(), messageId: `message-${input.callId}`, rpcId: `rpc-${input.callId}`, turn: 1 } },
-    expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-    issuedAt: now.toISOString(),
-    version: 3,
-  }
-  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
-  const signature = createHmac(
-    'sha256',
-    'test-dsh-bridge-secret-with-at-least-32-characters',
-  ).update(encoded).digest('base64url')
-  return `${encoded}.${signature}`
 }
 
 function patientBundle(qualified: boolean, followUp = true) {
@@ -334,15 +301,14 @@ describe('Synthetic Case generation HTTP contract', () => {
       cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
       databasePath: options.databasePath ?? join(directory!, 'clinmesh.sqlite'),
       demoPassword: 'Synthetic-Demo-Password-2026!',
-      dshBridgeSecret: 'test-dsh-bridge-secret-with-at-least-32-characters',
       migrationMode: options.migrationMode ?? 'apply',
       outboxRetryDelayMs: 0,
       ...(briefProvider === undefined
         ? {}
         : {
             chatCompletionsProvider: briefProvider,
-            investigationModel: briefProvider instanceof DshModelProvider ? dshDefaultModel : 'fake-investigation-model',
-            patientPersonaModel: briefProvider instanceof DshModelProvider ? dshDefaultModel : 'fake-brief-model',
+            investigationModel: 'fake-investigation-model',
+            patientPersonaModel: 'fake-brief-model',
           }),
       syntheaProvider: provider,
       trustedOrigins: ['http://localhost'],
@@ -356,21 +322,12 @@ describe('Synthetic Case generation HTTP contract', () => {
     cookie: string,
     caseId: string,
   ) {
-    const response = await runtime.app.request(
-      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-jobs`,
-      {
-        body: '{}',
-        headers: {
-          'content-type': 'application/json',
-          cookie,
-          'idempotency-key': randomUUID(),
-          origin: 'http://localhost',
-        },
-        method: 'POST',
-      },
-    )
-    expect(response.status).toBe(200)
-    return commandResponseSchema(patientPersonaJobSchema).parse(await response.json()).data
+    const context = (await runtime.identity.resolveSessionContext(new Headers({ cookie }))).actor
+    return (await runtime.patientPersona.enqueue({
+      caseId,
+      context,
+      idempotencyKey: randomUUID(),
+    })).data
   }
 
   async function signIn(
@@ -390,25 +347,21 @@ describe('Synthetic Case generation HTTP contract', () => {
   }
 
   async function enqueue(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, cookie: string) {
-    const response = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', {
-      body: JSON.stringify({
+    const context = (await runtime.identity.resolveSessionContext(new Headers({ cookie }))).actor
+    return (await runtime.scenarioData.enqueueGeneration({
+      context,
+      idempotencyKey: randomUUID(),
+      request: {
+        moduleMode: 'all',
+        modules: [],
         name: '全模块患者',
         population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
         providerId: 'synthea',
         seeds: { clinical: 7331, population: 4242 },
         timeRange: { end: '2026-08-01', start: '2020-01-01' },
         timeZone: 'Asia/Shanghai',
-      }),
-      headers: {
-        'content-type': 'application/json',
-        cookie,
-        'idempotency-key': randomUUID(),
-        origin: 'http://localhost',
       },
-      method: 'POST',
-    })
-    expect(response.status).toBe(200)
-    return commandResponseSchema(scenarioGenerationJobSchema).parse(await response.json()).data
+    })).data
   }
 
   it('retries an unusable patient and exposes only pre-index R4 history', async () => {
@@ -1089,8 +1042,8 @@ describe('Synthetic Case generation HTTP contract', () => {
         }],
       },
     ])
-    const routeA = encodeModelRoute({ provider: 'synthetic-a', model: 'same-model' })
-    const routeB = encodeModelRoute({ provider: 'synthetic-b', model: 'same-model' })
+    const routeA = 'synthetic-a/same-model'
+    const routeB = 'synthetic-b/same-model'
     let currentModel = routeA
     briefProvider.resolveModel = async () => currentModel
     const runtime = await createRuntime(
@@ -1583,50 +1536,6 @@ describe('Synthetic Case generation HTTP contract', () => {
     })
     expect(failedRequest?.report).toBeUndefined()
     if (failedRequest === undefined) throw new Error('Failed laboratory request was not found')
-    const contextResponse = await runtime.app.request('/api/agent/v1/page-contexts', {
-      body: JSON.stringify({
-        claim: {
-          activeSection: 'laboratory',
-          selection: {
-            id: startedCommand.data.outpatientCaseId,
-            kind: 'case',
-            version: detail.encounter.versionId,
-          },
-          ui: { status: 'ready' },
-          version: 1,
-          viewId: 'consultation',
-          viewRevision: 'synthetic-case-generation-failed',
-          taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc',
-        },
-        client: { id: 'synthetic-case-agent-test', revision: 1 },
-        dshSessionId: 'dsh-session-synthetic-case',
-      }),
-      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
-      method: 'POST',
-    })
-    expect(contextResponse.status).toBe(201)
-    const binding = agentPageContextBindingSchema.parse(await contextResponse.json())
-    expect(binding.snapshot.allowedOperationIds).toContain('outpatient.laboratory.cancel.propose')
-    const authorizeCancellation = await runtime.app.request('/api/agent/v1/tool-calls', {
-      body: JSON.stringify({
-        contextToken: binding.token,
-        executionProof: agentExecutionProof({
-          callId: 'call-cancel-generation-failed',
-          contextId: binding.snapshot.id,
-          pageRevision: agentPageBindingRevision(binding.snapshot.claim),
-          dshSessionId: binding.snapshot.dshSessionId,
-          scopeKey: binding.snapshot.scopeKey,
-          toolName: 'clinmesh_prepare_cancel_laboratory',
-        }),
-        input: { requestId: failedRequest.id },
-        operationId: 'outpatient.laboratory.cancel.propose',
-      }),
-      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
-      method: 'POST',
-    })
-    expect(authorizeCancellation.status).toBe(201)
-    expect(agentToolAuthorizationResponseSchema.parse(await authorizeCancellation.json()))
-      .toMatchObject({ operationId: 'outpatient.laboratory.cancel.propose', status: 'authorized' })
     expect(runtime.database.driver.prepare(`
       SELECT COUNT(*) AS count FROM investigation_result_snapshot
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
@@ -3116,32 +3025,6 @@ describe('Synthetic Case generation HTTP contract', () => {
     })
     expect(retryResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await retryResponse.json())).toMatchObject({ error: { code: 'WORKFLOW_CONFLICT' } })
-    const contextResponse = await runtime.app.request('/api/agent/v1/page-contexts', {
-      body: JSON.stringify({
-        claim: { activeSection: 'laboratory', selection: { id: startedCommand.data.outpatientCaseId, kind: 'case', version: detail.encounter.versionId },
-          ui: { status: 'ready' }, version: 1, viewId: 'consultation', viewRevision: 'unit-truth-failure',
-          taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc' },
-        client: { id: 'synthetic-unit-agent-test', revision: 1 }, dshSessionId: 'dsh-session-unit-truth',
-      }),
-      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
-    })
-    expect(contextResponse.status).toBe(201)
-    const binding = agentPageContextBindingSchema.parse(await contextResponse.json())
-    expect(binding.snapshot.allowedOperationIds).toContain('outpatient.laboratory.cancel.propose')
-    const authorize = (requestId: string) => runtime.app.request('/api/agent/v1/tool-calls', {
-      body: JSON.stringify({ contextToken: binding.token, executionProof: agentExecutionProof({
-        callId: randomUUID(), contextId: binding.snapshot.id, pageRevision: agentPageBindingRevision(binding.snapshot.claim),
-        dshSessionId: binding.snapshot.dshSessionId, scopeKey: binding.snapshot.scopeKey, toolName: 'clinmesh_prepare_cancel_laboratory',
-      }), input: { requestId }, operationId: 'outpatient.laboratory.cancel.propose' }),
-      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
-    })
-    const wrongTarget = await authorize('missing-or-other-case-request')
-    expect(wrongTarget.status).toBe(409)
-    expect(await wrongTarget.json()).toMatchObject({ error: { code: 'AGENT_CONTEXT_STALE' } })
-    const authorized = await authorize(failed.id)
-    expect(authorized.status).toBe(201)
-    expect(agentToolAuthorizationResponseSchema.parse(await authorized.json())).toMatchObject({ status: 'authorized' })
-    // 提案授权没有执行取消；正式动作仍要求当前申请、FHIR 版本及医生身份。
     const cancelBody = { expectedVersions: {
       [`ServiceRequest/${failed.serviceRequestId}`]: failed.serviceRequestVersion, [`Task/${failed.taskId}`]: failed.taskVersion,
     }, input: { expectedRequestVersion: failed.version, reasonCode: 'no-longer-needed' } }
@@ -3248,75 +3131,6 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(runtime.database.driver.prepare(`
       SELECT COUNT(*) AS count FROM investigation_result_snapshot WHERE workspace_id = ? AND case_id = ?
     `).get('workspace-demo', caseId)).toEqual({ count: 1 })
-  }, 30_000)
-
-  it('keeps the clinical investigation code when the real provider budget is exhausted across restarts', async () => {
-    const service = unitService('synthetic-service-budget', '6690-2', 'mg/L')
-    const definition = service.reportDefinition.results[0]!
-    const invalid = { conclusion: '合成 C 反应蛋白升高', results: [{
-      code: '6690-2', interpretation: 'normal', referenceRange: definition.referenceRange, unit: definition.unit, value: 24,
-    }] }
-    const route = encodeModelRoute({ provider: 'synthetic', model: 'synthetic-crp' })
-    const usage = { inputTokens: 15, outputTokens: 3, cachedInputTokens: 0, reasoningOutputTokens: 0,
-      totalTokens: 18, mapping: 'dsh-v1' }
-    let completions = 0
-    const makeProvider = (briefProvider: ControlledBriefProvider) => new DshModelProvider({
-      origin: 'http://127.0.0.1:1', secret: 'synthetic-only', timeoutMs: 2000, maxResponseBytes: 65536,
-      fetch: async (_url, init) => {
-        const request = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
-        if (request.operation === 'resolve') return Response.json({ model: route })
-        const { attemptId } = request
-        if (attemptId === undefined) throw new Error('Expected an accounted synthetic completion')
-        let content: string
-        if (request.schemaName === 'patient_persona') {
-          content = (await briefProvider.completeJson({
-            jsonSchema: request.jsonSchema, model: request.model, schemaName: request.schemaName,
-            systemPrompt: request.systemPrompt, userPayload: request.userPayload,
-          })).content
-        } else {
-          completions += 1
-          content = JSON.stringify(invalid)
-        }
-        return new Response([
-          { type: 'usage', attemptId, usage },
-          { type: 'result', attemptId, result: { model: route, content, accounting: {
-            attemptId, status: 'succeeded', dispatch: 'dispatched', usage,
-          } } },
-        ].map(frame => JSON.stringify(frame)).join('\n'), { headers: { 'content-type': modelBridgeAccountingMediaType } })
-      },
-    })
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-pr287-restart-'))
-    temporaryDirectories.push(directory)
-    const databasePath = join(directory, 'clinmesh.sqlite')
-    const first = await prepareUnitConversionCase([], [], makeProvider, { databasePath })
-    publishUnitService(first.runtime, service)
-    const draft = await first.saveLaboratoryDraft(service.id, 0)
-    const request = (await first.issueLaboratory(draft.draftVersion)).request
-    for (let index = 0; index < 20; index += 1) {
-      const event = await first.runtime.dispatcher.dispatchOnce()
-      if (event === undefined) break
-      if (event.kind === 'laboratory.report-request' && (event.payload as { requestId: string }).requestId === request.id) {
-        expect(event).toMatchObject({ attempt: 1, status: 'failed' })
-        break
-      }
-    }
-    expect(completions).toBe(2)
-    // 重启的 runtime 会重扫 active 目录；本测试的合成目录项未登记住院计费，置为 inactive。
-    first.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET active = 0 WHERE service_id = ?`).run(service.id)
-    await first.runtime.close()
-    // 重启恢复层后不再派发请求；持久安全分类必须让原临床错误码跨 outbox 与重启保留。
-    const restarted = await createRuntime(new RetryingSyntheaProvider(1, false, []), makeProvider(first.briefProvider), { databasePath })
-    await restarted.dispatchPending()
-    expect(completions).toBe(2)
-    const detail = doctorCaseDetailSchema.parse(await (await restarted.app.request(
-      `/api/his/v1/doctor/cases/${first.startedCommand.data.outpatientCaseId}`, { headers: { cookie: first.doctorCookie } },
-    )).json())
-    expect(detail.laboratoryRequests?.requests.find(item => item.id === request.id)).toMatchObject({
-      status: 'generation-failed', generationError: { code: 'INVESTIGATION_OUTPUT_INVALID' },
-    })
-    expect(restarted.database.driver.prepare(`
-      SELECT COUNT(*) AS count FROM investigation_result_snapshot WHERE workspace_id = ? AND case_id = ?
-    `).get('workspace-demo', first.caseId)).toEqual({ count: 0 })
   }, 30_000)
 
   it.each([
@@ -3599,10 +3413,8 @@ describe('Synthetic Case generation HTTP contract', () => {
       migrationMode: 'verify',
     })
     const restartedCookie = await signIn(restarted)
-    const recovered = patientPersonaJobSchema.parse(await (await restarted.app.request(
-      `/api/sim/v1/patient-persona-jobs/${encodeURIComponent(job.jobId)}`,
-      { headers: { cookie: restartedCookie } },
-    )).json())
+    const restartedContext = (await restarted.identity.resolveSessionContext(new Headers({ cookie: restartedCookie }))).actor
+    const recovered = restarted.patientPersona.getJob(restartedContext, job.jobId)
     expect(recovered).toMatchObject({ startedAt: null, status: 'queued' })
     expect(restarted.database.driver.prepare(`
       SELECT COUNT(*) AS count FROM patient_persona_revision WHERE case_id = ?

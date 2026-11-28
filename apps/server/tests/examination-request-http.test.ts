@@ -82,16 +82,6 @@ it('offers pixel-free ECG/TTE and freezes a normal adult report after payment', 
   expect(detail.examinationRequests?.requests[0]?.status).toBe('reported')
   const reported = detail.examinationRequests!.requests[0]!,
     report = reported.report!
-  const recordedSource = item.runtime.database.driver
-    .prepare(
-      "SELECT message_text, metadata_json FROM consultation_recording_source WHERE case_id = ? AND source_kind = 'report'",
-    )
-    .get(visit.outpatientCaseId) as { message_text: string; metadata_json: string } | undefined
-  expect(recordedSource?.message_text).toContain(report.technique)
-  expect(JSON.parse(recordedSource?.metadata_json ?? '{}')).toMatchObject({
-    reportReference: `DiagnosticReport/${report.diagnosticReportId}/_history/${report.diagnosticReportVersion}`,
-    reportContentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-  })
   const ack = await item.runtime.app.request(
     `/api/his/v1/examination-requests/${reported.id}/reports/${report.diagnosticReportId}/actions/acknowledge`,
     mutation(visit.doctor, {

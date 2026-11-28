@@ -10,8 +10,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { CheckCircleIcon, CircleAlertIcon, PlusIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useRegisterAgentForm } from '../agent-page-context.tsx'
-import { AgentReviewAnchor } from '../agent-review.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import {
@@ -117,10 +115,6 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       || state.confirmation?.id !== discarded.confirmationId || composerRevision !== discarded.composerRevision) return
     clearPrivateDraft()
   }, [discarded, state, composerRevision])
-  useRegisterAgentForm({
-    viewId: 'consultation', selectionId: caseId, name: 'diagnosis',
-    values: { entries: entries.map(({ catalogItemId, role, note }) => ({ catalogItemId, role, note })) },
-  })
   const usedCatalogItemIds = new Set(entries.map(entry => entry.catalogItemId))
   const unavailableDiagnosis = (catalogItemId: string, referenceConcept: DiagnosisDraftEntry['referenceConcept']) => {
     if (referenceSearch.data?.items.some(item => item.id === catalogItemId && item.status === 'inactive')) return messages.recommendationDiagnosisUnavailable
@@ -316,7 +310,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   const composerDefaultRole: DiagnosisDraftEntry['role'] = entries.some(entry => entry.role === 'primary') ? 'secondary' : 'primary'
   const draftEntrySection = (
     // 弹窗合同：左主列只保留选择入口与已选列表；目录浏览与表单填写在同一次弹窗内完成。
-    <section aria-label={locale === 'zh-CN' ? '填写诊断' : 'Enter diagnosis'} className="flex min-w-0 flex-col gap-3"><AgentReviewAnchor id={`doctor-diagnosis:${caseId}`}>
+    <section aria-label={locale === 'zh-CN' ? '填写诊断' : 'Enter diagnosis'} className="flex min-w-0 flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button data-agent-catalog-trigger="diagnosis" disabled={pending || entries.length >= 8}
           onClick={() => { setComposerEditIndex(undefined); setComposerOpen(true) }} size="sm" type="button" variant="outline">
@@ -365,7 +359,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         search={referenceSearch}
         target={composerTarget}
       />}</DoctorDraftEditorScope>
-    </AgentReviewAnchor></section>
+    </section>
   )
 
   if (readOnly && state?.confirmation === undefined) {

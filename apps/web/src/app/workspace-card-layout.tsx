@@ -10,7 +10,6 @@ import { Spinner } from '@clinmesh/ui/components/spinner'
 import { toast } from '@clinmesh/ui/components/toast'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { cn } from '@clinmesh/ui/lib/utils'
-import { AgentReviewOutlet, useAgentReviewPending } from './agent-review.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 // queueNarrow and queueOverlayOpen describe the overlay queue below queueOverlayWidth; queueCollapsed is the wide-layout choice.
@@ -158,7 +157,6 @@ export function WorkspaceFlow({ flow, activeStep, locale, label, numbered = fals
 export function WorkspaceCardLayout({ id, queue, patient, tabs, action, flow, activeStep, locale = 'zh-CN', children }: WorkspaceCardLayoutProps) {
   const view = useWorkspaceCardView(id), { queueCollapsed, setQueueCollapsed } = view
   const update = useCardViews(state => state.update)
-  const reviewing = useAgentReviewPending()
   const header = useContext(HeaderSlotsContext)?.elements
   const section = useRef<HTMLElement>(null)
   const narrow = view.queueNarrow, overlayOpen = view.queueOverlayOpen
@@ -221,8 +219,7 @@ export function WorkspaceCardLayout({ id, queue, patient, tabs, action, flow, ac
           {patient ? <div className="clinmesh-card-patient">{patient}</div> : null}
           {tabs}
           <div className="clinmesh-card-content">{children}</div>
-          {!reviewing ? action : null}
-          <AgentReviewOutlet />
+          {action}
         </div></WorkspaceBusyContext.Provider>
       </div>
     </section>

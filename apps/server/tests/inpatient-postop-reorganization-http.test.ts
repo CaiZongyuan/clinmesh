@@ -316,18 +316,25 @@ describe('手术通知单停续术前医嘱策略与术后成套医嘱模板重�
 
   async function createAdmission(bedId: string) {
     const ready = current()
-    expect((await rawPost(cookies.admin, '/api/sim/v1/scenario-generation-jobs', {
-      name: '合成术后重整病例',
-      population: { age: { maximum: 75, minimum: 18 }, count: 1, gender: 'any' },
-      providerId: 'synthea',
-      seeds: { clinical: Math.floor(Math.random() * 100_000) + 1, population: Math.floor(Math.random() * 100_000) + 1 },
-      timeRange: { end: '2026-08-01', start: '2020-01-01' },
-      timeZone: 'Asia/Shanghai',
-    })).status).toBe(200)
+    const adminContext = (await ready.identity.resolveSessionContext(new Headers({ cookie: cookies.admin }))).actor
+    await ready.scenarioData.enqueueGeneration({
+      context: adminContext,
+      idempotencyKey: randomUUID(),
+      request: {
+        moduleMode: 'all',
+        modules: [],
+        name: '合成术后重整病例',
+        population: { age: { maximum: 75, minimum: 18 }, count: 1, gender: 'any' },
+        providerId: 'synthea',
+        seeds: { clinical: Math.floor(Math.random() * 100_000) + 1, population: Math.floor(Math.random() * 100_000) + 1 },
+        timeRange: { end: '2026-08-01', start: '2020-01-01' },
+        timeZone: 'Asia/Shanghai',
+      },
+    })
     const generated = await ready.scenarioData.processNextGenerationJob()
     expect(generated).toMatchObject({ status: 'succeeded' })
     const syntheticCaseId = generated!.caseIds[0]!
-    expect((await rawPost(cookies.admin, `/api/sim/v1/synthetic-cases/${syntheticCaseId}/patient-persona-jobs`, {})).status).toBe(200)
+    await ready.patientPersona.enqueue({ caseId: syntheticCaseId, context: adminContext, idempotencyKey: randomUUID() })
     expect((await ready.patientPersona.processNext())?.status).toBe('succeeded')
     const syntheticCase = syntheticCaseInstanceSchema.parse(await (await ready.app.request(
       `/api/sim/v1/synthetic-cases/${syntheticCaseId}`,

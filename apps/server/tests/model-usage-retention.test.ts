@@ -41,16 +41,19 @@ async function fixture(settings: { unpriced?: boolean; unknownUsage?: boolean; u
       'idempotency-key': key }, body: JSON.stringify(body) })
   return { get runtime() { return runtime }, request,
     async generatePersona() {
-      const headers = { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }
-      const generated = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', { method: 'POST', headers,
-        body: JSON.stringify({ name: '保留期合成病例', population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+      const adminContext = (await runtime.identity.resolveSessionContext(new Headers({ cookie }))).actor
+      await runtime.scenarioData.enqueueGeneration({
+        context: adminContext,
+        idempotencyKey: randomUUID(),
+        request: {
+          moduleMode: 'all', modules: [],
+          name: '保留期合成病例', population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
           providerId: 'synthea', seeds: { clinical: 7331, population: 4242 },
-          timeRange: { end: '2026-08-01', start: '2020-01-01' }, timeZone: 'Asia/Shanghai' }) })
-      expect(generated.status).toBe(200)
+          timeRange: { end: '2026-08-01', start: '2020-01-01' }, timeZone: 'Asia/Shanghai',
+        },
+      })
       const generation = await runtime.scenarioData.processNextGenerationJob()
-      const created = await runtime.app.request(`/api/sim/v1/synthetic-cases/${generation!.caseIds[0]}/patient-persona-jobs`, {
-        method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: '{}' })
-      expect(created.status).toBe(200)
+      await runtime.patientPersona.enqueue({ caseId: generation!.caseIds[0]!, context: adminContext, idempotencyKey: randomUUID() })
       expect(await runtime.patientPersona.processNext()).toMatchObject(settings.unknownDispatch
         ? { status: 'failed', error: { code: 'MODEL_OUTCOME_UNKNOWN' } } : { status: 'succeeded' })
     },

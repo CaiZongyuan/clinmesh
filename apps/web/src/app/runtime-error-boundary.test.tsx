@@ -54,18 +54,6 @@ describe('RuntimeErrorBoundary', () => {
     expect(screen.getByRole('alert').textContent).toContain('工作台发生错误')
   })
 
-  it('keeps the failed Surface localized by the host as its language changes', () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const runtime = Object.defineProperty({ mode: 'surface', surfaceLocale: 'en-US' }, 'apiBasePath', {
-      get() { throw new Error('private composition failure') },
-    }) as WebRuntimeOptions
-    const rendered = render(<WebApp runtime={runtime} />)
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
-    runtime.surfaceLocale = 'zh-CN'
-    rendered.rerender(<WebApp runtime={runtime} />)
-    expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
-  })
-
   it('recovers a production route failure without exposing the original error', async () => {
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -79,18 +67,13 @@ describe('RuntimeErrorBoundary', () => {
       return <p>岗位页面已恢复</p>
     }
     rootRoute.update({ component: RecoverableRoute })
-    const toggle = vi.fn()
 
     try {
-      render(<WebApp history={createMemoryHistory({ initialEntries: ['/'] })} runtime={{
-        surfaceDisplay: { fullscreen: true, toggle },
-      }} />)
+      render(<WebApp history={createMemoryHistory({ initialEntries: ['/'] })} />)
 
       expect((await screen.findByRole('alert')).textContent).toContain('工作台发生错误')
       expect(screen.queryByText('private route failure detail')).toBeNull()
       expect(screen.queryByText('Show Error')).toBeNull()
-      await userEvent.click(screen.getByRole('button', { name: '返回 DSH 分屏' }))
-      expect(toggle).toHaveBeenCalledOnce()
       shouldFail = false
       await userEvent.click(screen.getByRole('button', { name: '重试' }))
       expect(await screen.findByText('岗位页面已恢复')).toBeTruthy()

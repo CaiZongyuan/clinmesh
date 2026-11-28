@@ -14,7 +14,6 @@ import { mergeDocumentText } from '@clinmesh/core/document-text'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useManualInvestigationDrafts } from './investigation-draft-storage.ts'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAgentReview } from '../agent-review.tsx'
 import {
   ApiClientError,
   acknowledgeLaboratoryReport,
@@ -24,7 +23,6 @@ import {
   confirmDiagnosis,
   confirmClinicalVisitKind,
   confirmNoMedication,
-  controlConsultationRecording,
   correctLaboratoryReport,
   deleteLaboratoryRequestDraft,
   deletePrescriptionDraft,
@@ -54,7 +52,6 @@ import {
   signStructuredClinicalDocument,
   startFirstVisit,
   startRevisit,
-  subscribeRecordingUpdates,
   withdrawPrescription
 } from '../api-client.ts'
 import { useWorkspaceCardView } from '../workspace-card-layout.tsx'
@@ -84,7 +81,6 @@ export function useDoctorCaseModel({
   session,
 }: DoctorCaseControllerProps) {
   const messages = getWorkspaceMessages(locale)
-  const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = useMemo(() => [session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId] as const,
     [session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId])
@@ -201,7 +197,6 @@ export function useDoctorCaseModel({
     activeCaseId,
     selectedCase?.diagnosticReportId,
   ] as const
-  const [recordingNotificationCase, setRecordingNotificationCase] = useState<string>()
   const detail = useQuery({
     enabled: activeCaseId !== undefined,
     queryFn: ({ signal }) => getDoctorCase(activeCaseId ?? '', signal),
@@ -217,19 +212,9 @@ export function useDoctorCaseModel({
       || query.state.data?.pathologyRequests?.requests.some(isAwaitingResult) === true
       || query.state.data?.consultation?.replyAttempt?.status === 'executing'
       || query.state.data?.consultation?.replyAttempt?.status === 'blocked'
-      || (query.state.data?.consultationRecording !== undefined && query.state.data.encounter.status === 'in-progress'
-        && (recordingNotificationCase !== activeCaseId || query.state.status === 'error'))
       ? 1_500
       : false,
   })
-  useEffect(() => {
-    if (activeCaseId === undefined) return
-    return subscribeRecordingUpdates(activeCaseId, () => {
-      void queryClient.invalidateQueries({ queryKey: ['doctor-case', ...scope, activeCaseId] })
-    }, connected => {
-      setRecordingNotificationCase(current => connected ? activeCaseId : current === activeCaseId ? undefined : current)
-    })
-  }, [activeCaseId, queryClient, scope])
   const investigationView = useMemo<InvestigationView>(() => {
     const view = investigationSelection?.caseId === activeCaseId ? investigationSelection : undefined
     const groups = caseInvestigationRequests(detail.data)
@@ -757,59 +742,6 @@ export function useDoctorCaseModel({
       ])
     },
   })
-  const activatedRecordingCases = useRef(new Set<string>())
-  const controlRecording = useMutation({
-    mutationFn: ({ caseId, action }: { caseId: string; action: Parameters<typeof controlConsultationRecording>[0]['action'] }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return controlConsultationRecording({
-        action, encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId, expectedRecordingVersion: current.consultationRecording?.version ?? 0
-      }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (response, variables) => {
-      const queryKey = ['doctor-case', ...scope, variables.caseId]
-      await queryClient.cancelQueries({ queryKey })
-      queryClient.setQueriesData<DoctorCaseDetail>({ queryKey }, current => {
-        // Control versions do not advance with saved drafts, ownership or background progress.
-        const recording = current?.consultationRecording
-        const version = recording?.version ?? 0
-        if (current === undefined || version > response.data.version) return current
-        if (version === response.data.version) {
-          if (variables.action !== 'activate' || recording === undefined
-            || response.data.requiresContextBinding === undefined) return current
-          return {
-            ...current, consultationRecording: {
-              ...recording,
-              requiresContextBinding: response.data.requiresContextBinding,
-              status: recording.requiresContextBinding === true && recording.status === 'idle'
-                && recording.remainingCount > 0 && response.data.status === 'processing' ? 'processing' : recording.status
-            }
-          }
-        }
-        return {
-    ...current,
-    consultationRecording: response.data,
-  }
-      })
-      await refreshCaseById(variables.caseId)
-    },
-  })
-  useEffect(() => {
-    const current = detail.data
-    const recording = current?.consultationRecording
-    const requiresBinding = recording?.requiresContextBinding === true
-    if (current === undefined || current.status === 'awaiting-doctor'
-      || current.encounter.status !== 'in-progress' || (current.clinicalDocument?.signed.length ?? 0) > 0
-      || recording?.signingPreparation?.active === true
-      || (!requiresBinding && ((current.consultation?.turns.length ?? 0) > 0
-        || (recording !== undefined && (recording.version !== 0 || recording.status !== 'idle'))))) return
-    const key = `${scope[0]}:${scope[1]}:${current.caseId}`
-    if (activatedRecordingCases.current.has(key)) return
-    activatedRecordingCases.current.add(key)
-    controlRecording.mutate({ caseId: current.caseId, action: 'activate' })
-  }, [detail.data, scope[0], scope[1], controlRecording.mutate])
   const confirmVisitKind = useMutation({
     mutationFn: ({ caseId, visitKind, reason }: { caseId: string; visitKind: 'initial' | 'follow-up'; reason: string }) => {
       const current = detail.data
@@ -1151,7 +1083,6 @@ export function useDoctorCaseModel({
     onSelectedCaseIdChange,
     session,
     messages,
-    agentReview,
     scope,
     page,
     setPage,
@@ -1207,7 +1138,6 @@ export function useDoctorCaseModel({
     cancelRequest,
     acknowledgeReport,
     correctReport,
-    controlRecording,
     confirmVisitKind,
     saveDocumentDraft,
     prepareClinicalDocumentSign,

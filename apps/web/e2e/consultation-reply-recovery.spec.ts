@@ -25,7 +25,6 @@ async function openConsultation(page: Page, server: Awaited<ReturnType<typeof st
 test('preserves a control-blocked question across reload and resumes the original reply when enabled', async ({ page, webRoot }) => {
   let replyRequests = 0
   const server = await startBrowserServer(webRoot, {
-    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
     syntheaProvider: new StubSyntheaProvider(),
     chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid',
       fetch: async (_url, init) => {
@@ -75,7 +74,6 @@ test('keeps an accepted patient answer running after reload and joins it from th
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
   const server = await startBrowserServer(webRoot, {
-    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
     syntheaProvider: new StubSyntheaProvider(),
     chatCompletionsProvider: { async completeJson(input) {
       if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: input.model }
@@ -144,7 +142,6 @@ test('shows failed and unknown replies after reload and sends a new retry only o
     }
   })
   const server = await startBrowserServer(webRoot, {
-    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
     syntheaProvider: new StubSyntheaProvider(),
     chatCompletionsProvider: { async completeJson(input) {
       if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: input.model }

@@ -16,25 +16,19 @@ import type { WorkspaceLocale } from './workspace-i18n.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { AgentDraftField, WorkspaceActionBar, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
-import { useInpatientAgentState } from './inpatient-agent-tools.tsx'
 
 type Props = { admission: InpatientAdmission; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent>; statement: z.infer<typeof inpatientPaymentsSchema>; collect?: boolean; allowExtraCollection?: boolean; stage?: InpatientStage }
 export function InpatientFunding({ admission, locale, write, statement, collect = true, allowExtraCollection = false, stage = 'discharge' }: Props): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
-  const agent = useInpatientAgentState()
   const id = useId()
   const [extraCollection, setExtraCollection] = useState(false)
   const showCollection = collect || extraCollection
-  const [localKind, setLocalKind] = useState<'deposit' | 'supplement'>(admission.status === 'departed' ? 'supplement' : 'deposit')
-  const [localAmounts, setLocalAmounts] = useState({ cash: '', 'bank-card': '', mobile: '' })
-  const kind = agent?.payment.kind ?? localKind, amounts = agent?.payment.amounts ?? localAmounts
-  const setKind = (value: 'deposit' | 'supplement') => agent ? agent.updatePayment({ kind: value }) : setLocalKind(value)
+  const [kind, setKind] = useState<'deposit' | 'supplement'>(admission.status === 'departed' ? 'supplement' : 'deposit')
+  const [amounts, setAmounts] = useState({ cash: '', 'bank-card': '', mobile: '' })
   const [sourceId, setSourceId] = useState<string | null>(null), [refundAmount, setRefundAmount] = useState('')
   const [singleMode, setSingleMode] = useState(true)
   const [singleMethod, setSingleMethod] = useState<'cash' | 'bank-card' | 'mobile'>('cash')
-  const [localRule, setLocalRule] = useState<'success' | 'decline' | 'ambiguous' | 'ambiguous-decline' | 'ambiguous-pending'>('success')
-  const rule = agent?.payment.rule ?? localRule
-  const setRule = (value: typeof localRule) => agent ? agent.updatePayment({ rule: value }) : setLocalRule(value)
+  const [rule, setRule] = useState<'success' | 'decline' | 'ambiguous' | 'ambiguous-decline' | 'ambiguous-pending'>('success')
   const methods = { cash: t('现金','Cash'), 'bank-card': t('银行卡','Bank card'), mobile: t('移动支付','Mobile payment') }
   const rules = { success: t('成功','Success'), decline: t('拒绝','Declined'), ambiguous: t('未知后查明成功','Unknown, then success'),
     'ambiguous-decline': t('未知后查明拒绝','Unknown, then declined'), 'ambiguous-pending': t('持续未知','Still unknown') }
@@ -110,14 +104,12 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
           }}><ToggleGroupItem value="deposit">{t('预交金','Deposit')}</ToggleGroupItem><ToggleGroupItem value="supplement" disabled={admission.status !== 'departed'}>{t('出院补交','Departure supplement')}</ToggleGroupItem></ToggleGroup>
         </Field>
         {!isSplit ? <div className="grid gap-3 sm:grid-cols-2">
-          <AgentDraftField assisted={agent?.payment.assisted[activeSingleMethod] === true} locale={locale}>
+          <AgentDraftField assisted={false} locale={locale}>
             <Field data-invalid={amounts[activeSingleMethod] !== '' && yuanToFen(amounts[activeSingleMethod]) === undefined}>
               <FieldLabel htmlFor={`${id}-inpatient-funding-single`}>{kind === 'supplement' ? t('补交金额（元）', 'Supplement amount (CNY)') : t('收款金额（元）', 'Collection amount (CNY)')}</FieldLabel>
               <Input id={`${id}-inpatient-funding-single`} data-inpatient-funding-method={activeSingleMethod} inputMode="decimal" className="tabular-nums" placeholder={defaultCash ? (statement.remainingFen / 100).toFixed(2) : '0.00'} value={amounts[activeSingleMethod]} aria-invalid={amounts[activeSingleMethod] !== '' && yuanToFen(amounts[activeSingleMethod]) === undefined}
                 onChange={event => {
-                  const next = { cash: '', 'bank-card': '', mobile: '', [activeSingleMethod]: event.currentTarget.value }
-                  if (agent) agent.updatePayment({ amounts: next, assisted: { cash: false, 'bank-card': false, mobile: false } })
-                  else setLocalAmounts(next)
+                  setAmounts({ cash: '', 'bank-card': '', mobile: '', [activeSingleMethod]: event.currentTarget.value })
                 }} />
               {amounts[activeSingleMethod] !== '' && yuanToFen(amounts[activeSingleMethod]) === undefined ? <p role="alert">{t('请填写有效金额，最多两位小数。', 'Enter a valid amount with at most two decimal places.')}</p> : null}
             </Field>
@@ -129,20 +121,16 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
               if (m && m in methods) {
                 const curVal = amounts[activeSingleMethod]
                 setSingleMethod(m)
-                const next = { cash: '', 'bank-card': '', mobile: '', [m]: curVal }
-                if (agent) agent.updatePayment({ amounts: next })
-                else setLocalAmounts(next)
+                setAmounts({ cash: '', 'bank-card': '', mobile: '', [m]: curVal })
               }
             }}>{(Object.entries(methods) as Array<[keyof typeof methods, string]>).map(([m, label]) => <ToggleGroupItem key={m} value={m}>{label}</ToggleGroupItem>)}</ToggleGroup>
           </Field>
         </div> : <div className="grid gap-3 sm:grid-cols-3">
-          {(Object.keys(methods) as Array<keyof typeof methods>).map(method => <AgentDraftField key={method} assisted={agent?.payment.assisted[method] === true} locale={locale}><Field data-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}>
+          {(Object.keys(methods) as Array<keyof typeof methods>).map(method => <AgentDraftField key={method} assisted={false} locale={locale}><Field data-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}>
             <FieldLabel htmlFor={`${id}-inpatient-funding-${method}`}>{methods[method]}{t('金额（元）',' amount (CNY)')}</FieldLabel>
             <Input id={`${id}-inpatient-funding-${method}`} data-inpatient-funding-method={method} inputMode="decimal" className="tabular-nums" placeholder={method === 'cash' && defaultCash ? (statement.remainingFen / 100).toFixed(2) : '0.00'} value={amounts[method]} aria-invalid={amounts[method] !== '' && yuanToFen(amounts[method]) === undefined}
               onChange={event => {
-                const next = { ...amounts, [method]: event.currentTarget.value }
-                if (agent) agent.updatePayment({ amounts: next, assisted: { ...agent.payment.assisted, [method]: false } })
-                else setLocalAmounts(next)
+                setAmounts({ ...amounts, [method]: event.currentTarget.value })
               }} />
             {amounts[method] !== '' && yuanToFen(amounts[method]) === undefined ? <p role="alert">{t('请填写有效金额，最多两位小数。', 'Enter a valid amount with at most two decimal places.')}</p> : null}
           </Field></AgentDraftField>)}

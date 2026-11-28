@@ -25,7 +25,6 @@ describe('CI checks selected for a pull request', () => {
   it('runs complete changed test files through their owning runners', () => {
     const files = [
       'apps/web/src/app/doctor/prescription-page.test.tsx',
-      'apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts',
       'apps/web/e2e/diagnosis-prescription.spec.ts',
     ]
     const plan = createCiPlan('pull_request', files.map(path => ({ status: 'M', path })))
@@ -33,7 +32,7 @@ describe('CI checks selected for a pull request', () => {
     expect(plan.mode).toBe('tests')
     expect(plan.tests).toEqual(files)
     expect(plan.docs).toBe(false)
-    expect(requiredStages(plan)).toEqual(['checks', 'unit', 'browser', 'e2e'])
+    expect(requiredStages(plan)).toEqual(['checks', 'unit', 'e2e'])
   })
 
   it('checks frontend production changes with both complete browser projects', () => {
@@ -53,17 +52,12 @@ describe('CI checks selected for a pull request', () => {
     ['M', 'apps/web/--help.test.tsx'],
     ['M', 'apps/web/e2e/untyped.browser.test.ts'],
     ['M', 'apps/web/untyped.browser.test.ts'],
-    ['M', 'apps/dsh-web/tests/untyped.browser.test.ts'],
-    ['M', 'apps/dsh-web/src/client/catalog-dialogs.browser.fixture.tsx'],
     ['A', 'apps/web/src/app/doctor/new.test.tsx'],
     ['D', 'apps/web/src/app/doctor/patient-summary.test.tsx'],
     ['R100', 'apps/web/src/app/doctor/patient-summary.test.tsx'],
     ['M', 'apps/web/src/app/auth-workflow.tsx'],
     ['M', 'apps/web/src/app/web-app.tsx'],
     ['M', 'apps/web/src/app/inpatient-write-intent.ts'],
-    ['M', 'apps/dsh-web/src/client/index.tsx'],
-    ['M', 'apps/dsh-web/src/client/model-settings.tsx'],
-    ['M', 'apps/dsh-web/src/model-bridge.ts'],
     ['M', 'packages/contracts/src/his.ts'],
     ['M', 'packages/core/src/platform.ts'],
     ['M', 'apps/server/src/runtime.ts'],
@@ -92,7 +86,7 @@ describe('CI stage execution contracts', () => {
     const plan = createCiPlan('push')
     expect(ciCommands(plan, 'checks')).toEqual([
       ['verify:boundaries'], ['typecheck'], ['lint'], ['perf:ci'],
-      ['doc-sync'], ['build'], ['check:mobile'],
+      ['doc-sync'], ['build'],
     ])
     expect(ciCommands(plan, 'unit', '1/2')).toEqual([['test:packages', '--', '--shard=1/2'], ['test:scripts', '--shard=1/2']])
     expect(ciCommands(plan, 'browser', '2/2')).toEqual([
@@ -106,13 +100,12 @@ describe('CI stage execution contracts', () => {
   it('keeps all frontend consumers and real browser journeys without the full Server unit suite', () => {
     const plan = createCiPlan('pull_request', [{ status: 'M', path: 'packages/ui/src/components/input.tsx' }])
     const commands = ciCommands(plan, 'unit', '2/2')
-    expect(commands).toEqual([['-r', '--filter', '@clinmesh/ui', '--filter', '@clinmesh/views',
-      '--filter', '@clinmesh/web', '--filter', '@clinmesh/dsh-web', '--filter', '@clinmesh/desktop', 'test', '--shard=2/2']])
+    expect(commands).toEqual([['-r', '--filter', '@clinmesh/ui',
+      '--filter', '@clinmesh/web', 'test', '--shard=2/2']])
     expect(ciCommands(plan, 'browser', '1/2').slice(-2)).toEqual([
       ['test:browser', '--shard=1/2', '--grep-invert=@surgery-flow'], ['test:browser', '--grep=@surgery-flow'],
     ])
     expect(ciCommands(plan, 'e2e').slice(-2)).toEqual([['test:e2e', '--grep-invert=@surgery-flow'], ['test:e2e', '--grep=@surgery-flow']])
-    expect(ciCommands(plan, 'checks')).not.toContainEqual(['check:mobile'])
   })
 
   it('splits only complete unit and browser suites into two shards', () => {

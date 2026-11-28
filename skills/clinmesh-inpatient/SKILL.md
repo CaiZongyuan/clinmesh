@@ -236,44 +236,13 @@ clinmesh command receipt get --operation-id inpatient.pci-selection.save --idemp
 }
 ```
 
-## 循证指南专题与住院指南参考意见
+## 循证指南专题
 
 `inpatient guideline-topics` 同步读取本次住院在任一已注册 `Guideline Topic`（`acute-chest-pain-acs`、`coronary-revascularization-indication`、`pci-stent`、`contrast-kidney-hydration`、`cad-dapt-and-secondary-prevention`、`t2dm-renal-medication`）下经 SHA-256、物理页码与片段完整性核验的原文段落、限定语及当前患者客观指标与缺项，零模型请求；来源不可用、人群隔离、片段残缺或超出 48 KiB 预算时明确降级为 `unavailable` 并给出 `degradedReason`。
 
-保存有效 PCI 计划时，同一次单次准备仍自动按 `pci-stent` 绑定该 `requestId` 准备指南参考意见与耗材清单；无 PCI 手术申请的内科住院阶段（如术前对比剂肾损伤预防与水化、`FFR > 0.80` 药物保守治疗指征评估、出院双联抗血小板与二级预防、2 型糖尿病合并慢性肾病用药）可传 `--topic-id` 先读取当前 `version/fingerprint/status`，再以 `requestId: null` 与显式 `topicId` 调用 `request-guideline-advice`。导航、刷新与成功结果复用不派发新请求。
-
 ```bash
 clinmesh inpatient guideline-topics --admission-id <admission-id> --topic-id contrast-kidney-hydration
-clinmesh inpatient guideline-advice --admission-id <admission-id>
-clinmesh inpatient guideline-advice --admission-id <admission-id> --topic-id contrast-kidney-hydration
-clinmesh inpatient request-guideline-advice --input @guideline-advice.json --idempotency-key <key>
-clinmesh command receipt get --operation-id inpatient.guideline-advice.request --idempotency-key <key>
 ```
-
-`guideline-advice.json` 绑定有效 PCI 计划的合成形状；提交前使用本次受信读取的计划身份、版本和指纹：
-
-```json
-{
-  "admissionId": "synthetic-admission",
-  "requestId": "synthetic-pci-request",
-  "expectedVersion": 1,
-  "expectedFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-}
-```
-
-`guideline-topic-advice.json` 无手术申请单时按专题评估的合成形状（`requestId` 设为 `null` 并显式指定 `topicId`）：
-
-```json
-{
-  "admissionId": "synthetic-admission",
-  "topicId": "contrast-kidney-hydration",
-  "requestId": null,
-  "expectedVersion": 0,
-  "expectedFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-}
-```
-
-意见只读，逐条核对指南名称、版本、物理页、原句及适用条件；具体产品、规格、数量和预留仍由实际清单确认。来源不可用、读取失败、部分缺项、模型受阻、核验拒绝与结果未知分别处理；原文失效后旧意见与引文停止提供，原回执不保存正文，读取当前意见仍须核对现行来源。`unknown` 先核查原尝试，沿原输入及幂等键恢复；取消单次预计停止自动指南准备，历史意见只读，手术开始、完成或归档后不重新准备。来源失效不冻结独立有效的人工清单。当前内容与范围见[指南参考意见合同](../../docs/architecture/clinical-workflows.md#pci-计划的只读指南参考意见)。
 
 ## 单次耗材预计、工作稿与整批确认
 
@@ -378,22 +347,6 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.replace-ba
 ```
 
 `INPATIENT_ESTIMATE_CONFLICT` 表示预计、工作稿、计划或依据已变化，重新读取差异并由医生审阅；`INPATIENT_RESERVATION_CONFLICT` 表示预留集合已变化或存在部分使用，重新读取并核对变化，不静默换用新指纹重试；`INPATIENT_DRG_PLAN_UNSUPPORTED` 要求核实候选及数量依据。响应丢失先查对应 operation 的原 receipt，保留原完整输入（包括原集合指纹）和原幂等键。
-
-## 持续跟进中的耗材建议与人工确认
-
-```bash
-clinmesh inpatient drg-agent --admission-id <admission-id>
-clinmesh inpatient confirm-drg-plan --input @drg-plan.json --idempotency-key <key>
-clinmesh command receipt get --operation-id inpatient.drg.agent.confirm --idempotency-key <key>
-```
-
-医生开启住院跟进并确认本次有效手术计划的参数后，后台按完整依据版本生成并独立核验耗材建议；实际模型请求进入本住院任务的用量账。规则检查本身不产生模型请求。`status=incomplete/stale/blocked/unknown/failed` 时先读取 `missing/failureCode`，未知结果保持待核查，不新建任务或换幂等键重发。停止、失权或归档后只保留历史结果，不继续临床分析。
-
-单次预计与跟进的 `costs` 由既有费用推演确定性计算，包含正式收费净额、待执行医嘱、剩余计划耗材、计划手术费、预计总额，以及当前与计划分组、医院支付参考和差额。规则未启用、分组资料不足或缺支付参数时，医保说明给出对应原因，耗材建议继续准备；模型受阻、失败或未知时费用块仍可读取。`analysis.costExplanation` 只有与当前 `basisFingerprint` 一致且已独立核验时才是当前说明，旧金额文字作为历史。`pci-selection.candidates` 是当前或默认每类候选，`alternatives` 是独立替代池，不能把两者全部加入计划。服务端 `costs` 已将本次住院其他未确认、未开始且已保存的明确清单相对其实际预留的差额各计一次；当前计划的显式清单覆盖自身存量稿。模型输入与 `equivalentSuggestions` 的九成阈值、替换前后总额均使用这份统一预计。`projectionComplete=false` 时按 `projectionMissing` 保留预计未知，不把已知部分合计当作完整预计，也不引用预计差额或生成等效建议。前端以正式推演为基线时，多份未确认清单只将各自的 `materialDraftDeltaFen` 加入一次，不能再加到已合并的 `costs`；该值是本计划草稿耗材金额减本计划现有预留余量，已确认、已开始或缺价格时为 null，不累计每份清单的全住院 `costs`。合并前 `materialDraftReservationBasis` 必须与当前正式推演的预留列表一致；价格缺失或基线刷新尚未对齐时保留预计未知。主计划选择仅用于预计分组与支付参考，不修改正式主操作。达到支付参考九成时，`material-estimates.equivalentSuggestions` 只列同一显式合成等效组内、同类别同规格、适用且兼容的更低单价产品，差价和换后预计由程序给出；模型仅说明给定候选，不自行判定等效。医生采用或换回时沿 `save-material-estimate` 保存同数量工作稿，再按原流程确认预留；不能据费用减少用量、改规格、改诊断、术式或主操作。规则建议不依赖跟进或模型成功；费用说明不等于患者医保待遇。
-
-术中登记或更正耗材后，从 `drg-agent` 读取实时 `costs/usage` 与 `intraoperativePlans` 的冻结术前清单；每个 `requestId` 同时返回该手术自身确认的 `candidates/alternatives`，术中等效建议使用本手术这份候选，不借用较新手术的确认。计划量、实际量、剩余量和费用不依赖持续跟进。助手自动跟进开启时，仅对新登记的超计划、计划外或与已确认测量不符的笔，生成并独立核验说明；按计划登记、普通刷新及更正不新增模型意图。`intraoperativeReviews` 按 `materialUseId` 返回状态、`explanation/costExplanation`，用量计入本次住院；未开启、受阻、失败或结果未知时登记与完成照常，未知沿原任务核查而不自动重发。非 PCI 手术只显示确定性金额。分组差异的按需解释继续使用下文的 `explain-drg-records`。
-
-确认输入为 `admissionId/analysisId/expectedBasisFingerprint/expectedRevision/items/note`，首次计划修订为0；`items` 逐项提供 `materialId/catalogVersion/quantity/reason`。以最新 `basisFingerprint` 和产品版本为准，保留医生独立数量依据；超出当前核验范围时先更新参数并核查依据。`confirmedPlan/planHistory` 保留每次人工确认，确认计划不提交正式手术、医嘱、预留或收费。结果未知时查询原 receipt，保持原输入和原 key。
 
 ## 手术计划、准备与实际实施
 
@@ -904,29 +857,6 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 ```
 
 `CATALOG_CONFLICT` 表示耗材目录、版本或计价单位不可用，换目录条目前先与临床核对。`INPATIENT_RESERVATION_CONFLICT` 表示预留归属、状态、数量或版本冲突，重新读取预留、计划与目录并审阅；预留不锁库存。`INPATIENT_RESERVATION_NOT_FOUND` 只在预留不存在或已释放时出现。`INPATIENT_DRG_NOT_ARCHIVED` 表示核定只针对归档冻结分组。结果未知先查同operation原receipt，保留原输入与幂等键，不换key重做。
-
-## 住院后台规则跟进
-
-医生先用 `drg-followup` 读取本次住院和任务版本，再用 `drg-followup-start` 提交 `admissionId`、`encounterVersion` 与 `expectedTaskVersion`（尚无任务时为 0）。同次住院重复开启沿用唯一任务；停止或失权后的显式重新开启仍保留原任务身份，不重置模型账。规则跟进不派发模型；缺规则、分组依据或有效正支付参考额时显示不完整，不把缺项当零。
-
-```bash
-clinmesh inpatient drg-followup --admission-id <admission-id>
-clinmesh inpatient drg-followup-start --input @followup-start.json --idempotency-key <key>
-clinmesh inpatient drg-followup-stop --input @followup-stop.json --idempotency-key <key>
-clinmesh command receipt get --operation-id inpatient.drg.followup.start --idempotency-key <key>
-```
-
-```json
-{
-  "admissionId": "synthetic-admission",
-  "encounterVersion": "2",
-  "expectedTaskVersion": 0
-}
-```
-
-停止输入另需非空 `reason`，并使用当前 `task.version`。`INPATIENT_DRG_FOLLOWUP_CONFLICT` 要求刷新任务再审阅；`INPATIENT_DRG_FOLLOWUP_INACTIVE` 表示已经停止、失权或归档，不能继续原分析。写入返回标准 Command 回执；结果未知先查原 operation 与幂等键的 receipt，保留原输入，不换键重复开启。
-
-关闭页面或切换患者不改变任务病例；每次分析重新核对原 Actor／岗位有效性与本次住院当前科室、病区。撤权、转科或责任变化后停止新分析并保留待交接结果，归档后不因后续财务或核定恢复临床分析。正式收费净额严格超过当前有效正 DRG 支付参考额的 3 倍才提醒，恰好 3 倍不提醒；合法冲正后重新核对。提醒仅建议住院诊疗结束后由医保办人工评估，不自动申请、控制 5% 比例、修改分组或预测补付，也不新增出院门禁。
 
 ## 分组记录核对与按需解释
 

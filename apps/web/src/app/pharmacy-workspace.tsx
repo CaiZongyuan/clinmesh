@@ -1,6 +1,4 @@
 import type { PharmacyQueueItem, SessionContext } from '@clinmesh/contracts/his'
-import { agentToolInputSchemas, parseAgentToolInput, type AgentOperationId } from '@clinmesh/contracts/agent'
-import { z } from 'zod'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -23,12 +21,9 @@ import { QueuePatientRow } from './queue-patient-row.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen, formatShanghaiMinute } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
-import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
-import { useAgentReview, useAgentReviewPending } from './agent-review.tsx'
 import { WorkspaceModeSwitch } from './workspace-mode.tsx'
 import { AgentDraftField, WorkspaceActionBar, WorkspaceCard, WorkspaceCardLayout, WorkspacePatientCard, WorkspaceQueueCard, useWorkspaceCardView, announceHandoff } from './workspace-card-layout.tsx'
 import { outpatientFlow } from './workspace-flow.ts'
-import type { SurfaceAgentPageAction } from './surface-agent-tools.ts'
 
 interface PharmacyWorkspaceProps { locale: WorkspaceLocale; session: SessionContext }
 type PharmacyStatus = 'completed' | 'pending'
@@ -44,14 +39,10 @@ function pharmacyNamespace(session: SessionContext): string {
   return JSON.stringify([session.user.id, ...(['actorId', 'workspaceId', 'epoch', 'scenarioRunId', 'practitionerRoleId',
     'roleCode', 'organizationId', 'locationId', 'practitionerId'] as const).map(key => session.actor[key])])
 }
-function parameters(operation: AgentOperationId): SurfaceAgentPageAction['parameters'] {
-  const json = z.toJSONSchema(agentToolInputSchemas[operation])
-  return { type: 'object', properties: json.properties ?? {}, required: json.required ?? [], additionalProperties: false }
-}
 
 export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale), t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
-  const agentReview = useAgentReview(), agentPending = useAgentReviewPending(), queryClient = useQueryClient()
+  const queryClient = useQueryClient()
   const namespace = pharmacyNamespace(session), scope = [session.actor.workspaceId, session.actor.epoch, namespace]
   const view = useWorkspaceCardView(`pharmacy:${namespace}`), status: PharmacyStatus = view.tab === 'completed' ? 'completed' : 'pending'
   const [selection, setSelection] = useState<{ namespace: string; page: number; id?: string }>({ namespace, page: 1 })
@@ -82,7 +73,6 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
   })
   const selectedInQueue = selectedId === undefined ? queue.data?.items[0] : queue.data?.items.find(item => item.prescriptionId === selectedId)
   const selectedPrescriptionId = selectedInQueue?.prescriptionId ?? selectedId
-  const selectedAcknowledgement = selectedPrescriptionId === undefined ? undefined : acknowledgements[JSON.stringify([namespace, selectedPrescriptionId])]
   const selectedPrescription = queueCurrent ? selectedInQueue : undefined
   const draftKey = selectedPrescription === undefined ? undefined : JSON.stringify([namespace, selectedPrescription.prescriptionId])
   const draft = draftKey === undefined ? emptyDraft : drafts[draftKey] ?? emptyDraft
@@ -97,7 +87,6 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
       projectionReady: queueCurrent, prescriptionVersion: selectedPrescription?.prescriptionVersion
     }
   })
-  useEffect(() => () => agentReview.cancel('当前岗位或处方已变化，请重新准备。'), [agentReview, namespace, selectedPrescriptionId, status, page])
   useLayoutEffect(() => { setManual(current => current?.draftKey === draftKey ? current : undefined) }, [draftKey])
   const updateDraft = (change: (current: PharmacyDraft) => PharmacyDraft) => {
     if (draftKey === undefined) return
@@ -152,7 +141,7 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
   const prepare = (kind: 'review' | 'dispense'): PharmacyCommand => {
     assertPage()
     if (!selectedPrescription || !draftKey || latest.current.draft !== draft
-      || status !== 'pending' || !queueCurrent || busy || latest.current.pending || manual || agentPending || session.actor.roleCode !== 'pharmacist') throw new Error(messages.pharmacyUnavailable)
+      || status !== 'pending' || !queueCurrent || busy || latest.current.pending || manual || session.actor.roleCode !== 'pharmacist') throw new Error(messages.pharmacyUnavailable)
     if (kind === 'review' && !canReview) throw new Error(messages.pharmacyUnavailable)
     if (kind === 'dispense' && !canDispense) throw new Error(messages.inventoryUnavailable)
     const item = selectedPrescription
@@ -182,83 +171,6 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
   const commit = (command: PharmacyCommand) => command.kind === 'review' ? review.mutateAsync(command) : dispense.mutateAsync(command)
   const changeStatus = (value: PharmacyStatus) => { dispense.reset(); view.setTab(value); setSelection({ namespace, page: 1 }); setManual(undefined) }
   const selectPrescription = (id: string) => { setSelection({ namespace, page, id }); setManual(undefined) }
-  const requestReview = (kind: 'review' | 'dispense', signal: AbortSignal) => {
-    const command = prepare(kind)
-    return agentReview.request({
-      signal, title: activeLocale => kind === 'review' ? getWorkspaceMessages(activeLocale).prescriptionReview : getWorkspaceMessages(activeLocale).dispenseReview,
-      confirmLabel: activeLocale => kind === 'review' ? getWorkspaceMessages(activeLocale).approvePrescription : getWorkspaceMessages(activeLocale).confirmDispense,
-      description: `${command.patientName} · ${command.prescriptionNumber}`,
-      content: activeLocale => <PreparedSummary command={command} locale={activeLocale} />, onConfirm: () => commit(command)
-    })
-  }
-  useRegisterAgentPage({
-    label: t('门诊药房', 'Outpatient pharmacy'),
-    claim: {
-      version: 1, viewId: 'pharmacy', activeSection: status,
-      viewRevision: agentViewRevision({ namespace, page, status, selectedPrescription, selectedPrescriptionId, selectedAcknowledgement, projectionReady: queueCurrent, draft }),
-      ...(selectedPrescription ? {
-        selection: { kind: 'prescription', id: selectedPrescription.prescriptionId, version: String(selectedPrescription.prescriptionVersion) },
-        draft: {
-          kind: selectedPrescription.status === 'awaiting-review' ? 'pharmacy-review' : 'dispense', id: `${selectedPrescription.prescriptionId}:pharmacy`,
-          dirty: reviewNote !== '' || Object.keys(selectedLotIds).length > 0 || Object.keys(dispenseQuantities).length > 0, revision: agentViewRevision(draft)
-        }
-      }
-        : selectedPrescriptionId && selectedAcknowledgement ? { selection: { kind: 'prescription', id: selectedPrescriptionId, version: String(selectedAcknowledgement.prescriptionVersion) } } : {}),
-      ui: { status: queue.isPending ? 'loading' : queue.isError ? 'error' : queue.data?.items.length ? 'ready' : 'empty' }
-    },
-    readState: () => ({
-      namespace, dispenseQuantities, selectedLotIds, reviewNote, queueCount: queue.data?.total ?? 0, status, projectionReady: queueCurrent,
-      selectedPrescription: selectedPrescription ? {
-        patientName: selectedPrescription.patient.name, prescriptionId: selectedPrescription.prescriptionId,
-        prescriptionNumber: selectedPrescription.prescriptionNumber, status: selectedPrescription.status
-      } : null
-    }),
-    actions: {
-      'pharmacy.queue.read': {
-        description: 'Read the current authorized pharmacy queue page.', parameters: parameters('pharmacy.queue.read'),
-        execute(raw, signal) { parseAgentToolInput('pharmacy.queue.read', raw); assertPage(); return getPharmacyQueue(status, signal, page) }
-      },
-      'pharmacy.prescription.select': {
-        description: 'Select one prescription from the current pharmacy queue.', parameters: parameters('pharmacy.prescription.select'), enabled: !busy && queueCurrent && !!queue.data?.items.length,
-        execute(raw) {
-          const { prescriptionId } = parseAgentToolInput('pharmacy.prescription.select', raw)
-          assertPage(); if (!queueCurrent || !queue.data?.items.some(item => item.prescriptionId === prescriptionId)) throw new Error(messages.pharmacyUnavailable)
-          selectPrescription(prescriptionId); return { prescriptionId, selected: true }
-        }
-      },
-      'pharmacy.review.draft.set': {
-        description: 'Fill the pharmacist review note without approving the prescription.', parameters: parameters('pharmacy.review.draft.set'), enabled: !busy && selectedPrescription?.status === 'awaiting-review',
-        execute(raw) {
-          const { note } = parseAgentToolInput('pharmacy.review.draft.set', raw)
-          assertPage(); if (!queueCurrent || !selectedPrescription || selectedPrescription.status !== 'awaiting-review') throw new Error(messages.pharmacyUnavailable)
-          updateDraft(current => ({ ...current, note, assisted: { ...current.assisted, note: true } })); return { updated: true }
-        }
-      },
-      'pharmacy.dispense.draft.set': {
-        description: 'Fill lot and quantity selections without dispensing medication.', parameters: parameters('pharmacy.dispense.draft.set'), enabled: !busy && status === 'pending' && selectedPrescription?.review !== undefined,
-        execute(raw) {
-          const { selections } = parseAgentToolInput('pharmacy.dispense.draft.set', raw)
-          assertPage(); if (!queueCurrent || !selectedPrescription || !selectedPrescription.review) throw new Error(messages.pharmacyUnavailable)
-          const lots: Record<string, string> = {}, quantities: Record<string, string> = {}, assisted: Record<string, boolean> = {}
-          for (const selection of selections) {
-            const medication = selectedPrescription.medications.find(item => item.medicationRequestId === selection.medicationRequestId)
-            if (!medication || !medication.lots.some(lot => lot.id === selection.lotId)) throw new Error(messages.inventoryUnavailable)
-            lots[selection.medicationRequestId] = selection.lotId; quantities[selection.medicationRequestId] = String(selection.quantity)
-            assisted[`lot:${selection.medicationRequestId}`] = true; assisted[`quantity:${selection.medicationRequestId}`] = true
-          }
-          updateDraft(current => ({ ...current, lots: { ...current.lots, ...lots }, quantities: { ...current.quantities, ...quantities }, assisted: { ...current.assisted, ...assisted } })); return { updated: true }
-        }
-      },
-      'pharmacy.review.propose': {
-        description: 'Prepare human review for formal pharmacist approval.', parameters: parameters('pharmacy.review.propose'), enabled: canReview && !busy && !manual && !agentPending,
-        execute(raw, signal) { parseAgentToolInput('pharmacy.review.propose', raw); return requestReview('review', signal) }
-      },
-      'pharmacy.dispense.propose': {
-        description: 'Prepare human review for formal medication dispense.', parameters: parameters('pharmacy.dispense.propose'), enabled: canDispense && !busy && !manual && !agentPending,
-        execute(raw, signal) { parseAgentToolInput('pharmacy.dispense.propose', raw); return requestReview('dispense', signal) }
-      },
-    },
-  })
   const trigger = useRef<HTMLButtonElement>(null), confirm = useRef<HTMLButtonElement>(null), previousManual = useRef<PharmacyCommand | undefined>(undefined)
   const currentManual = manual?.draftKey === draftKey ? manual : undefined
   useLayoutEffect(() => {
@@ -358,7 +270,7 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
     : selectedPrescription && status === 'pending' && selectedPrescription.status !== 'completed' ? <WorkspaceActionBar tone={canPrepare ? 'normal' : 'blocked'} summary={selectedPrescription.prescriptionNumber}
       reason={primaryKind === 'review' ? reviewNote.trim() ? t('先核对本次审核意见，再确认通过。', 'Review this note before approving.') : t('还差：填写审核意见。', 'Enter the review note.')
         : canDispense ? t('核对批次、有效期和数量；确认后扣减库存，可部分发药。', 'Check the lot, expiry and quantity. Confirmation deducts stock; partial dispensing is allowed.') : t('请核对可用批次、库存和本次发放数量。', 'Check available lots, stock and quantities.')}
-      action={<Button ref={trigger} className="disabled:border disabled:border-dashed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled={busy || !canPrepare || agentPending} onClick={beginManual}>{primaryKind === 'review' ? t('审核处方', 'Review prescription') : t('审阅发药', 'Review dispensing')}</Button>} />
+      action={<Button ref={trigger} className="disabled:border disabled:border-dashed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled={busy || !canPrepare} onClick={beginManual}>{primaryKind === 'review' ? t('审核处方', 'Review prescription') : t('审阅发药', 'Review dispensing')}</Button>} />
       : completed ? <WorkspaceActionBar tone="complete" summary={`${completed.patientName} · ${completed.status === 'partial' ? messages.dispensePartiallyCompleted : messages.dispenseCompleted}`}
         reason={nextReason}
         action={<Button className="disabled:border disabled:border-dashed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled={nextPrescription === undefined} onClick={selectNextPrescription}>{nextPrescription ? t(`下一位：${nextPrescription.patient.name}`, `Next: ${nextPrescription.patient.name}`) : t('下一位', 'Next patient')}</Button>} />

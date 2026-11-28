@@ -872,41 +872,31 @@ export async function runTrajectoryPerformanceProfile() {
     }
     const workloadStartedAt = performance.now()
     const administratorCookie = await signInAdministrator(runtime)
-    const generationJob = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', {
-      body: JSON.stringify({
+    const administratorContext = (await runtime.identity.resolveSessionContext(
+      new Headers({ cookie: administratorCookie }),
+    )).actor
+    await runtime.scenarioData.enqueueGeneration({
+      context: administratorContext,
+      idempotencyKey: 'performance-trajectory-generation',
+      request: {
+        moduleMode: 'all',
+        modules: [],
         name: '性能演练患者',
         population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
         providerId: 'synthea',
         seeds: { clinical: 7331, population: 4242 },
         timeRange: { end: '2026-08-01', start: '2020-01-01' },
         timeZone: 'Asia/Shanghai',
-      }),
-      headers: {
-        'content-type': 'application/json',
-        cookie: administratorCookie,
-        'idempotency-key': 'performance-trajectory-generation',
-        origin: performanceOrigin,
       },
-      method: 'POST',
     })
-    if (generationJob.status !== 200) throw new Error('Performance trajectory generation failed')
     const generated = await runtime.scenarioData.processNextGenerationJob()
     const caseId = generated?.caseIds[0]
     if (caseId === undefined) throw new Error('Performance trajectory has no Synthetic Case')
-    const personaJob = await runtime.app.request(
-      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-jobs`,
-      {
-        body: '{}',
-        headers: {
-          'content-type': 'application/json',
-          cookie: administratorCookie,
-          'idempotency-key': 'performance-trajectory-persona',
-          origin: performanceOrigin,
-        },
-        method: 'POST',
-      },
-    )
-    if (personaJob.status !== 200) throw new Error('Performance trajectory persona job failed')
+    await runtime.patientPersona.enqueue({
+      caseId,
+      context: administratorContext,
+      idempotencyKey: 'performance-trajectory-persona',
+    })
     const personaGenerated = await runtime.patientPersona.processNext()
     if (personaGenerated?.status !== 'succeeded') throw new Error('Performance trajectory persona failed')
     const caseResponse = await runtime.app.request(

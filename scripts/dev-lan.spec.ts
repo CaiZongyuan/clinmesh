@@ -1,14 +1,6 @@
 import { spawn } from 'node:child_process'
-import {
-  chmodSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
-import { createServer, type Server } from 'node:http'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir, type NetworkInterfaceInfo } from 'node:os'
-import type { AddressInfo } from 'node:net'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { describe, expect, it, vi } from 'vitest'
@@ -65,29 +57,6 @@ function networkAddress(address: string, internal = false): NetworkInterfaceInfo
     mac: '00:00:00:00:00:00',
     netmask: '255.255.255.0',
   }
-}
-
-const pinnedSyntheaCommit = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-
-async function startFakeProviderServer(): Promise<Server> {
-  const server = createServer((_request, response) => {
-    response.setHeader('content-type', 'application/json')
-    response.end(JSON.stringify({
-      localization: { profileId: 'synthea-cn-test-profile' },
-      modules: ['test-module'],
-      status: 'ok',
-      syntheaCommit: pinnedSyntheaCommit,
-    }))
-  })
-  await new Promise<void>((resolveListen) => {
-    server.listen(0, '127.0.0.1', () => resolveListen())
-  })
-  return server
-}
-
-function fakeProviderUrl(server: Server): string {
-  const address = server.address() as AddressInfo
-  return `http://127.0.0.1:${address.port}`
 }
 
 describe('findPrivateIpv4Addresses', () => {
@@ -187,7 +156,7 @@ describe('supportsAnsiColor', () => {
 describe('renderStatusLine', () => {
   it('prefixes ok and warn messages with markers', () => {
     expect(renderStatusLine('ok', '参考目录数据库已就绪', false)).toBe('✓ 参考目录数据库已就绪')
-    expect(renderStatusLine('warn', '仅新的患者生成任务不可用', false)).toBe('⚠ 仅新的患者生成任务不可用')
+    expect(renderStatusLine('warn', '缺少参考目录', false)).toBe('⚠ 缺少参考目录')
   })
 
   it('colors the marker only when color output is enabled', () => {
@@ -205,30 +174,17 @@ describe('renderHeading', () => {
 })
 
 describe('ensureDataSourcesReady', () => {
-  const health = {
-    moduleCount: 12,
-    profileId: 'synthea-cn@2026-08-29.r4',
-    syntheaCommit: 'd9d07a6eef91ee5144293b42ab64224d84d124f8',
-  }
-
   function createDependencies(
     overrides: Partial<DataSourceReadinessDependencies> = {},
   ): DataSourceReadinessDependencies {
     return {
       environment: {},
-      managedProviderUrl: 'http://127.0.0.1:51878',
-      readProviderHealth: async () => {
-        throw new Error('provider probe should not run in this test')
-      },
       referenceDatabaseReady: () => false,
       runReferenceSync: async () => {
         throw new Error('reference sync should not run in this test')
       },
       runDrgReferenceSync: async () => {},
       runGuidelinePrepare: async () => {},
-      runSyntheaUp: async () => {
-        throw new Error('synthea up should not run in this test')
-      },
       write: () => {},
       ...overrides,
     }
@@ -276,33 +232,14 @@ describe('ensureDataSourcesReady', () => {
     expect(write).toHaveBeenCalledWith(expect.stringContaining('指南资料已就绪'))
   })
 
-  it('stops on guideline preparation failure without reporting readiness or probing providers', async () => {
+  it('stops on guideline preparation failure without reporting readiness', async () => {
     const write = vi.fn()
-    const readProviderHealth = vi.fn()
     await expect(ensureDataSourcesReady(createDependencies({
-      environment: { CLINMESH_SYNTHEA_PROVIDER_URL: 'http://127.0.0.1:51878' },
       runGuidelinePrepare: async () => { throw new Error('Guideline archive checksum mismatch') },
-      readProviderHealth,
       write,
     }))).rejects.toThrow('Guideline archive checksum mismatch')
 
-    expect(readProviderHealth).not.toHaveBeenCalled()
     expect(write).not.toHaveBeenCalledWith(expect.stringContaining('指南资料已就绪'))
-  })
-
-  it('rejects failed DRG preparation without announcing readiness or starting optional providers', async () => {
-    const write = vi.fn()
-    const readProviderHealth = vi.fn()
-    await expect(ensureDataSourcesReady(createDependencies({
-      environment: { CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite' },
-      referenceDatabaseReady: () => true,
-      runDrgReferenceSync: async () => { throw new Error('DRG archive checksum mismatch') },
-      readProviderHealth,
-      write,
-    }))).rejects.toThrow('DRG archive checksum mismatch')
-
-    expect(readProviderHealth).not.toHaveBeenCalled()
-    expect(write).not.toHaveBeenCalledWith(expect.stringContaining('DRG 参考资料已就绪'))
   })
 
   it('runs reference sync automatically when the database file is missing', async () => {
@@ -318,23 +255,7 @@ describe('ensureDataSourcesReady', () => {
 
     expect(runReferenceSync).toHaveBeenCalledTimes(1)
     expect(runDrgReferenceSync).not.toHaveBeenCalled()
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('自动执行 pnpm reference:sync'))
     expect(write).toHaveBeenCalledWith(expect.stringContaining('参考目录数据库同步完成'))
-  })
-
-  it('warns and continues when automatic reference sync fails', async () => {
-    const write = vi.fn()
-    await expect(ensureDataSourcesReady(createDependencies({
-      environment: { CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite' },
-      runReferenceSync: async () => {
-        throw new Error('network unreachable')
-      },
-      write,
-    }))).resolves.toBeUndefined()
-
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('参考目录自动同步失败'))
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('内置合成 fixture'))
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('pnpm reference:sync'))
   })
 
   it('warns without blocking when no reference database is configured', async () => {
@@ -343,105 +264,7 @@ describe('ensureDataSourcesReady', () => {
     await expect(ensureDataSourcesReady(createDependencies({ write, runDrgReferenceSync }))).resolves.toBeUndefined()
 
     expect(write).toHaveBeenCalledWith(expect.stringContaining('未配置 CLINMESH_REFERENCE_DATABASE_PATH'))
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('内置合成 fixture'))
     expect(runDrgReferenceSync).not.toHaveBeenCalled()
-    expect(write).not.toHaveBeenCalledWith(expect.stringContaining('DRG 参考资料已就绪'))
-  })
-
-  it('reports a healthy configured provider without starting Synthea', async () => {
-    const runSyntheaUp = vi.fn()
-    const write = vi.fn()
-    await ensureDataSourcesReady(createDependencies({
-      environment: { CLINMESH_SYNTHEA_PROVIDER_URL: 'http://127.0.0.1:51878' },
-      readProviderHealth: async () => health,
-      runSyntheaUp,
-      write,
-    }))
-
-    expect(runSyntheaUp).not.toHaveBeenCalled()
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('Synthea Provider 已就绪'))
-  })
-
-  it('only warns when no provider URL is configured', async () => {
-    const readProviderHealth = vi.fn()
-    const runSyntheaUp = vi.fn()
-    const write = vi.fn()
-    await expect(ensureDataSourcesReady(createDependencies({
-      readProviderHealth,
-      runSyntheaUp,
-      write,
-    }))).resolves.toBeUndefined()
-
-    expect(readProviderHealth).not.toHaveBeenCalled()
-    expect(runSyntheaUp).not.toHaveBeenCalled()
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('未配置 CLINMESH_SYNTHEA_PROVIDER_URL'))
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('HIS 可正常使用'))
-  })
-
-  it('starts the managed runtime once when the default provider is unreachable', async () => {
-    const runSyntheaUp = vi.fn()
-    const write = vi.fn()
-    await expect(ensureDataSourcesReady(createDependencies({
-      environment: { CLINMESH_SYNTHEA_PROVIDER_URL: 'http://127.0.0.1:51878' },
-      readProviderHealth: async () => {
-        throw new Error('connect ECONNREFUSED 127.0.0.1:51878')
-      },
-      runSyntheaUp,
-      write,
-    }))).resolves.toBeUndefined()
-
-    expect(runSyntheaUp).toHaveBeenCalledTimes(1)
-    expect(write).not.toHaveBeenCalledWith(expect.stringContaining('患者生成任务不可用'))
-  })
-
-  it('starts the managed runtime for a localhost provider URL', async () => {
-    const runSyntheaUp = vi.fn()
-    const write = vi.fn()
-    await expect(ensureDataSourcesReady(createDependencies({
-      environment: { CLINMESH_SYNTHEA_PROVIDER_URL: 'http://localhost:51878' },
-      readProviderHealth: async () => {
-        throw new Error('connect ECONNREFUSED 127.0.0.1:51878')
-      },
-      runSyntheaUp,
-      write,
-    }))).resolves.toBeUndefined()
-
-    expect(runSyntheaUp).toHaveBeenCalledTimes(1)
-  })
-
-  it('warns and continues when the managed runtime fails to start', async () => {
-    const write = vi.fn()
-    await expect(ensureDataSourcesReady(createDependencies({
-      environment: { CLINMESH_SYNTHEA_PROVIDER_URL: 'http://127.0.0.1:51878' },
-      readProviderHealth: async () => {
-        throw new Error('connect ECONNREFUSED 127.0.0.1:51878')
-      },
-      runSyntheaUp: async () => {
-        throw new Error('docker compose 失败')
-      },
-      write,
-    }))).resolves.toBeUndefined()
-
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('自动拉起失败'))
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('HIS 可正常使用'))
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('pnpm synthea:up'))
-  })
-
-  it('only warns when a custom provider URL is unreachable', async () => {
-    const runSyntheaUp = vi.fn()
-    const write = vi.fn()
-    await expect(ensureDataSourcesReady(createDependencies({
-      environment: { CLINMESH_SYNTHEA_PROVIDER_URL: 'http://192.0.2.10:51878' },
-      readProviderHealth: async () => {
-        throw new Error('request timed out')
-      },
-      runSyntheaUp,
-      write,
-    }))).resolves.toBeUndefined()
-
-    expect(runSyntheaUp).not.toHaveBeenCalled()
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('Synthea Provider 不可达'))
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('HIS 可正常使用'))
   })
 })
 
@@ -456,7 +279,6 @@ describe.skipIf(process.platform === 'win32')('pnpm dev:lan process supervision'
     const repositoryRoot = resolve(import.meta.dirname, '..')
     const grandchildPids: number[] = []
     let command: ReturnType<typeof spawn> | undefined
-    const providerServer = await startFakeProviderServer()
 
     writeFileSync(fakePackageManagerPath, `#!/usr/bin/env node
 const { spawn } = require('node:child_process')
@@ -483,7 +305,6 @@ setInterval(() => {}, 1000)
           ...process.env,
           CLINMESH_LAN_IP: '192.168.50.4',
           CLINMESH_REFERENCE_DATABASE_PATH: referenceDatabasePath,
-          CLINMESH_SYNTHEA_PROVIDER_URL: fakeProviderUrl(providerServer),
           CLINMESH_TEST_GRANDCHILD_PID_PREFIX: pidPathPrefix,
           PATH: `${temporaryDirectory}:${process.env.PATH ?? ''}`,
         },
@@ -522,73 +343,6 @@ setInterval(() => {}, 1000)
       for (const pid of grandchildPids) {
         if (isProcessRunning(pid)) process.kill(pid, 'SIGKILL')
       }
-      providerServer.close()
-      rmSync(temporaryDirectory, { force: true, recursive: true })
-    }
-  })
-
-  it('stops the other development process tree when one process fails', async () => {
-    const temporaryDirectory = mkdtempSync(join(tmpdir(), 'clinmesh-dev-lan-'))
-    const fakePackageManagerPath = join(temporaryDirectory, 'pnpm')
-    const grandchildPidPath = join(temporaryDirectory, 'grandchild.pid')
-    const referenceDatabasePath = join(temporaryDirectory, 'reference.sqlite')
-    const repositoryRoot = resolve(import.meta.dirname, '..')
-    const providerServer = await startFakeProviderServer()
-    let grandchildPid: number | undefined
-
-    writeFileSync(fakePackageManagerPath, `#!/usr/bin/env node
-const { spawn } = require('node:child_process')
-const { existsSync, writeFileSync } = require('node:fs')
-
-const role = process.argv.includes('dev:prepared') ? 'dev:server' : process.argv[2]
-if (role === 'reference:sync' || process.argv.includes('drg:prepare') || process.argv.includes('guidelines:prepare')) process.exit(0)
-const pidPath = process.env.CLINMESH_TEST_GRANDCHILD_PID_FILE
-if (pidPath === undefined) process.exit(2)
-
-if (role === 'dev:server') {
-  const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-    stdio: 'ignore',
-  })
-  writeFileSync(pidPath, String(grandchild.pid))
-  setInterval(() => {}, 1000)
-} else {
-  const poll = setInterval(() => {
-    if (!existsSync(pidPath)) return
-    clearInterval(poll)
-    process.exit(1)
-  }, 10)
-  setTimeout(() => process.exit(2), 2000)
-}
-`)
-    chmodSync(fakePackageManagerPath, 0o755)
-    writeFileSync(referenceDatabasePath, '')
-
-    try {
-      const command = spawn(resolve(repositoryRoot, 'node_modules/.bin/tsx'), ['scripts/dev-lan.ts'], {
-        cwd: repositoryRoot,
-        env: {
-          ...process.env,
-          CLINMESH_LAN_IP: '192.168.50.4',
-          CLINMESH_REFERENCE_DATABASE_PATH: referenceDatabasePath,
-          CLINMESH_SYNTHEA_PROVIDER_URL: fakeProviderUrl(providerServer),
-          CLINMESH_TEST_GRANDCHILD_PID_FILE: grandchildPidPath,
-          PATH: `${temporaryDirectory}:${process.env.PATH ?? ''}`,
-        },
-        stdio: 'ignore',
-      })
-      const exitCode = await new Promise<number | null>((resolveExitCode, reject) => {
-        command.once('error', reject)
-        command.once('close', resolveExitCode)
-      })
-
-      expect(exitCode).toBe(1)
-      grandchildPid = Number(readFileSync(grandchildPidPath, 'utf8'))
-      await waitForProcessExit(grandchildPid)
-    } finally {
-      if (grandchildPid !== undefined && isProcessRunning(grandchildPid)) {
-        process.kill(grandchildPid, 'SIGKILL')
-      }
-      providerServer.close()
       rmSync(temporaryDirectory, { force: true, recursive: true })
     }
   })

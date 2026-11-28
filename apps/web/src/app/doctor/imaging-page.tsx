@@ -1,5 +1,4 @@
 import { OrderComposerLayout, OrderComposerFooter, OrderComposerSearch, OrderCatalogCandidate } from './order-composer-layout.tsx'
-import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
 import { imagingIndicationSchema } from '@clinmesh/contracts/his'
@@ -17,8 +16,6 @@ import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { PlusIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useRegisterAgentForm } from '../agent-page-context.tsx'
-import { AgentReviewAnchor } from '../agent-review.tsx'
 import {
   correctImagingReport,
   deleteImagingRequestDraft,
@@ -201,7 +198,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly: _readOnly, requ
     if (diagnosticReportId !== undefined) view.markShown(diagnosticReportId)
   }, [diagnosticReportId, view])
   return (
-    <li className="border-t py-3"><AgentReviewAnchor id={`doctor-investigation:${request.id}`}>
+    <li className="border-t py-3">
       <div className="flex flex-wrap items-center gap-2">
         <strong className="text-sm font-medium">{request.service.name}</strong>
         <Badge variant={request.status === 'acknowledged' ? 'success' : request.status === 'generation-failed' ? 'warning' : 'outline'}>
@@ -267,7 +264,7 @@ function ImagingRequestItem({ actions, active, locale, readOnly: _readOnly, requ
         </>
       )}
 
-    </AgentReviewAnchor></li>
+    </li>
   )
 }
 
@@ -461,19 +458,10 @@ export function ImagingPage({
     if (state?.draft !== undefined && (target === 'all' || state.draft.service.id === target)) draftAction.mutate(target)
     else if (removeLocal(target)) setDiscardOpen(false)
   }
-  const lastDraft = manualDrafts.rows.at(-1)?.value
-  const draftInput = agentToolInputSchemas['outpatient.imaging.draft.set'].safeParse(lastDraft?.kind === 'imaging'
-    ? { serviceId: lastDraft.serviceId, indication: lastDraft.indication } : null)
-  useRegisterAgentForm({
-    name: 'imaging', selectionId: caseId, viewId: 'consultation',
-    values: readOnly || !draftInput.success ? null : draftInput.data,
-  })
   const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion | PreparationDraft): string | undefined => {
     if (suggestion.kind !== 'imaging' || draftAction.isPending || services.isFetching
       || !services.data?.items.some(item => item.available && item.service.id === suggestion.serviceId)
-      || !agentToolInputSchemas['outpatient.imaging.draft.set'].safeParse({
-        serviceId: suggestion.serviceId, indication: suggestion.indication,
-      }).success) return messages.recommendationRequestTargetUnavailable
+      || suggestion.serviceId.trim().length === 0 || suggestion.indication.trim().length < 2) return messages.recommendationRequestTargetUnavailable
     return services.data?.items.find(item => item.service.id === suggestion.serviceId)?.service.outpatientBilling === undefined ? missingInvestigationPrice(locale) : undefined
   }
   const addButton = (

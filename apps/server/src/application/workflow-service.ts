@@ -59,7 +59,6 @@ import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { allocateRegistrationNumber } from '../infrastructure/sqlite/registration-numbering.ts'
 import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
-import { ClinicalDocumentQualityControl } from './clinical-document-quality.ts'
 import { readClinicalHistoryContext } from './clinical-history-context.ts'
 import { inpatientRequestOwner } from './clinical-request-context.ts'
 import { ClinicalRequestKernel } from './clinical-request-kernel.ts'
@@ -72,7 +71,6 @@ import {
   type CommandResponse,
   type CommandTransaction,
 } from './command-executor.ts'
-import { ConsultationRecordingService } from './consultation-recording-service.ts'
 import {
   doctorHistoryEntryAllowed,
   doctorVisibleHistory,
@@ -311,8 +309,6 @@ export class WorkflowService
   readonly imaging: ImagingRequestService
   /** 病理会诊申请适配器；与检验、放射共用申请内核。 */
   readonly pathology: PathologyRequestService
-  readonly consultationRecording: ConsultationRecordingService
-  readonly qualityControl: ClinicalDocumentQualityControl
   readonly clinicalScores: ClinicalScoreService
   readonly clinicalQuality: ClinicalQualityService
   /** 专病组套只读草稿预装配；不写入任何正式业务事实。 */
@@ -323,10 +319,6 @@ export class WorkflowService
     fhir: FhirRepository,
     commands: CommandExecutor,
     options: {
-      consultationRecordingEnabled?: boolean
-      qualityModelAvailable?: boolean
-      qualityContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
-      consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       guidelines?: GuidelineCorpus
       investigation?: InvestigationCapabilityResolver
       now?: () => Date
@@ -434,40 +426,6 @@ export class WorkflowService
       tokenSecret: options.tokenSecret,
       onFundsChanged: context => this.#completeScenarioIfReady(context, this.#context.virtualTime(context)).effects,
     })
-    this.qualityControl = new ClinicalDocumentQualityControl({
-      database,
-      commands,
-      modelAvailable: options.qualityModelAvailable === true,
-      contextStatus: options.qualityContextStatus ?? (() => 'active'),
-      readCase: (context, caseId) => {
-        this.#context.assertCaseResponsibility(context, caseId)
-        return doctorCaseDetailSchema.parse(this.#doctorCaseSnapshot(context, caseId))
-      },
-      automaticFacts: (context, caseId) => this.consultationRecording.qualityFacts(context, caseId),
-    })
-    this.consultationRecording = new ConsultationRecordingService({
-      database,
-      commands,
-      enabled: options.consultationRecordingEnabled === true,
-      now: this.#now,
-      virtualTime: context => this.#context.virtualTime(context),
-      contextStatus: options.consultationRecordingContextStatus ?? (() => 'inactive'),
-      prepareReports: (context, transaction, caseId) => this.#prepareRecordingReports(transaction, context, caseId),
-      qualityChanged: (context, transaction, caseId) => this.qualityControl.enqueue(context, transaction, caseId),
-      trackQualityDraft: (context, caseId, before, after) => this.qualityControl.trackDraft(context, caseId, before, after, false),
-      assertAccess: (context, encounterId) => {
-        this.#context.assertRole(context, ['outpatient-doctor'])
-        const outpatientCase = this.#context.caseByEncounter(context, encounterId)
-        this.#context.assertCaseResponsibility(context, outpatientCase.case_id)
-        const encounter = this.#fhir.read(context, 'Encounter', encounterId)
-        return {
-          caseId: outpatientCase.case_id,
-          editable: encounter.status === 'in-progress'
-            && outpatientCase.status !== 'completed'
-            && !this.#clinicalDocuments.hasSignedRoot(context, outpatientCase.case_id),
-        }
-      },
-    })
     const requestHost = {
       assertCaseResponsibility: (context: ActorContext, caseId: string) => this.#context.assertCaseResponsibility(context, caseId),
       assertExpectedVersions: (expectedVersions: Record<string, string>, references: string[]) => (
@@ -475,8 +433,7 @@ export class WorkflowService
       ),
       caseByEncounter: (context: ActorContext, encounterId: string) => this.#context.caseByEncounter(context, encounterId),
       hasConsultation: (context: ActorContext, caseId: string) => this.#context.hasConsultation(context, caseId),
-      reportPublished: (transaction: CommandTransaction, context: ActorContext, caseId: string, reportReference: string) =>
-        this.#recordPublishedReport(transaction, context, caseId, reportReference),
+      reportPublished: () => undefined,
       virtualTime: (context: ActorContext) => this.#context.virtualTime(context),
     }
     this.examination = new ExaminationRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
@@ -506,8 +463,6 @@ export class WorkflowService
       context: this.#context,
       host: {
         clinicalQuality: this.clinicalQuality,
-        consultationRecording: this.consultationRecording,
-        qualityControl: this.qualityControl,
         assertMedicationAllergies: (context, patientId, medications) => (
           this.#prescriptions.assertMedicationAllergies(context, patientId, medications)
         ),
@@ -2258,20 +2213,8 @@ export class WorkflowService
     return this.#prescriptions.doctorRecommendationMedications(context)
   }
 
-  doctorCaseRecordingRevision(context: ActorContext, caseId: string): string {
-    this.#context.assertRole(context, ['outpatient-doctor'])
-    const found = z.object({ case_id: z.string() }).optional().parse(this.#database.driver.prepare(`
-      SELECT case_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-    `).get(context.workspaceId, context.epoch, caseId))
-    if (found === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case was not found')
-    return this.consultationRecording.revision(context, caseId)
-  }
-
   doctorCaseDetail(context: ActorContext, caseId: string) {
-    const detail = this.#doctorCaseSnapshot(context, caseId)
-    return !this.#context.hasCaseResponsibility(context, caseId) || detail.encounter.status !== 'in-progress'
-      ? detail
-      : { ...detail, qualityControl: this.qualityControl.read(context, caseId) }
+    return this.#doctorCaseSnapshot(context, caseId)
   }
 
   #doctorCaseSnapshot(context: ActorContext, caseId: string) {
@@ -2360,7 +2303,6 @@ export class WorkflowService
       ? undefined : storedDiagnosisDraftContentSchema.parse(JSON.parse(diagnosisState.draft_json))
     const diagnosisConfirmation = this.#context.confirmedDiagnoses(context, row.case_id)
     const medicationConclusion = this.#prescriptions.medicationConclusionState(context, row.case_id)
-    const consultationRecording = this.consultationRecording.read(context, row.case_id)
     return {
       allergies: this.#context.patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
@@ -2374,7 +2316,6 @@ export class WorkflowService
       registrationNumber: doctorCaseDetailSchema.shape.registrationNumber.parse(row.registration_number),
       ...(clinicalDocument === undefined ? {} : { clinicalDocument }),
       ...(consultation === undefined ? {} : { consultation }),
-      ...(consultationRecording === undefined ? {} : { consultationRecording }),
       ...(diagnosisState === undefined ? {} : {
         diagnosis: {
           ...(diagnosisConfirmation === undefined ? {} : { confirmation: diagnosisConfirmation }),
@@ -2506,7 +2447,7 @@ export class WorkflowService
         personaRevision: input.personaRevision,
       },
       operation: 'consultation.patient-turn.append',
-    }, transaction => {
+    }, _transaction => {
       const outpatientCase = this.#context.caseByEncounter(input.context, input.encounterId)
       if (outpatientCase.doctor_task_id === null || outpatientCase.status === 'completed') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for consultation')
@@ -2527,9 +2468,6 @@ export class WorkflowService
         personaRevision: input.personaRevision,
         source: 'patient-agent',
         speaker: 'patient',
-      })
-      this.consultationRecording.enqueue(input.context, transaction, {
-        caseId: outpatientCase.case_id, encounterId: input.encounterId, turnId: turn.turn.id,
       })
       return {
         data: {
@@ -4039,7 +3977,6 @@ export class WorkflowService
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case state has changed')
     }
     this.#context.assignCaseResponsibility(context, input.caseId, now)
-    this.consultationRecording.bindDoctorContext(context, input.caseId)
     this.#database.driver.prepare(`
       UPDATE registration SET status = 'in-progress'
       WHERE workspace_id = ? AND epoch = ? AND case_id = ?
@@ -4060,7 +3997,6 @@ export class WorkflowService
       INSERT INTO consultation (workspace_id, epoch, case_id, version)
       VALUES (?, ?, ?, 1)
     `).run(context.workspaceId, context.epoch, caseId)
-    this.consultationRecording.create(context, caseId)
   }
 
   #insertConsultationTurn(
@@ -4164,13 +4100,12 @@ export class WorkflowService
   }
 
   #appendReportCardTurn(
-    transaction: CommandTransaction,
+    _transaction: CommandTransaction,
     context: ActorContext,
     caseId: string,
     input: { reportName: string; reportReference: string },
   ): void {
     if (inpatientRequestOwner(this.#database,context,caseId) !== undefined) return
-    this.#recordPublishedReport(transaction, context, caseId, input.reportReference)
     const state = this.#context.consultationState(context, caseId)
     if (state === undefined) return
     this.#insertConsultationTurn(context, caseId, {
@@ -4181,66 +4116,6 @@ export class WorkflowService
       source: 'report-card',
       speaker: 'patient',
     })
-  }
-
-  #recordPublishedReport(transaction: CommandTransaction, context: ActorContext, caseId: string, reportReference: string): void {
-    if (inpatientRequestOwner(this.#database,context,caseId) !== undefined) return
-    const parsed = /^DiagnosticReport\/([A-Za-z0-9.-]+)\/_history\/(\d+)$/u.exec(reportReference)
-    if (parsed === null) throw new Error('The published report reference must contain a fixed version')
-    const report = z.object({ status: z.enum(['final', 'amended', 'corrected']),
-      category: z.array(z.object({ coding: z.array(z.object({ code: z.string().optional() })).optional() })).optional(),
-      encounter: z.object({ reference: z.string() }), subject: z.object({ reference: z.string() }),
-      conclusion: z.string().optional(),
-      code: z.object({ text: z.string().optional(), coding: z.array(z.object({ system: z.string().optional() })).optional() }).optional(),
-      result: z.array(z.object({ reference: z.string() })).optional(), issued: z.string(),
-    }).parse(transaction.fhir.vread(context, 'DiagnosticReport', parsed[1]!, parsed[2]!))
-    const outpatientCase = z.object({ encounter_id: z.string(), patient_id: z.string() }).parse(
-      this.#database.driver.prepare(`SELECT encounter_id, patient_id FROM outpatient_case
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?`).get(context.workspaceId, context.epoch, caseId))
-    if (report.encounter.reference !== `Encounter/${outpatientCase.encounter_id}` || report.subject.reference !== `Patient/${outpatientCase.patient_id}`) {
-      throw new Error('The published report does not belong to the recording case')
-    }
-    const observations = (report.result ?? []).map(result => {
-      const match = /^Observation\/([A-Za-z0-9.-]+)$/u.exec(result.reference)
-      if (match === null) throw new Error('The published report result must reference a local Observation')
-      const observation = z.object({ code: z.object({ text: z.string().optional(), coding: z.array(z.object({ display: z.string().optional() })).optional() }),
-        valueQuantity: z.object({ value: z.number(), unit: z.string().optional() }).optional(),
-        valueString: z.string().optional(), valueCodeableConcept: z.object({ text: z.string().optional(), coding: z.array(z.object({ display: z.string().optional() })).optional() }).optional(),
-        valueBoolean: z.boolean().optional(),
-      }).parse(transaction.fhir.read(context, 'Observation', match[1]!))
-      const name = observation.code.text ?? observation.code.coding?.[0]?.display ?? result.reference
-      const value = observation.valueQuantity === undefined ? observation.valueString
-        ?? observation.valueCodeableConcept?.text ?? observation.valueCodeableConcept?.coding?.[0]?.display
-        ?? observation.valueBoolean?.toString()
-        : `${observation.valueQuantity.value}${observation.valueQuantity.unit === undefined ? '' : ` ${observation.valueQuantity.unit}`}`
-      if (value === undefined) throw new Error('The published report result has no supported value')
-      return `${name}：${value}。`
-    })
-    const categories = report.category?.flatMap(category => category.coding?.map(coding => coding.code) ?? []) ?? []
-    const isExamination = report.code?.coding?.some(coding => coding.system === 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/examination-service') === true
-    const published = categories.includes('RAD') ? this.imaging.publishedReportText(context, caseId, parsed[1]!)
-      : categories.includes('SP') ? this.pathology.publishedReportText(context, caseId, parsed[1]!)
-        : isExamination ? this.examination.publishedReportText(context, caseId, parsed[1]!) : undefined
-    const messageText = [report.code?.text, ...(published !== undefined ? [published.text] : [report.conclusion, ...observations])].filter(Boolean).join('\n')
-    if (report.conclusion === undefined && observations.length === 0) throw new Error('The published report contains no recordable facts')
-    this.consultationRecording.enqueueReport(context, transaction, { caseId, encounterId: outpatientCase.encounter_id,
-      messageText, recordedAt: report.issued, reportReference,
-      ...(published === undefined ? {} : { reportContentHash: published.reportContentHash }) })
-  }
-
-  #prepareRecordingReports(transaction: CommandTransaction, context: ActorContext, caseId: string): void {
-    const reports = z.array(z.object({ diagnostic_report_id: z.string() })).parse(this.#database.driver.prepare(`
-      SELECT diagnostic_report_id FROM laboratory_request WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        AND diagnostic_report_id IS NOT NULL
-      UNION SELECT diagnostic_report_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        AND diagnostic_report_id IS NOT NULL
-    `).all(context.workspaceId, context.epoch, caseId, context.workspaceId, context.epoch, caseId))
-    const saved = new Set(this.consultationRecording.read(context, caseId)?.sources?.map(source => source.reportReference))
-    for (const report of reports) {
-      const resource = transaction.fhir.read(context, 'DiagnosticReport', report.diagnostic_report_id)
-      const reference = `DiagnosticReport/${report.diagnostic_report_id}/_history/${resource.meta?.versionId ?? '1'}`
-      if (!saved.has(reference)) this.#recordPublishedReport(transaction, context, caseId, reference)
-    }
   }
 
   caseIdByEncounter(context: ActorContext, encounterId: string): string {

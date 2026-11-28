@@ -52,7 +52,7 @@ export class ModelTaskRecovery {
   constructor(private readonly database: ClinMeshDatabase, private readonly control: {
     canDispatch(workspaceId: string): boolean; automaticRetries(workspaceId: string): boolean
     recoveryState(workspaceId: string): string
-  }, private readonly dsh = false) {
+  }) {
     database.driver.prepare("UPDATE model_task_step SET status = 'unknown' WHERE status = 'dispatching'").run()
   }
 
@@ -130,8 +130,8 @@ export class ModelTaskRecovery {
         if (row.request_count > 0 && !this.control.automaticRetries(context.workspaceId)) {
           throw new ModelUsageControlError('MODEL_RETRY_DISABLED', 'workspace')
         }
-        const structuredLimit = input.maxAttempts ?? (this.dsh ? 2 : 3)
-        if (row.request_count >= structuredLimit + (this.dsh ? 1 : 0)
+        const structuredLimit = input.maxAttempts ?? 3
+        if (row.request_count >= structuredLimit
           || attemptedKind === 'rate-limit-retry' && row.rate_limit_count >= 1
           || attemptedKind === 'format-repair' && row.repair_count >= structuredLimit - 1) {
           // 预算拒绝按持久安全分类回放，业务服务只识别自身白名单标记。

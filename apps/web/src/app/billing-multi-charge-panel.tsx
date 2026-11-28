@@ -9,12 +9,11 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { z } from 'zod'
-import { agentViewRevision } from './agent-page-context.tsx'
 import { paymentMethodLabel } from './billing-case-panel.tsx'
 import { emptyMultiChargeDraft, multiChargeDraftStorage, type MultiChargeDraft } from './billing-multi-charge-draft.ts'
 import { parseTenderAmounts } from './billing-payment-input.ts'
 import { PaginationControls } from './pagination-controls.tsx'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, stableViewKey } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -58,7 +57,7 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const currentTarget = useRef({ caseId: bill.caseId, patientId: bill.patient.id, encounterId: bill.encounterId })
   currentTarget.current = { caseId: bill.caseId, patientId: bill.patient.id, encounterId: bill.encounterId }
-  const signature = agentViewRevision({ storageKey: storage.key, draft, charges: bill.charges })
+  const signature = stableViewKey({ storageKey: storage.key, draft, charges: bill.charges })
   const current = useRef(signature)
   current.current = signature
   const attempt = useRef({ signature, revision: 0 })

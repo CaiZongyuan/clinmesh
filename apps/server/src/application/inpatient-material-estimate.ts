@@ -179,7 +179,6 @@ export class InpatientMaterialEstimate {
     return this.#row(context, admissionId, requestId, stage)!
   }
   automatic(context: ActorContext, admissionId: string, requestId: string, transaction: CommandTransaction, stage: SurgeryExecutionStage = 'primary') {
-    this.owner.guidelineAdvice.automatic(context, admissionId, requestId, transaction)
     const request = this.owner.surgery.read(context, admissionId).requests.find(item => item.id === requestId)!
     const code = stage === 'ad-hoc-pci' ? request.adHocPci?.procedure.coding.code : request.plannedProcedure.coding.code
     if (code === undefined || !supportsMaterialEstimate(code)) return
@@ -255,7 +254,6 @@ export class InpatientMaterialEstimate {
           JSON.stringify(basis.input.estimate), basis.fingerprint, cancel ? 'cancelled' : 'active', cancel ? 0 : 1,
           context.workspaceId, context.epoch, row.task_id, row.version)
       row = this.#row(context, input.admissionId, input.requestId, stage)!
-      if (cancel) this.owner.guidelineAdvice.cancel(context, input.admissionId, input.requestId)
       if (!cancel) this.#queue(row, transaction)
       return { data: this.#dto(context, row), effects: [{ kind: 'updated' as const, reference: `InpatientMaterialEstimate/${row.task_id}`, versionId: String(row.version) }] }
     })

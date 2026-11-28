@@ -38,7 +38,6 @@ import {
   Trash2Icon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { ClinicalQualityBanner, extractClinicalQualityError } from '../clinical-quality-banner.tsx'
 import { orderSetExcludedIds, OrderSetSelectorBar } from '../order-set-selector.tsx'
 import {
@@ -241,10 +240,6 @@ export function PrescriptionPage({
     ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
   }))
   const draftValidation = prescriptionDraftContentSchema.safeParse({ items: submittedItems })
-  useRegisterAgentForm({
-    viewId: 'consultation', selectionId: detail.caseId, name: 'prescription',
-    values: { mode, items: items.map(({ catalogItemId, courseDays, doseText, frequencyCode, quantity, routeCode }) => ({ catalogItemId, courseDays, doseText, frequencyCode, quantity, routeCode })) },
-  })
   const currentRevision = JSON.stringify(draftValidation.success ? draftValidation.data.items : submittedItems)
   useEffect(() => {
     if (actions.saveDraft.success && actions.saveDraft.savedRevision === currentRevision) {

@@ -1,4 +1,4 @@
-import type { ClinicalDocumentContent, ClinicalDocumentQualityControlState, ClinicalHistoryRequirements, DoctorCaseDetail } from '@clinmesh/contracts/his'
+import type { ClinicalDocumentContent, ClinicalHistoryRequirements, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -12,7 +12,6 @@ import {
 } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -34,12 +33,7 @@ import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { hasClinicalDocumentContentDifference } from './clinical-document-content.ts'
 import { ClinicalVisitKindControl, type ClinicalVisitKindAction } from './clinical-visit-kind-control.tsx'
 import { ClinicalDocumentUpdateControl, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
-import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
 import { DoctorDraftField as Field } from './doctor-draft-fields.tsx'
-import {
-  DocumentQualityCompact, DocumentQualityDetails, DocumentQualitySignSummary, locateDocumentQualityIssue,
-  useDocumentQualityControl, type DocumentQualityControl, type QualityIssue,
-} from './document-quality-control.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -52,7 +46,6 @@ function ErrorAlert({ message, title }: { message: string; title: string }): Rea
 }
 
 export interface ClinicalDocumentSignPreview {
-  qualityControl?: ClinicalDocumentQualityControlState | undefined
   expiresAt?: string
   commitToken: string
   document: { content: ClinicalDocumentContent }
@@ -72,7 +65,6 @@ export interface ClinicalDocumentRevisionInput {
 export interface ClinicalDocumentPageActions {
   confirmVisitKind?: ClinicalVisitKindAction
   cancelSign?: { error: Error | null; pending: boolean; onSubmit: (previewId: string) => void }
-  controlRecording?: ConsultationRecordingAction
   save?: {
     error: Error | null
     hasUnsavedChanges?: boolean
@@ -111,11 +103,7 @@ export function ClinicalDocumentPage({
   messages,
   onDocumentChange,
   workingDocument,
-  qualityScope,
-  quality: externalQuality,
-  onOpenQualityDetails,
   hideInlineActions = false,
-  hideRecordingControls = false,
   defaultRevisionOpen = true,
   openRevisionRequest = 0,
 }: {
@@ -128,11 +116,7 @@ export function ClinicalDocumentPage({
   messages: ReturnType<typeof getWorkspaceMessages>
   onDocumentChange: (document: ClinicalDocumentContent) => void
   workingDocument: ClinicalDocumentContent
-  qualityScope?: string | undefined
-  quality?: DocumentQualityControl | undefined
-  onOpenQualityDetails?: (() => void) | undefined
   hideInlineActions?: boolean | undefined
-  hideRecordingControls?: boolean | undefined
   defaultRevisionOpen?: boolean | undefined
   openRevisionRequest?: number | undefined
 }): React.JSX.Element | null {
@@ -161,19 +145,7 @@ export function ClinicalDocumentPage({
   useEffect(() => {
     if (openRevisionRequest > 0) setRevisionOpen(true)
   }, [openRevisionRequest])
-  const internalQuality = useDocumentQualityControl({ detail, document: workingDocument, scope: qualityScope,
-    enabled: externalQuality === undefined && signedDocuments.length === 0 && detail.encounter.status === 'in-progress' })
-  const quality = externalQuality ?? internalQuality
-  const [explanationOpen, setExplanationOpen] = useState(false)
   const root = useRef<HTMLElement>(null)
-  const pendingLocation = useRef<{ issue: QualityIssue; caseId: string; scope: string | undefined } | null>(null)
-  const explanationTitle = locale === 'zh-CN' ? '依据与说明' : 'Basis and details'
-  const locateIssue = (issue: QualityIssue) => {
-    if (explanationOpen) {
-      pendingLocation.current = { issue, caseId: detail.caseId, scope: qualityScope }
-      setExplanationOpen(false)
-    } else if (root.current !== null) locateDocumentQualityIssue(root.current, issue)
-  }
 
   if (
     signedDocuments.length === 0
@@ -183,8 +155,7 @@ export function ClinicalDocumentPage({
   }
 
   const currentPreview = actions.prepareSign.data
-  const preparation = detail.consultationRecording?.signingPreparation
-  const preparing = currentPreview !== undefined || preparation?.active === true || actions.prepareSign.pending
+  const preparing = currentPreview !== undefined || actions.prepareSign.pending
   const cancelPending = actions.cancelSign?.pending === true
   return (
     <section
@@ -197,27 +168,7 @@ export function ClinicalDocumentPage({
       <ClinicalVisitKindControl key={detail.caseId} context={detail.clinicalHistory} action={actions.confirmVisitKind} messages={messages} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">{messages.structuredClinicalDocument}</h3>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={onOpenQualityDetails ?? (() => setExplanationOpen(true))}
-            size="sm" type="button" variant="ghost">{explanationTitle}</Button>
-          {hideRecordingControls ? null : <ConsultationRecordingControls
-            recording={detail.consultationRecording} action={actions.controlRecording}
-            disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
-            messages={messages} />}
-        </div>
       </div>
-      <Dialog onOpenChange={setExplanationOpen} onOpenChangeComplete={open => {
-        if (!open && pendingLocation.current !== null) {
-          const target = pendingLocation.current
-          if (root.current !== null && target.caseId === detail.caseId && target.scope === qualityScope) locateDocumentQualityIssue(root.current, target.issue)
-          pendingLocation.current = null
-        }
-      }} open={explanationOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader><DialogTitle>{explanationTitle}</DialogTitle></DialogHeader>
-          <div className="min-h-0 overflow-y-auto p-4"><DocumentQualityDetails quality={quality} messages={messages} locale={locale} onLocateIssue={locateIssue} /></div>
-        </DialogContent>
-      </Dialog>
       {actions.save?.error == null ? null : <ErrorAlert
         message={getWorkspaceErrorMessage(actions.save.error, messages)}
         title={messages.saveClinicalDocumentDraft}
@@ -409,17 +360,8 @@ export function ClinicalDocumentPage({
         </>
       ) : (
         <>
-          {preparation === undefined || currentPreview !== undefined ? null : <Alert>
-            <AlertTitle>{messages.consultationSignRecoveryTitle}</AlertTitle>
-            <AlertDescription>
-              <p>{messages.consultationSignRecoveryDescription}</p>
-              <Button type="button" variant="outline" disabled={cancelPending}
-                onClick={() => actions.cancelSign?.onSubmit(preparation.previewId)}>{messages.consultationSignReturn}</Button>
-            </AlertDescription>
-          </Alert>}
           {actions.cancelSign?.error == null ? null : <ErrorAlert title={messages.operationFailed}
             message={getWorkspaceErrorMessage(actions.cancelSign.error, messages)} />}
-          {externalQuality === undefined ? <DocumentQualityCompact quality={quality} messages={messages} locale={locale} onLocateIssue={locateIssue} /> : null}
           <form
             aria-label={messages.structuredClinicalDocument}
             className="flex flex-col gap-3"
@@ -472,7 +414,6 @@ export function ClinicalDocumentPage({
               </AlertDialogHeader>
               {currentPreview === undefined ? null : (
                 <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">
-                  <DocumentQualitySignSummary detail={detail} state={currentPreview.qualityControl} scope={qualityScope} locale={locale} />
                   <ClinicalDocumentContentView content={currentPreview.document.content} messages={messages} />
                   {actions.sign.error === null ? null : <ErrorAlert title={messages.operationFailed}
                     message={getWorkspaceErrorMessage(actions.sign.error, messages)} />}

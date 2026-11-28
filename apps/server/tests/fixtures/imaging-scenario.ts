@@ -1,8 +1,7 @@
-import { createHmac, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { agentPageBindingRevision, agentPageContextBindingSchema, type AgentPageContextBinding } from '@clinmesh/contracts/agent'
 import {
   commandResponseSchema,
   registrationCatalogSchema,
@@ -168,79 +167,11 @@ export const persona: PatientPersonaContent = {
   symptomExperience: '两周前开始咳嗽，夜里更明显。',
 }
 
-/** 临时目录中的运行时：合成 Synthea 来源、可选的患者 Persona 模型和一个待写入的合成素材清单目录。 */
-const dshBridgeSecret = 'test-dsh-bridge-secret-with-at-least-32-characters'
-let pageContextRevision = 0
-
-/** 以医生“接诊”页选中某个病例的状态签发 Agent Page Context，返回绑定。 */
-export async function agentPageContext(
-  runtime: Runtime,
-  cookie: string,
-  claim: { activeSection: string; caseId: string; encounterVersion: string; viewRevision: string },
-) {
-  pageContextRevision += 1
-  const response = await runtime.app.request('/api/agent/v1/page-contexts', {
-    body: JSON.stringify({
-      claim: {
-        taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc',
-        activeSection: claim.activeSection,
-        selection: { id: claim.caseId, kind: 'case', version: claim.encounterVersion },
-        ui: { status: 'ready' },
-        version: 1,
-        viewId: 'consultation',
-        viewRevision: claim.viewRevision,
-      },
-      client: { id: 'imaging-agent-test', revision: pageContextRevision },
-      dshSessionId: 'dsh-session-imaging',
-    }),
-    headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
-    method: 'POST',
-  })
-  expect(response.status).toBe(201)
-  return agentPageContextBindingSchema.parse(await response.json())
-}
-
-/** 以 DSH 宿主的身份授权一次 Tool 调用，返回 HTTP 响应。 */
-export async function authorizeAgentTool(
-  runtime: Runtime,
-  cookie: string,
-  binding: AgentPageContextBinding,
-  call: { input: unknown; operationId: string; toolName: string },
-) {
-  const now = new Date()
-  const encoded = Buffer.from(JSON.stringify({
-    callId: `call-${call.operationId}-${now.getTime()}`,
-    contextId: binding.snapshot.id,
-    pageRevision: agentPageBindingRevision(binding.snapshot.claim),
-    dshSessionId: binding.snapshot.dshSessionId,
-    expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-    issuedAt: now.toISOString(),
-    scopeKey: binding.snapshot.scopeKey,
-    toolName: call.toolName,
-    origin: { request: { scopeKey: binding.snapshot.scopeKey, pageRevision: agentPageBindingRevision(binding.snapshot.claim) },
-      task: { scopeKey: binding.snapshot.scopeKey, pageRevision: agentPageBindingRevision(binding.snapshot.claim),
-        acceptedAt: now.toISOString(), messageId: `message-${call.operationId}`, rpcId: `rpc-${call.operationId}`, turn: 1 } },
-    version: 3,
-  })).toString('base64url')
-  const signature = createHmac('sha256', dshBridgeSecret).update(encoded).digest('base64url')
-  return await runtime.app.request('/api/agent/v1/tool-calls', {
-    body: JSON.stringify({
-      contextToken: binding.token,
-      executionProof: `${encoded}.${signature}`,
-      input: call.input,
-      operationId: call.operationId,
-    }),
-    headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
-    method: 'POST',
-  })
-}
-
 export async function createImagingRuntime(bundles: unknown[], options: {
   assets?: boolean
   catalog?: boolean
   performanceObserver?: SqlitePerformanceObserver
   persona?: boolean
-  recording?: boolean
   targetedGeneration?: boolean
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-imaging-'))
@@ -266,9 +197,6 @@ export async function createImagingRuntime(bundles: unknown[], options: {
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
     databasePath: join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!',
-    dshBridgeSecret,
-    ...(options.recording !== true ? {} : { dshModelBridge: { origin: 'http://127.0.0.1:1',
-      secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 } }),
     ...(options.assets === false ? {} : { imagingAssetDirectory: assetDirectory }),
     ...(options.catalog === false ? {} : { imagingCatalogDirectory: catalogDirectory }),
     migrationMode: 'apply',
@@ -324,16 +252,33 @@ export function mutation(cookie: string, body: unknown, method: 'DELETE' | 'POST
   }
 }
 
-export async function generateCase(runtime: Runtime, cookie: string): Promise<string> {
-  const response = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', mutation(cookie, {
-    name: '影像准备患者',
-    population: { age: { maximum: 90, minimum: 0 }, count: 1, gender: 'any' },
-    providerId: 'synthea',
-    seeds: { clinical: 7331, population: 4242 },
-    timeRange: { end: '2026-08-01', start: '2020-01-01' },
-    timeZone: 'Asia/Shanghai',
-  }))
-  expect(response.status).toBe(200)
+const adminContext = {
+  actorId: 'actor-administrator',
+  epoch: 'epoch-1',
+  locationId: 'location-administrator',
+  organizationId: 'organization-clinmesh',
+  practitionerId: 'practitioner-administrator',
+  practitionerRoleId: 'practitioner-role-administrator',
+  roleCode: 'administrator' as const,
+  scenarioRunId: 'scenario-run-1',
+  workspaceId: 'workspace-demo',
+}
+
+export async function generateCase(runtime: Runtime, _cookie: string): Promise<string> {
+  await runtime.scenarioData.enqueueGeneration({
+    context: adminContext,
+    idempotencyKey: randomUUID(),
+    request: {
+      moduleMode: 'all',
+      modules: [],
+      name: '影像准备患者',
+      population: { age: { maximum: 90, minimum: 0 }, count: 1, gender: 'any' },
+      providerId: 'synthea',
+      seeds: { clinical: 7331, population: 4242 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    },
+  })
   const processed = await runtime.scenarioData.processNextGenerationJob()
   expect(processed?.status).toBe('succeeded')
   return processed!.caseIds[0]!
@@ -349,10 +294,11 @@ export async function prepareImaging(runtime: Runtime, cookie: string, caseIds?:
 
 /** 生成 Persona 并由挂号员开始门诊就诊；运行时需以 `persona: true` 创建。 */
 export async function startOutpatientVisit(runtime: Runtime, administrator: string, caseId: string) {
-  await runtime.app.request(
-    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-jobs`,
-    mutation(administrator, {}),
-  )
+  await runtime.patientPersona.enqueue({
+    caseId,
+    context: adminContext,
+    idempotencyKey: randomUUID(),
+  })
   await runtime.patientPersona.processNext()
   const readyCase = syntheticCaseInstanceSchema.parse(await (await runtime.app.request(
     `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}`,

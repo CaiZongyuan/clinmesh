@@ -5,8 +5,6 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { AgentPageRegistryProvider } from '../agent-page-context.tsx'
-import { AgentReviewProvider } from '../agent-review.tsx'
 import { DoctorWorkspace } from './doctor-case-controller.tsx'
 
 const clients: QueryClient[] = []
@@ -27,9 +25,9 @@ it('StrictMode 重放后导航可用，切换病例库保留滑块，切换身�
   }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   clients.push(client)
-  const workspace = (session: SessionContext) => <StrictMode><QueryClientProvider client={client}><AgentPageRegistryProvider><AgentReviewProvider>
+  const workspace = (session: SessionContext) => <StrictMode><QueryClientProvider client={client}>
     <DoctorWorkspace locale="zh-CN" session={session} />
-  </AgentReviewProvider></AgentPageRegistryProvider></QueryClientProvider></StrictMode>
+  </QueryClientProvider></StrictMode>
   const { unmount, rerender } = render(workspace(session))
   const list = screen.getByRole('tablist', { name: '门诊诊疗' })
   const host = list.parentElement!

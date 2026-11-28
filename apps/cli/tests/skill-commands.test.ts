@@ -3,7 +3,6 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { prescriptionConflictReasonSchema } from '@clinmesh/contracts/his'
 import { excludedHisRoutes, getHisOperation, hisOperationErrorSchema, listHisOperations } from '@clinmesh/contracts/his-operations'
-import { agentToolCatalog } from '@clinmesh/contracts/agent'
 import { type Command, type Option } from 'commander'
 import { createCliProgram } from '../src/cli.ts'
 
@@ -56,21 +55,10 @@ it('报告选型草稿保存示例使用窄操作、草稿版本与同意图回�
   expect(skill).toContain('--operation-id inpatient.pci-selection.save')
 })
 
-it('住院Skill中的DSH工具名称对应实际页面Tool目录', async () => {
-  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
-  const tools = [...skill.matchAll(/`(clinmesh_[a-z0-9_]+)`/g)].map(match => match[1]!)
-  expect(tools.length).toBeGreaterThan(0)
-  for (const name of tools) {
-    expect(agentToolCatalog.some(tool => tool.toolName === name), name).toBe(true)
-  }
-})
-
 it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留确认', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   const operations = [
-    ['guideline-advice', 'inpatient.guideline-advice.read', null],
-    ['request-guideline-advice', 'inpatient.guideline-advice.request', 'guideline-advice.json'],
     ['material-estimates', 'inpatient.material-estimate.read', null],
     ['request-material-estimate', 'inpatient.material-estimate.request', 'material-estimate-request.json'],
     ['cancel-material-estimate', 'inpatient.material-estimate.cancel', 'material-estimate-cancel.json'],
@@ -111,38 +99,10 @@ it('单次耗材预计示例绑定工作稿修订、当前依据与整批预留�
   expect(skill).toContain('conflict')
 })
 
-it('术中核对读取示例保留逐笔结果与冻结清单，按计划登记不调用模型', async () => {
-  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
-  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
-  const line = commandLines(skill).find(line => line.startsWith('clinmesh inpatient drg-agent '))!
-  const operation = inspectExample(program, line).operation!
-  expect(operation.id).toBe('inpatient.drg.agent.read')
-  expect(operation.version).toBe(5)
-  expect(getHisOperation('inpatient.pci-selection.read').version).toBe(4)
-  expect(skill).toContain('equivalentSuggestions')
-  expect(skill).toContain('alternatives')
-  expect(skill).toContain('materialDraftDeltaFen')
-  expect(skill).toContain('projectionComplete')
-  expect(getHisOperation('inpatient.drg.record-checks.read').version).toBe(2)
-  expect(skill).toContain('同数量工作稿')
-  expect(skill).toContain('measurementCompatible')
-  expect(skill).toContain('intraoperativePlans')
-  expect(skill).toContain('intraoperativeReviews')
-  expect(skill).toContain('materialUseId')
-  expect(skill).toContain('按计划登记、普通刷新及更正不新增模型意图')
-  const state = operation.output.parse({ admissionId: 'synthetic-admission', taskId: null, status: 'inactive', basisFingerprint: null,
-    stage: 'intraoperative', missing: [], failureCode: null, analysis: null, confirmedPlan: null, planHistory: [],
-    intraoperativePlans: [], intraoperativeReviews: [{ materialUseId: 'synthetic-use', executionId: 'synthetic-execution', requestId: 'synthetic-request',
-      taskId: null, reasons: ['unplanned'], status: 'unavailable', explanation: null, costExplanation: null, failureCode: null }],
-  })
-  expect(state).toMatchObject({ intraoperativeReviews: [{ materialUseId: 'synthetic-use', status: 'unavailable' }] })
-})
-
 it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [path, id] of [
-    ['drg-followup', 'inpatient.drg.followup.read'], ['drg-followup-start', 'inpatient.drg.followup.start'], ['drg-followup-stop', 'inpatient.drg.followup.stop'],
     ['drg-pregroup', 'inpatient.drg.pregroup'], ['drg-simulate', 'inpatient.drg.simulate'],
     ['drg-reserve-material', 'inpatient.drg.reservation.create'], ['drg-release-reservation', 'inpatient.drg.reservation.release'],
     ['drg-payer-review-preview', 'inpatient.drg.payer.review.preview'], ['drg-payer-review', 'inpatient.drg.payer.review'],
@@ -832,38 +792,6 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
 })
 
 describe('ClinMesh CLI Agent Skills', () => {
-  it('keeps document quality examples narrow and separate from clinical draft writes', async () => {
-    const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
-    const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
-    for (const action of ['get', 'check', 'retain']) {
-      const operation = getHisOperation(`doctor.document-quality.${action}`)
-      const line = commandLines(skill).find(line => line.startsWith(`clinmesh doctor document-quality ${action}`))!
-      expect(line).toBeDefined()
-      expect(inspectExample(program, line).operation?.id).toBe(operation.id)
-      expect(operation.skill).toBe('clinmesh-doctor')
-      expect(operation.version).toBe(3)
-      for (const field of ['menstrualHistory', 'obstetricHistory']) expect(operation.summary).toContain(field)
-    }
-    const check = getHisOperation('doctor.document-quality.check')
-    const context = { caseId: 'synthetic-case', encounterId: 'synthetic-encounter', encounterVersion: '3' }
-    expect(check.input.safeParse({ ...context, expectedDraftVersion: 0 }).success).toBe(true)
-    expect(check.input.safeParse({ ...context, expectedDraftVersion: 0, clientId: 'editor-1' }).success).toBe(false)
-    expect(check.input.safeParse({ ...context, expectedDraftVersion: 0, url: 'https://example.invalid' }).success).toBe(false)
-    const retain = getHisOperation('doctor.document-quality.retain')
-    expect(retain.input.safeParse({ ...context, issueId: 'synthetic-issue', expectedInputFingerprint: 'a'.repeat(64) }).success).toBe(true)
-    expect(retain.input.safeParse({ ...context, issueId: 'synthetic-issue' }).success).toBe(false)
-    expect(skill).toContain('does not save the clinical draft')
-    expect(skill).toContain('explicit clinician decision')
-    expect(skill).toContain('does not add a signing gate')
-    const get = getHisOperation('doctor.document-quality.get')
-    const failed = { caseId: 'synthetic-case', encounterId: 'synthetic-encounter', draftVersion: 1, generation: 1,
-      inputFingerprint: 'a'.repeat(64), documentFingerprint: 'b'.repeat(64), status: 'failed', stale: false,
-      issues: [], notices: [], errorCode: 'AI_RESPONSE_INVALID', failure: { stage: 'generation', reason: 'invalid-source' } }
-    expect(get.output.safeParse(failed).success).toBe(true)
-    expect(get.output.safeParse({ ...failed, failure: { ...failed.failure, rawContent: 'private model text' } }).success).toBe(false)
-    expect(skill).toContain('failure.stage')
-    expect(skill).toContain('refresh: true')
-  })
   it('keeps document examples aligned with optional family and allergy history', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
     const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
@@ -905,37 +833,9 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(skill).toContain('草稿允许留空')
     expect(skill).toContain('CLINICAL_HISTORY_REQUIRED')
   })
-  it('keeps recording controls narrow, versioned and bound to the doctor skill', async () => {
-    const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
-    const operation = getHisOperation('encounter.consultation-recording.control')
-    const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter consultation-recording control'))!
-    expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
-    for (const action of ['activate', 'pause', 'resume', 'backfill', 'retry']) {
-      expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedRecordingVersion: 1, action }).success).toBe(true)
-    }
-    expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', action: 'resume', document: {} }).success).toBe(false)
-    expect(skill).toContain('processedCount')
-    expect(skill).toContain('explicitly starts it')
-    expect(operation.version).toBe(7)
-    for (const field of ['menstrualHistory', 'obstetricHistory']) expect(operation.summary).toContain(field)
-    expect(operation.summary).toContain('backfill requires an existing Consultation')
-    expect(operation.summary).toContain('WORKFLOW_CONFLICT')
-    expect(operation.summary).toContain('retired semantic checks cannot be retried')
-    expect(operation.summary).toContain('MODEL_OUTCOME_UNKNOWN')
-    expect(skill).toContain('`MODEL_OUTCOME_UNKNOWN` stops automatic resending')
-    const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(23)
-    expect(read.summary).toContain('sourceResults')
-    expect(read.summary).toContain('legacy verification counts are zero and issues empty')
-    expect(skill).toContain('Retry actual recording failures')
-    expect(skill).toContain('existing `qualityControl`')
-    expect(skill).toContain('Backfill requires an existing Consultation')
-    expect(skill).toContain('WORKFLOW_CONFLICT')
-  })
   it('does not expose removed history review commands or signing acknowledgement', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
     expect(skill).not.toContain('clinmesh encounter consultation-history review')
-    expect(skill).toContain('recorded directly')
     expect(() => getHisOperation('encounter.consultation-history.review')).toThrow()
     const sign = getHisOperation('encounter.clinical-document.sign')
     expect(sign.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '1', commitToken: 'synthetic-sign-commit-token', previewId: 'synthetic-preview', consultationReviewed: true }).success).toBe(false)
@@ -947,11 +847,6 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(skill).toContain('empty fields')
     expect(skill).toContain('including whitespace and punctuation')
     expect(operation.summary).toContain('whitespace is preserved exactly')
-    expect(skill).toContain('consultationRecording')
-    expect(skill).toContain('hasSavedDraft')
-    expect(getHisOperation('doctor.case.get').summary).toContain('hasSavedDraft')
-    expect(skill).toContain('consultationRecording.failures')
-    expect(getHisOperation('doctor.case.get').summary).toContain('failures')
     const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter clinical-document draft set'))!
     expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
     const parsed = operation.input.parse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 0,
@@ -1311,9 +1206,6 @@ it('keeps clinical risk assessment, nursing vitals, and deterministic clinical s
   const inpatientBlocks = [...inpatientTail.matchAll(/```json\n([^]*?)\n```/g)].map(match => JSON.parse(match[1]!))
   expect(getHisOperation('inpatient.vital-signs.record').input.safeParse(inpatientBlocks[0]).success).toBe(true)
   expect(getHisOperation('inpatient.risk-assessment.record').input.safeParse(inpatientBlocks[1]).success).toBe(true)
-
-  const topicAdviceJson = JSON.parse(inpatientSkill.slice(inpatientSkill.indexOf('`guideline-topic-advice.json`')).match(/```json\n([^]*?)\n```/)![1]!)
-  expect(getHisOperation('inpatient.guideline-advice.request').input.safeParse(topicAdviceJson).success).toBe(true)
 
   for (const [skill, path, id] of [
     [doctorSkill, 'encounter clinical-quality get', 'encounter.clinical-quality.read'],

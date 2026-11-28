@@ -3,8 +3,6 @@ import { rm } from 'node:fs/promises'
 import { afterEach, expect, it } from 'vitest'
 import { inpatientDrgRecordChecksSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientDrgExplanationSchema, inpatientDrgExplanationResponseSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
-import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
-import { inpatientDrgAgentSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientPciSelectionResponseSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientRecordSchema, inpatientRecordResponseSchema } from '@clinmesh/contracts/inpatient-record'
@@ -74,10 +72,9 @@ it('无跟进的护士可读术中及术后用量，医生按需解释并复用�
   }))).data
   await s.fixture.runtime.dispatchPending()
   expect(s.calls).toEqual([])
-  const board = await s.fixture.read('ward-nurse', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
-  expect(board).toMatchObject({ taskId: null, status: 'inactive', costs: { components: { formalChargesFen: 20000, projectedTotalFen: 314598 } },
-    usage: expect.arrayContaining([expect.objectContaining({ materialId: 'hospital-material-pci-guidewire', actualQuantity: 1, remainingQuantity: 0 })]) })
   const checks = await s.checks()
+  expect(checks).toMatchObject({ costs: { components: { formalChargesFen: 20000, projectedTotalFen: 314598 } },
+    usage: expect.arrayContaining([expect.objectContaining({ materialId: 'hospital-material-pci-guidewire', actualQuantity: 1, remainingQuantity: 0 })]) })
   await parsePciResponse(inpatientDrgExplanationResponseSchema, await s.fixture.request('inpatient-doctor', `${stay.path}/drg/record-checks/explain`, {
     expectedVersion: 0, expectedFingerprint: checks.fingerprint,
   }))
@@ -104,7 +101,6 @@ it('无跟进的护士可读术中及术后用量，医生按需解释并复用�
   const postoperative = await s.checks()
   expect(postoperative.usage).toContainEqual(expect.objectContaining({ executionId, materialId: reservation.materialId,
     plannedQuantity: 1, actualQuantity: 2, usedFen: 40000, excessQuantity: 1, additionalFen: 20000 }))
-  expect((await s.fixture.read('ward-nurse', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).usage).toEqual(postoperative.usage)
   expect(s.calls).toHaveLength(2)
   costExplanation = '本台已用导丝费用400元，其中超计划200元。'
   await parsePciResponse(inpatientDrgExplanationResponseSchema, await s.fixture.request('inpatient-doctor', `${stay.path}/drg/record-checks/explain`, {
@@ -139,7 +135,6 @@ it('未开启跟进时读取核对不派发；按需解释复用结果并从首�
   expect(Object.keys(s.calls[0]!.payload as object)).toEqual(['recordChecks'])
   expect(s.calls[0]!.payload).not.toHaveProperty('recordChecks.simulation')
   expect(JSON.stringify(s.calls)).not.toMatch(/CaseTruth|caseTruth|hidden/)
-  expect(await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/followup`, inpatientDrgFollowupSchema)).toMatchObject({ task: null })
   const repeated = await s.fixture.request('inpatient-doctor', `${s.stay.path}/drg/record-checks/explain`, {
     expectedVersion: completed.version, expectedFingerprint: checks.fingerprint,
   })

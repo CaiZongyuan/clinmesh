@@ -1,11 +1,8 @@
-import { inpatientDrgAgentConfirmInputSchema } from '@clinmesh/contracts/inpatient-drg-agent'
 import { inpatientRiskAssessmentInputSchema, inpatientVitalSignsInputSchema } from '@clinmesh/contracts/clinical-scores'
 import { inpatientDrgExplainInputSchema } from '@clinmesh/contracts/inpatient-drg-explanation'
-import { inpatientGuidelineAdviceRequestInputSchema } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientMaterialEstimateRequestInputSchema, inpatientMaterialEstimateSaveInputSchema, inpatientMaterialEstimateConfirmInputSchema } from '@clinmesh/contracts/inpatient-material-estimate'
 import { inpatientDrgReviewTodoActionInputSchema, inpatientDrgReviewHandoffInputSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { inpatientPciSelectionConfirmInputSchema, inpatientPciSelectionSaveInputSchema } from '@clinmesh/contracts/inpatient-pci-selection'
-import { inpatientDrgFollowupStartInputSchema, inpatientDrgFollowupStopInputSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { insuranceTargetSchema } from '@clinmesh/contracts/insurance'
 import { chargeAdjustmentInputSchema, refundPreviewInputSchema, refundConfirmInputSchema, refundRecoverInputSchema } from '@clinmesh/contracts/refunds'
 import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema, inpatientFinancialInsuranceConfirmInputSchema } from '@clinmesh/contracts/inpatient-finance'
@@ -56,8 +53,6 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('payment.multi-charge.confirm'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentConfirmOperationInputSchema }).strict(),
   z.object({ operation: z.literal('payment.multi-charge.recover'), caseId: z.string().min(1), patientId: z.string().min(1), encounterId: z.string().min(1), input: multiChargePaymentRecoverOperationInputSchema }).strict(),
   cmd('inpatient.drg.record-checks.explain', inpatientDrgExplainInputSchema),
-  cmd('inpatient.guideline-advice.request', inpatientGuidelineAdviceRequestInputSchema),
-  cmd('inpatient.drg.agent.confirm', inpatientDrgAgentConfirmInputSchema),
   cmd('inpatient.material-estimate.request', inpatientMaterialEstimateRequestInputSchema),
   cmd('inpatient.material-estimate.cancel', inpatientMaterialEstimateRequestInputSchema),
   cmd('inpatient.material-estimate.save', inpatientMaterialEstimateSaveInputSchema),
@@ -66,8 +61,6 @@ const commandSchema = z.discriminatedUnion('operation', [
   cmd('inpatient.drg.review.handoff', inpatientDrgReviewHandoffInputSchema),
   cmd('inpatient.pci-selection.confirm', inpatientPciSelectionConfirmInputSchema),
   cmd('inpatient.pci-selection.save', inpatientPciSelectionSaveInputSchema),
-  cmd('inpatient.drg.followup.start', inpatientDrgFollowupStartInputSchema),
-  cmd('inpatient.drg.followup.stop', inpatientDrgFollowupStopInputSchema),
   cmd('inpatient.pci-data.prepare', inpatientPciDataPrepareRequestSchema.shape.input),
   cmd('admin.pci-case.prepare', pciCaseSourcePrepareRequestSchema.shape.input),
   cmd('admin.authored-case-pack.prepare', authoredCasePackPrepareRequestSchema.shape.input),

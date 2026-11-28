@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ClinicalOverrideInput, ClinicalQualityCheck } from '@clinmesh/contracts/clinical-quality'
-import type { DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinicalCatalog, DoctorCaseDetail, EncounterCompletionPreview, SessionContext } from '@clinmesh/contracts/his'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { inpatientAngiographyReportsSchema } from '@clinmesh/contracts/inpatient-angiography'
@@ -13,8 +12,6 @@ import { inpatientMaterialEstimatesSchema } from '@clinmesh/contracts/inpatient-
 import { inpatientPciSelectionSchema } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientSurgeryRequestSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
-import { AgentPageRegistryProvider } from './agent-page-context.tsx'
-import { AgentReviewProvider, useAgentReview, type AgentReviewTask } from './agent-review.tsx'
 import { ApiClientError } from './api-client.ts'
 import { ClinicalQualityBanner } from './clinical-quality-banner.tsx'
 import { DoctorCompletionActionBar } from './doctor/doctor-completion-action.tsx'
@@ -231,52 +228,27 @@ describe('Clinical quality gates Web UI & AgentReviewProvider contracts', () => 
     const user = userEvent.setup()
     const confirmCalls: Array<{ body: unknown; idempotencyKey: string | null }> = []
     let mode: 'red-line' | 'alert' = 'red-line'
-    const recommendationPayload: DoctorRecommendationState = {
-      caseEvidence: [{ id: 'synthetic-case-evidence', kind: 'draft', label: '合成已知资料', text: '合成病例资料，用于测试待开具清单。' }],
-      caseId: sampleOutpatientDetail.caseId,
-      encounterId: sampleOutpatientDetail.encounter.id,
-      encounterVersion: sampleOutpatientDetail.encounter.versionId,
-      generation: 1,
-      guidelines: [{
-        id: 'synthetic-guideline-evidence',
-        documentType: 'guideline',
-        locator: '合成测试条款',
-        publisher: '合成指南发布者',
-        scope: '合成测试病例',
-        sourceHash: 'a'.repeat(64),
-        text: '合成条款，仅用于界面合同测试。',
-        title: '合成用药指南',
-        url: 'https://example.test/guidelines/synthetic',
-        version: '1',
-      }],
-      inputFingerprint: '1'.repeat(64),
-      items: [{
-        caseEvidenceIds: ['synthetic-case-evidence'],
-        catalogItemId: sampleOutpatientMedication.id,
-        courseDays: 7,
-        doseText: '500 mg',
-        frequencyCode: 'BID',
-        routeCode: 'PO',
-        guidelineEvidenceIds: ['synthetic-guideline-evidence'],
-        id: 'rec-metformin-1',
-        kind: 'prescription',
-        label: sampleOutpatientMedication.nameZh,
-        missingInformation: [],
-        opposingInformation: [],
-        quantity: 14,
-        rationale: '合成推荐用药',
-        supportingInformation: ['合成血糖升高记录'],
-      }],
-      kind: 'prescription',
-      missingInformation: [],
-      stale: false,
-      status: 'ready',
+    const draftDetail: DoctorCaseDetail = {
+      ...sampleOutpatientDetail,
+      medicationConclusion: {
+        draftVersion: 1,
+        draft: {
+          items: [{
+            catalogItemId: sampleOutpatientMedication.id,
+            courseDays: 7,
+            doseText: '500 mg',
+            frequencyCode: 'BID',
+            routeCode: 'PO',
+            quantity: 14,
+          }],
+        },
+      },
     }
 
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url
       if (!url.endsWith('/actions/confirm')) {
-        return Response.json(recommendationPayload)
+        throw new Error(`Unexpected fetch in PrescriptionPage quality test: ${url}`)
       }
       const headers = new Headers(init?.headers)
       const body = JSON.parse(String(init?.body ?? '{}')) as { input?: { clinicalOverride?: ClinicalOverrideInput } }
@@ -348,19 +320,17 @@ describe('Clinical quality gates Web UI & AgentReviewProvider contracts', () => 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
     render(
       <QueryClientProvider client={queryClient}>
-        <AgentPageRegistryProvider>
-          <PrescriptionPage
-            actions={actions}
-            allowWithdrawal
-            catalog={[sampleOutpatientMedication]}
-            detail={sampleOutpatientDetail}
-            elementId="prescription-page"
-            locale="zh-CN"
-            messages={getWorkspaceMessages('zh-CN')}
-            readOnly={false}
-            referenceSearch={{ data: undefined, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }}
-          />
-        </AgentPageRegistryProvider>
+        <PrescriptionPage
+          actions={actions}
+          allowWithdrawal
+          catalog={[sampleOutpatientMedication]}
+          detail={draftDetail}
+          elementId="prescription-page"
+          locale="zh-CN"
+          messages={getWorkspaceMessages('zh-CN')}
+          readOnly={false}
+          referenceSearch={{ data: undefined, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }}
+        />
       </QueryClientProvider>,
     )
 
@@ -607,122 +577,6 @@ describe('Clinical quality gates Web UI & AgentReviewProvider contracts', () => 
       note: '外院急诊心电图与肌钙蛋白均正常',
       acknowledgedAlerts: ['CHEST_PAIN_WORKUP_INCOMPLETE'],
     }])
-  })
-
-  it('supports prefilled clinicalOverride passthrough and single-gate 409 supplement in AgentReviewProvider (.propose)', async () => {
-    const user = userEvent.setup()
-    let review!: ReturnType<typeof useAgentReview>
-    function Harness(): null {
-      review = useAgentReview()
-      return null
-    }
-    render(<AgentReviewProvider locale="zh-CN"><Harness /></AgentReviewProvider>)
-
-    const receivedOverrides: Array<ClinicalOverrideInput | undefined> = []
-    let prefilledTask!: AgentReviewTask
-    act(() => {
-      prefilledTask = review.request({
-        allowClinicalOverride: true,
-        clinicalOverride: {
-          reasonCode: 'external-result-verified',
-          note: '智能体已读取患者携带的外院心电图与肌钙蛋白记录',
-          acknowledgedAlerts: ['CHEST_PAIN_WORKUP_INCOMPLETE'],
-        },
-        confirmLabel: '确认完诊',
-        description: '合成胸痛患者',
-        onConfirm: (_ack, override) => {
-          receivedOverrides.push(override)
-          return { status: 'completed' }
-        },
-        signal: new AbortController().signal,
-        title: '确认完诊',
-      })
-      prefilledTask.bindDecisionGate(async () => undefined)
-    })
-
-    expect(await screen.findByLabelText('临床质控确认说明')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '确认完诊' }))
-    await expect(prefilledTask.decision).resolves.toEqual({
-      approved: true,
-      data: { status: 'completed' },
-    })
-    expect(receivedOverrides).toEqual([{
-      reasonCode: 'external-result-verified',
-      note: '智能体已读取患者携带的外院心电图与肌钙蛋白记录',
-      acknowledgedAlerts: ['CHEST_PAIN_WORKUP_INCOMPLETE'],
-    }])
-
-    const gateDecisions: string[] = []
-    const attempts: Array<ClinicalOverrideInput | undefined> = []
-    let supplementTask!: AgentReviewTask
-    act(() => {
-      supplementTask = review.request({
-        allowClinicalOverride: true,
-        confirmLabel: '开具处方',
-        description: '合成上感患者 · 1 项药品',
-        onConfirm: (_ack, override) => {
-          attempts.push(override)
-          if (override === undefined) {
-            throw new ApiClientError(
-              409,
-              'CLINICAL_QUALITY_ALERT',
-              '单纯病毒性感染无细菌指征开立抗菌药',
-              undefined,
-              undefined,
-              {
-                clinicalQuality: {
-                  evaluatedAt: '2026-11-18T10:10:00+08:00',
-                  gate: 'outpatient-prescription',
-                  status: 'alert',
-                  redLines: [],
-                  alerts: [{
-                    code: 'ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION',
-                    tier: 'alert',
-                    catalogItemId: 'medication-amoxicillin',
-                    message: '当前仅确认病毒性上感诊断，缺乏细菌感染指征。',
-                    evidence: [],
-                  }],
-                },
-              },
-            )
-          }
-          return { prescriptionId: 'rx-override-1' }
-        },
-        signal: new AbortController().signal,
-        title: '开具处方',
-      })
-      supplementTask.bindDecisionGate(async decision => {
-        gateDecisions.push(decision)
-      })
-    })
-
-    await user.click(await screen.findByRole('button', { name: '开具处方' }))
-    const inlineOverrideBox = await screen.findByLabelText('临床质控确认说明')
-    expect(inlineOverrideBox.textContent).toContain('ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION')
-    expect(gateDecisions).toEqual(['approved'])
-
-    const confirmBtn = screen.getByRole('button', { name: '开具处方' })
-    expect((confirmBtn as HTMLButtonElement).disabled).toBe(true)
-
-    await user.click(screen.getByLabelText('受控越权原因'))
-    await user.click(await screen.findByRole('option', { name: '经专科综合评估符合个体化诊疗方案' }))
-    await user.type(screen.getByLabelText('医学说明（至少 4 字）'), '查体见双侧扁桃体化脓伴高热，临床判断合并细菌感染')
-    expect((confirmBtn as HTMLButtonElement).disabled).toBe(false)
-
-    await user.click(confirmBtn)
-    await expect(supplementTask.decision).resolves.toEqual({
-      approved: true,
-      data: { prescriptionId: 'rx-override-1' },
-    })
-    expect(gateDecisions).toEqual(['approved'])
-    expect(attempts).toEqual([
-      undefined,
-      {
-        reasonCode: 'clinical-judgement',
-        note: '查体见双侧扁桃体化脓伴高热，临床判断合并细菌感染',
-        acknowledgedAlerts: ['ANTIBIOTIC_WITHOUT_BACTERIAL_INDICATION'],
-      },
-    ])
   })
 
   it('Gate 3 (InpatientSurgery PciStepOneCard): keeps Step 1 open when angiography reveals FFR > 0.80 on auto-draft and resubmits inline override', async () => {

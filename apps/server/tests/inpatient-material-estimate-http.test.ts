@@ -2,11 +2,9 @@ import { afterEach, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
-import { inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
-import { inpatientDrgAgentSchema, inpatientDrgAgentResponseSchema } from '@clinmesh/contracts/inpatient-drg-agent'
+import { inpatientDrgRecordChecksSchema, inpatientDrgReviewSchema } from '@clinmesh/contracts/inpatient-drg-review'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
 import { inpatientMaterialEstimatesSchema, inpatientMaterialEstimateResponseSchema } from '@clinmesh/contracts/inpatient-material-estimate'
-import { inpatientDrgFollowupSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { inpatientMaterialReservationListSchema, inpatientCostsSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { modelUsageOverviewSchema, modelUsageListSchema } from '@clinmesh/contracts/model-usage'
@@ -97,36 +95,7 @@ async function confirmEstimate(s: Awaited<ReturnType<typeof setup>>) {
   return inpatientMaterialEstimateResponseSchema.parse(await response.json()).data
 }
 
-it('术中旧通用数量依据只读展开为原确认事实，不借用另一台新确认且不改历史', async () => {
-  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
-  const stay = s.pciAdmission!
-  const legacy = '合成单病变 PCI 计划：每类耗材1件'
-  const parameters = { ...pciAgentParameters, requestId: stay.requestId, plannedQuantities: pciAgentParameters.plannedQuantities.map(item => ({ ...item,
-    basis: item.category === 'guidewire' ? '医生确认导丝用于本次分支保护' : legacy })) }
-  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters })).status).toBe(200)
-  await s.fixture.runtime.dispatchPending()
-  const confirmed = await confirmEstimate(s)
-  const input = await s.fixture.pciExecutionInput(stay)
-  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/start`, { requestId: input.requestId,
-    expectedRequestVersion: input.expectedRequestVersion, procedureId: input.procedureId, catalogVersion: input.catalogVersion, note: '合成按原确认开始手术' })).status).toBe(200)
-  const read = () => s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
-  const expected = [
-    ['hospital-material-pci-balloon', '合成兼容组合：2.5×15 mm预扩球囊配3.0×18 mm支架'],
-    ['hospital-material-pci-guidewire', '医生确认导丝用于本次分支保护'],
-    ['hospital-material-pci-guiding-catheter', '合成兼容组合：6F导引导管配0.014英寸导丝'],
-    ['hospital-material-pci-stent', '病变12 mm · 近端参考3 mm · 远端参考3 mm'],
-  ]
-  expect((await read()).intraoperativePlans.find(plan => plan.requestId === stay.requestId)!.items.map(item => [item.materialId, item.quantityBasis])).toEqual(expected)
-  const next = await plan(s, stay.procedure.id)
-  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 1, parameters: {
-    ...pciAgentParameters, requestId: next.id, targetSite: 'RCA 中段', measurements: pciAgentParameters.measurements.map(item => item.kind === 'lesion-length'
-      ? { ...item, site: 'RCA 中段', value: 16 } : item),
-  } })).status).toBe(200)
-  expect((await read()).intraoperativePlans.find(plan => plan.requestId === stay.requestId)!.items.map(item => [item.materialId, item.quantityBasis])).toEqual(expected)
-  expect((await s.read()).estimates.find(item => item.requestId === stay.requestId)!.planBasis).toEqual(confirmed.planBasis)
-})
-
-it('一次确认的PCI清单术后核查不依赖跟进，开启跟进后不重复待办', async () => {
+it('一次确认的PCI清单术后核查不依赖跟进', async () => {
   const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
   const stay = s.pciAdmission!
   expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, {
@@ -134,7 +103,6 @@ it('一次确认的PCI清单术后核查不依赖跟进，开启跟进后不重�
   })).status).toBe(200)
   await s.fixture.runtime.dispatchPending()
   const confirmed = await confirmEstimate(s)
-  expect((await s.fixture.read('inpatient-doctor', `${stay.path}/drg/followup`, inpatientDrgFollowupSchema)).task).toBeNull()
   expect(s.calls).toHaveLength(2)
   const reservations = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)
   const unused = reservations.reservations.find(item => item.materialId === 'hospital-material-pci-balloon')!
@@ -162,13 +130,6 @@ it('一次确认的PCI清单术后核查不依赖跟进，开启跟进后不重�
     expect.objectContaining({ kind: 'unplanned-product', materialId: 'hospital-material-catheter', plannedQuantity: 0, actualQuantity: 1,
       target: 'surgery', procedureDisplay: expect.any(String) }),
   ]))
-  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
-    encounterVersion: (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission.versionId, expectedTaskVersion: 0,
-  })).status).toBe(200)
-  const followed = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
-  expect(followed.todos.filter(item => review.todos.some(previous => previous.key === item.key)).map(item => item.id))
-    .toEqual(review.todos.map(item => item.id))
-  expect(new Set(followed.todos.map(item => item.key)).size).toBe(followed.todos.length)
   const late = (await s.read()).estimates[0]!
   const editedAfterSurgery = await s.fixture.request('inpatient-doctor', `${stay.path}/material-estimates/save`, {
     requestId: late.requestId, expectedVersion: late.version, expectedDraftRevision: late.draft!.revision,
@@ -234,48 +195,11 @@ it('PCI原清单快照缺失时保留实际用量，不用参数确认回填原�
   await s.fixture.restart()
   expect((await s.read()).estimates.find(item => item.requestId === stay.requestId)!.planBasis)
     .toMatchObject({ status: 'unverifiable', effectiveReference: null })
-  const usage = (await s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).usage
+  const usage = (await s.fixture.read('inpatient-doctor', `${stay.path}/drg/record-checks`, inpatientDrgRecordChecksSchema)).usage
   expect(usage.filter(item => item.executionId === execution.id)).toEqual([expect.objectContaining({
     materialId: 'hospital-material-pci-guidewire', actualQuantity: 2, usedFen: 40000,
     plannedQuantity: null, remainingQuantity: null, unplanned: false, excessQuantity: 0, additionalFen: 0,
   })])
-})
-
-it('同手术两个确认来源明确冲突，不静默选择或拼接原数量', async () => {
-  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true)
-  const stay = s.pciAdmission!
-  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, {
-    expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId },
-  })).status).toBe(200)
-  await s.fixture.runtime.dispatchPending()
-  const single = await confirmEstimate(s)
-  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
-    encounterVersion: s.stay.encounterVersion, expectedTaskVersion: 0,
-  })).status).toBe(200)
-  await s.fixture.runtime.dispatchPending()
-  const agent = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
-  const confirmation = await s.fixture.request('inpatient-doctor', `${stay.path}/drg/agent/confirm`, {
-    analysisId: agent.analysis!.id, expectedBasisFingerprint: agent.basisFingerprint, expectedRevision: 0,
-    note: '独立持续跟进入口的确认不能隐式取代另一来源',
-    items: agent.analysis!.items.map(({ materialId, catalogVersion, quantity, reason }) => ({ materialId, catalogVersion, quantity, reason })),
-  })
-  expect(confirmation.status, await confirmation.clone().text()).toBe(200)
-  inpatientDrgAgentResponseSchema.parse(await confirmation.json())
-  const input = await s.fixture.pciExecutionInput(stay)
-  const performed = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/execute`, { ...input,
-    materials: [...input.materials.filter(item => item.materialId !== 'hospital-material-pci-guidewire'),
-      { materialId: 'hospital-material-pci-guidewire', catalogVersion: 1, quantity: 2 }] })
-  expect(performed.status).toBe(200)
-  const review = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
-  expect(review.planBases[0]).toMatchObject({ status: 'conflict', effectiveReference: null,
-    history: [single.planBasis!.history[0], { source: 'drg-agent', sourceVersion: 1 }] })
-  expect(review.comparisons.every(item => item.plannedQuantity === null)).toBe(true)
-  expect(review.todos).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'plan-conflict', requestId: stay.requestId })]))
-  const usage = (await s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).usage
-  expect(usage).toContainEqual(expect.objectContaining({ materialId: 'hospital-material-pci-guidewire',
-    actualQuantity: 2, usedFen: 40000, plannedQuantity: null, remainingQuantity: null, unplanned: false, additionalFen: 0 }))
-  expect(usage.every(item => item.plannedQuantity === null && item.remainingQuantity === null)).toBe(true)
-  expect((await s.fixture.read('cashier', `${stay.path}/drg/review`, inpatientDrgReviewSchema)).planBases).toEqual([])
 })
 
 it('已确认清单只绑定原手术，另一手术的未确认草稿和单项预留不能充当依据', async () => {
@@ -299,9 +223,6 @@ it('已确认清单只绑定原手术，另一手术的未确认草稿和单项�
   for (const requestId of [stay.requestId, second.id]) {
     expect((await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/execute`, await s.fixture.pciExecutionInput(stay, requestId))).status).toBe(200)
   }
-  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/drg/followup/start`, {
-    encounterVersion: s.stay.encounterVersion, expectedTaskVersion: 0,
-  })).status).toBe(200)
   const review = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/review`, inpatientDrgReviewSchema)
   expect(review.planBases).toEqual(expect.arrayContaining([first.planBasis, { requestId: second.id, status: 'missing', effectiveReference: null, history: [] }]))
   expect(review.todos.filter(item => item.kind === 'missing-plan').map(item => item.requestId)).toEqual([second.id])
@@ -402,7 +323,6 @@ it.each(['rules-unavailable', 'grouping-incomplete', 'reference-missing'] as con
   expect(state.costs?.paymentMessage).toMatch(status === 'rules-unavailable' ? /医院尚未启用医保分组/
     : status === 'grouping-incomplete' ? /诊断或手术记录不全/ : /暂无支付参考，金额暂不可估/)
   expect(s.calls).toHaveLength(2)
-  expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/followup`, inpatientDrgFollowupSchema)).task).toBeNull()
 })
 
 it('保存双根导管造影计划即自动预计一次，刷新复用且不启动持续跟进或创建预留收费', async () => {
@@ -429,8 +349,6 @@ it('保存双根导管造影计划即自动预计一次，刷新复用且不启�
   expect((await s.read()).estimates[0]).toEqual(first)
   await s.fixture.runtime.dispatchPending()
   expect(s.calls.map(call => call.feature)).toEqual(['inpatient_drg_recommendation', 'inpatient_drg_verification'])
-  const followup = await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/followup`, inpatientDrgFollowupSchema)
-  expect(followup.task).toBeNull()
   expect((await s.fixture.read('inpatient-doctor', `${s.stay.path}/drg/reservations`, inpatientMaterialReservationListSchema)).reservations).toEqual([])
   expect((await s.fixture.read('cashier', `${s.stay.path}/charges`, inpatientChargesSchema)).charges).toEqual([])
 })
@@ -914,39 +832,6 @@ it('人工采用等效候选只改产品并保存同数量工作稿，换回恢�
   expect(own.some(item => item.materialId === 'hospital-material-pci-stent')).toBe(false)
 })
 
-it('术中清单返回自身确认候选，后确认的另一PCI计划不会替代当前手术的等效依据', async () => {
-  const s = await setup(feature => feature === 'inpatient_drg_recommendation' ? pciAgentGeneration : pciAgentVerification, true), stay = s.pciAdmission!
-  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 0, parameters: { ...pciAgentParameters, requestId: stay.requestId } })).status).toBe(200)
-  await s.fixture.runtime.dispatchPending()
-  await confirmEstimate(s)
-  const admission = (await s.fixture.read('inpatient-doctor', stay.path, inpatientDetailSchema)).admission
-  const next = inpatientSurgeryResponseSchema.parse(await (await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/request`, {
-    anesthesiaMethod: 'local-infiltration', preopOrderPolicy: 'continue-active',
-    encounterVersion: admission.versionId,
-    locationId: 'location-catheterization-lab',
-    procedureId: stay.procedure.id,
-    catalogVersion: 1,
-    plannedFor: '2026-08-24T18:00:00+08:00',
-    reason: '另一台已确认的合成PCI计划',
-    surgeonPractitionerId: 'practitioner-inpatient-doctor',
-    surgeryType: 'elective',
-  })).json()).data.requests.find(item => item.id !== stay.requestId)!
-  expect((await s.fixture.request('inpatient-doctor', `${stay.path}/pci-selection/confirm`, { expectedVersion: 1,
-    parameters: { ...pciAgentParameters, requestId: next.id, measurements: pciAgentParameters.measurements.map(item => item.kind === 'proximal-reference-diameter' ? { ...item, value: 3.5 } : item) } })).status).toBe(200)
-  const latest = await s.fixture.read('inpatient-doctor', `${stay.path}/pci-selection`, inpatientPciSelectionResponseSchema.shape.data)
-  expect(latest.confirmation!.parameters.requestId).toBe(next.id)
-  expect(latest.candidates.every(item => item.eligibility === 'inapplicable')).toBe(true)
-  const { materials: _materials, ...start } = await s.fixture.pciExecutionInput(stay)
-  const started = await s.fixture.request('inpatient-doctor', `${stay.path}/surgeries/start`, start)
-  expect(started.status, await started.clone().text()).toBe(200)
-  const state = await s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)
-  const own = state.intraoperativePlans.find(item => item.requestId === stay.requestId)!
-  expect(own.candidates).toHaveLength(4)
-  expect(own.candidates.every(item => item.eligibility === 'valid')).toBe(true)
-  expect(own.alternatives).toMatchObject([{ materialId: 'hospital-material-pci-stent-equivalent-b', eligibility: 'valid', equivalenceGroupId: 'synthetic-pci-stent-3.0x18' }])
-})
-
-
 it('两份明确草稿合并才达到九成时，候选与模型费用使用同一住院总额，采用换回不叠加旧稿', async () => {
   const s = await setup((feature, input) => {
     if (feature === 'inpatient_drg_recommendation') {
@@ -1006,7 +891,6 @@ it('两份明确草稿合并才达到九成时，候选与模型费用使用同�
   expect(adopted.costs!.components.projectedTotalFen).toBe(1060000)
   const after = (await s.read()).estimates
   expect(after.every(item => item.costs!.components.projectedTotalFen === 1060000 && item.equivalentSuggestions.length === 0)).toBe(true)
-  expect((await s.fixture.read('inpatient-doctor', `${stay.path}/drg/agent`, inpatientDrgAgentSchema)).costs!.components.projectedTotalFen).toBe(1060000)
   const restored = await change('hospital-material-pci-stent-equivalent-b', 'hospital-material-pci-stent')
   expect(restored.costs!.components.projectedTotalFen).toBe(1080000)
   expect((await s.read()).estimates.every(item => item.equivalentSuggestions[0]?.beforeTotalFen === 1080000)).toBe(true)

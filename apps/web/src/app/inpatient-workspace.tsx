@@ -9,7 +9,6 @@ import { inpatientTransferCatalogSchema } from '@clinmesh/contracts/inpatient-tr
 import { InpatientIncomingTransfers } from './inpatient-transfers.tsx'
 import { scenarioStateSchema, type PatientSummary, type SessionContext } from '@clinmesh/contracts/his'
 import { startSyntheticInpatientCaseResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
-import { inpatientDrgFollowupResponseSchema } from '@clinmesh/contracts/inpatient-drg-followup'
 import { inpatientCatalogSchema, inpatientListSchema, inpatientCommandResponseSchema,
   inpatientReferralListSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -94,11 +93,6 @@ function InpatientWorkspaceContent({ session, locale }: { session: SessionContex
     if (command.operation === 'registration.synthetic-case.start-inpatient') {
       setSelectedId(startSyntheticInpatientCaseResponseSchema.parse(response).data.admissionId)
       announceHandoff(zh ? '已完成住院登记' : 'Admission registered', handedTo)
-    }
-    if (command.operation === 'inpatient.drg.followup.start' || command.operation === 'inpatient.drg.followup.stop') {
-      client.setQueryData([...key, command.input.admissionId, 'drg-followup'], inpatientDrgFollowupResponseSchema.parse(response).data)
-      void refresh()
-      return
     }
     await refresh()
   })

@@ -4,8 +4,6 @@
 
 @custom-variant dark (&:is(.dark *));
 @source "../../../apps/web/src/**/*.{ts,tsx}";
-@source "../../../apps/desktop/src/**/*.{ts,tsx}";
-@source "../../views/src/**/*.{ts,tsx}";
 @source "../**/*.{ts,tsx}";
 
 @theme inline {
@@ -58,24 +56,24 @@
 
 :root {
   color-scheme: light;
-  --font-ui: var(--dsw-font-family, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
-  --font-code: var(--ds-font-family-code, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
+  --font-ui: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-code: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --clinmesh-font-scale: 1;
   --text-2xs: 0.625rem;
   --text-control-sm: 0.875rem;
   --text-data: 0.8125rem;
-  --background: var(--dsw-alias-bg-module-platform, #f5f6f7);
-  --foreground: var(--dsw-alias-label-primary, #0f1115);
-  --card: var(--dsw-alias-bg-layer-1, #ffffff);
-  --card-foreground: var(--dsw-alias-label-primary, #0f1115);
+  --background: #f5f6f7;
+  --foreground: #0f1115;
+  --card: #ffffff;
+  --card-foreground: #0f1115;
   --popover: #ffffff;
-  --popover-foreground: var(--dsw-alias-label-primary, #0f1115);
-  --primary: var(--dsw-alias-button-primary-fill, #0f1115);
-  --primary-foreground: var(--dsw-alias-bg-layer-1, #ffffff);
-  --secondary: var(--dsw-specific-sidebar-nav-item-active, #ebeef2);
-  --secondary-foreground: var(--dsw-alias-label-primary, #0f1115);
-  --muted: var(--dsw-alias-bg-module-platform, #f5f6f7);
-  --muted-foreground: var(--dsw-alias-label-secondary, #61666b);
+  --popover-foreground: #0f1115;
+  --primary: #0f1115;
+  --primary-foreground: #ffffff;
+  --secondary: #ebeef2;
+  --secondary-foreground: #0f1115;
+  --muted: #f5f6f7;
+  --muted-foreground: #61666b;
   --accent: #e9f0fc;
   --accent-foreground: #175fb8;
   --destructive: #b4232c;
@@ -86,7 +84,7 @@
   --warning-foreground: #ffffff;
   --info: #1764c0;
   --info-foreground: #ffffff;
-  --border: var(--dsw-alias-border-l2, #dce0e5);
+  --border: #dce0e5;
   --input: #7e8793;
   --ring: var(--info);
   --chart-1: var(--info);
@@ -95,7 +93,7 @@
   --chart-4: var(--destructive);
   --chart-5: var(--muted-foreground);
   --radius: 0.5rem;
-  --sidebar: var(--dsw-specific-sidebar-fill, #f9fafb);
+  --sidebar: #f9fafb;
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
@@ -114,18 +112,18 @@
 
 .dark {
   color-scheme: dark;
-  --background: var(--dsw-alias-bg-base, #151517);
-  --foreground: var(--dsw-alias-label-primary, #f9fafb);
-  --card: var(--dsw-alias-bg-layer-1, #232324);
-  --card-foreground: var(--dsw-alias-label-primary, #f9fafb);
+  --background: #151517;
+  --foreground: #f9fafb;
+  --card: #232324;
+  --card-foreground: #f9fafb;
   --popover: #353638;
-  --popover-foreground: var(--dsw-alias-label-primary, #f9fafb);
-  --primary: var(--dsw-alias-button-primary-fill, #f9fafb);
-  --primary-foreground: var(--dsw-alias-bg-base, #151517);
-  --secondary: var(--dsw-specific-sidebar-nav-item-active, #43454a);
+  --popover-foreground: #f9fafb;
+  --primary: #f9fafb;
+  --primary-foreground: #151517;
+  --secondary: #43454a;
   --secondary-foreground: var(--foreground);
-  --muted: var(--dsw-alias-bg-module-platform, #2c2c2e);
-  --muted-foreground: var(--dsw-alias-label-secondary, #cfd3d6);
+  --muted: #2c2c2e;
+  --muted-foreground: #cfd3d6;
   --accent: #24344c;
   --accent-foreground: #a7caff;
   --destructive: #ff9b9b;
@@ -136,9 +134,9 @@
   --warning-foreground: #151517;
   --info: #8dbbff;
   --info-foreground: #151517;
-  --border: var(--dsw-alias-border-l2, #ffffff1f);
+  --border: #ffffff1f;
   --input: #848b96;
-  --sidebar: var(--dsw-specific-sidebar-fill, #1b1b1c);
+  --sidebar: #1b1b1c;
   --specimen-cap-purple: #c084fc;
   --specimen-cap-yellow: #facc15;
   --specimen-cap-blue: #38bdf8;

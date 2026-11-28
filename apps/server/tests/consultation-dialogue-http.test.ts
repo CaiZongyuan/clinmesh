@@ -1,6 +1,5 @@
 import { persona, StubSyntheaProvider, signIn, startConsultationCase, useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
-import { agentPageContextBindingSchema } from '@clinmesh/contracts/agent'
 import {
   doctorCaseDetailSchema,
   issueLaboratoryRequestResponseSchema,
@@ -82,7 +81,6 @@ async function createRuntimeWithProvider(provider: JsonChatCompletionsProvider, 
     authSecret: 'test-auth-secret-with-at-least-32-characters',
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
     chatCompletionsProvider: provider,
-    dshBridgeSecret: 'test-dsh-bridge-secret-with-at-least-32-characters',
     consultationModel: 'fake-consultation-model',
     databasePath: databasePath ?? join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!',
@@ -804,27 +802,6 @@ describe('Consultation free dialogue HTTP contract', () => {
       messageText: '您哪里不舒服？',
       speaker: 'doctor',
     })
-
-    const context = await runtime.app.request('/api/agent/v1/page-contexts', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin },
-      body: JSON.stringify({
-        claim: {
-          activeSection: 'consultation',
-          selection: { id: started.outpatientCaseId, kind: 'case', version: detail.encounter.versionId },
-          ui: { status: 'ready' },
-          version: 1,
-          viewId: 'consultation',
-          viewRevision: 'unanswered-doctor-turn',
-          taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc',
-        },
-        client: { id: 'consultation-retry-client', revision: 1 },
-        dshSessionId: 'consultation-retry-session',
-      }),
-    })
-    expect(context.status).toBe(201)
-    const binding = agentPageContextBindingSchema.parse(await context.json())
-    expect(binding.snapshot.allowedOperationIds).toContain('outpatient.consultation.reply.retry')
 
     const retry = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/actions/retry-consultation-reply`,

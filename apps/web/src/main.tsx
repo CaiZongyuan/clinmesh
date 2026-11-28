@@ -1,5 +1,4 @@
 import '@clinmesh/ui/styles.css'
-import './app/agent-action-feedback.css'
 import './app/workspace-card-layout.css'
 import './app/doctor/clinical-document-updates.css'
 import { StrictMode } from 'react'

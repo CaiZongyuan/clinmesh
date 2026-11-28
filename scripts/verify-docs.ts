@@ -1,12 +1,62 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, globSync, lstatSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, globSync, lstatSync, readFileSync } from 'node:fs'
 import { dirname, extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Nodes } from 'mdast'
 import { fromMarkdown } from 'mdast-util-from-markdown'
 import { gfmFromMarkdown } from 'mdast-util-gfm'
 import { gfm } from 'micromark-extension-gfm'
-import { collectMarkdownAnchors } from './project-doc-site.ts'
+
+const LEADING_FRONTMATTER = /^---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/
+const HTML_OPEN_TAG = /<([a-zA-Z][a-zA-Z0-9:-]*)(?:\s+((?:[^>"']|"[^"]*"|'[^']*')*))?\/?>/g
+const HTML_ATTRIBUTE = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
+
+function slugifyHeading(value: string): string {
+  return value.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\p{Pc}\-\s]/gu, '').replace(/\s/g, '-')
+}
+
+function headingText(node: Nodes): string {
+  if ('value' in node && typeof node.value === 'string') return node.type === 'html' ? '' : node.value
+  if ('children' in node) return node.children.map(headingText).join('')
+  return ''
+}
+
+function collectMarkdownAnchors(markdown: string): Set<string> {
+  const body = markdown.replace(LEADING_FRONTMATTER, '')
+  const tree = fromMarkdown(body, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] })
+  const anchors = new Set<string>()
+  const headingSlugs = new Set<string>()
+  const visit = (node: Nodes): void => {
+    if (node.type === 'html') {
+      const sanitized = node.value.replace(/<!--[\s\S]*?-->/g, '').replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+      for (const tagMatch of sanitized.matchAll(HTML_OPEN_TAG)) {
+        const tagName = tagMatch[1]?.toLowerCase()
+        for (const attrMatch of (tagMatch[2] ?? '').matchAll(HTML_ATTRIBUTE)) {
+          const attrName = attrMatch[1]?.toLowerCase()
+          if (attrName !== 'id' && !(tagName === 'a' && attrName === 'name')) continue
+          const value = attrMatch[2] ?? attrMatch[3] ?? attrMatch[4]
+          if (value !== undefined && value !== '') anchors.add(value)
+        }
+      }
+    }
+    if (node.type === 'heading') {
+      const base = slugifyHeading(headingText(node))
+      if (base !== '') {
+        let slug = base
+        let suffix = 1
+        while (headingSlugs.has(slug)) {
+          slug = `${base}-${suffix}`
+          suffix += 1
+        }
+        headingSlugs.add(slug)
+        anchors.add(slug)
+      }
+    }
+    if ('children' in node) for (const child of node.children) visit(child)
+  }
+  visit(tree)
+  return anchors
+}
 
 const defaultRoot = resolve(import.meta.dirname, '..')
 
@@ -125,19 +175,12 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
       'node_modules/**',
       '**/node_modules/**',
       'vendor/**',
-      'apps/docs/.generated/**',
-      'apps/docs/.cache/**',
-      'apps/docs/.dist/**',
       'docs/decisions/archived/**',
     ],
   }).map(path => path.split(sep).join('/'))
     .filter(path => !trackedSymlinks.has(path) && !lstatSync(resolve(defaultRoot, path)).isSymbolicLink()).sort()
 
   const errors = verifyMarkdownFiles(defaultRoot, files)
-  for (const generated of ['apps/docs/.generated', 'apps/docs/.cache', 'apps/docs/.dist']) {
-    const path = resolve(defaultRoot, generated)
-    if (existsSync(path) && !statSync(path).isDirectory()) errors.push(`${generated}: expected a generated directory`)
-  }
 
   if (errors.length === 0) {
     console.log(`verify-docs: ${files.length} Markdown file(s) checked.`)

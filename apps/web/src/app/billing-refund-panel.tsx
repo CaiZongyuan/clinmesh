@@ -5,7 +5,6 @@ import { refundPreviewResponseSchema } from '@clinmesh/contracts/refunds'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { WorkspaceCard, useWorkspaceConfirmation } from './workspace-card-layout.tsx'
-import { agentViewRevision } from './agent-page-context.tsx'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
@@ -13,7 +12,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { getRefundCase } from './api-client.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, stableViewKey } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -96,7 +95,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
   }
   const busy = write.blocked || disabled
   const requestPending = write.mutation.isPending
-  const confirmationScope = agentViewRevision({ accountId: session.user.id, actor: session.actor, caseId: bill.caseId })
+  const confirmationScope = stableViewKey({ accountId: session.user.id, actor: session.actor, caseId: bill.caseId })
   const correctionFocus = useWorkspaceConfirmation({ open: correction !== undefined, pending: requestPending, disabled: busy, scope: confirmationScope, onCancel: () => setCorrection(undefined) })
   const refundFocus = useWorkspaceConfirmation({ open: frozen !== undefined, pending: requestPending, disabled: busy, scope: confirmationScope, onCancel: () => setFrozen(undefined) })
   const recoveryFocus = useWorkspaceConfirmation({ open: recoverId !== undefined, pending: requestPending, disabled: busy, scope: confirmationScope, onCancel: () => setRecoverId(undefined) })

@@ -95,31 +95,6 @@ describe('Node.js server configuration', () => {
     }
   })
 
-  it('uses DSH without duplicate Provider configuration and requires a trusted bridge', () => {
-    const environment = {
-      CLINMESH_AUTH_SECRET: 'synthetic-auth-secret-at-least-32-characters',
-      CLINMESH_CURSOR_SECRET: 'synthetic-cursor-secret-at-least-32-characters',
-      CLINMESH_DATABASE_PATH: '/synthetic/clinmesh.sqlite',
-      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
-      CLINMESH_AI_SOURCE: 'dsh',
-      CLINMESH_DSH_BRIDGE_SECRET: 'synthetic-bridge-secret-at-least-32-characters',
-    }
-    expect(readServerConfig(environment)).toMatchObject({ dshModelBridge: {
-      origin: 'http://127.0.0.1:3080', secret: environment.CLINMESH_DSH_BRIDGE_SECRET,
-      timeoutMs: 120000, maxResponseBytes: 1048576,
-    } })
-    expect(readServerConfig(environment)).not.toHaveProperty('ai')
-    expect(readServerConfig(environment)).not.toHaveProperty('consultationRecordingTimeoutMs')
-    expect(readServerConfig({ ...environment, CLINMESH_AI_RECORDING_MODEL: 'dsh:synthetic-fast',
-      CLINMESH_AI_RECORDING_TIMEOUT_MS: '6000' })).toMatchObject({ consultationRecordingModel: 'dsh:synthetic-fast' })
-    expect(readServerConfig({ ...environment, CLINMESH_AI_RECORDING_TIMEOUT_MS: '6000' }))
-      .not.toHaveProperty('consultationRecordingTimeoutMs')
-    expect(readServerConfig({ ...environment, CLINMESH_AI_TIMEOUT_MS: '180000' }).dshModelBridge?.timeoutMs).toBe(180000)
-    expect(() => readServerConfig({ ...environment, CLINMESH_DSH_BRIDGE_SECRET: undefined })).toThrow()
-    for (const origin of ['https://127.0.0.1:3080', 'http://remote.example', 'http://127.0.0.1:3080/path', 'http://user:password@127.0.0.1:3080']) {
-      expect(() => readServerConfig({ ...environment, CLINMESH_DSH_MODEL_ORIGIN: origin })).toThrow()
-    }
-  })
   it('reads an explicit persistent single-instance configuration without exposing secrets', () => {
     expect(readServerConfig({
       CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',
@@ -176,23 +151,6 @@ describe('Node.js server configuration', () => {
       authBaseUrl: 'http://127.0.0.1:51868',
       trustedOrigins: ['https://clinmesh.example', 'https://review.clinmesh.example'],
     })
-  })
-
-  it('accepts only an explicit HTTP Synthea Provider URL', () => {
-    const requiredEnvironment = {
-      CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',
-      CLINMESH_CURSOR_SECRET: 'cursor-secret-with-at-least-32-characters',
-      CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
-      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
-    }
-    expect(readServerConfig({
-      ...requiredEnvironment,
-      CLINMESH_SYNTHEA_PROVIDER_URL: 'http://synthea-provider:51878',
-    })).toMatchObject({ syntheaProviderUrl: 'http://synthea-provider:51878' })
-    expect(() => readServerConfig({
-      ...requiredEnvironment,
-      CLINMESH_SYNTHEA_PROVIDER_URL: 'file:///tmp/provider',
-    })).toThrow()
   })
 
   it('requires one complete bounded server-side AI configuration', () => {

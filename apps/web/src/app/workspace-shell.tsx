@@ -1,5 +1,4 @@
 import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
-import { SurfaceDisplayButton } from './surface-display-control.tsx'
 import { WorkspaceHeaderFlowSlot, WorkspaceHeaderLeadSlot, WorkspaceHeaderPatientSlot, WorkspaceHeaderProvider } from './workspace-card-layout.tsx'
 import { useWorkspaceMode, workspaceModeScope } from './workspace-mode.tsx'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
@@ -36,7 +35,7 @@ import {
 } from '@clinmesh/ui/components/sidebar'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { TooltipProvider } from '@clinmesh/ui/components/tooltip'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import {
   BellIcon,
@@ -63,7 +62,7 @@ import {
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
-import { useWebRuntime, type WebSurfaceAgentStatus } from './web-runtime.tsx'
+import { useWebRuntime } from './web-runtime.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessageKey } from './workspace-i18n.ts'
 
 export type WorkspaceTheme = 'system' | 'light' | 'dark'
@@ -147,15 +146,6 @@ const localeOptions = [
   value: WorkspaceLocale
   label: WorkspaceMessageKey
 }>
-
-const assistantLabels = {
-  unavailable: ['助手未连接', 'Assistant not connected'],
-  idle: ['助手等待连接', 'Assistant waiting to connect'],
-  connecting: ['助手连接中', 'Assistant connecting'],
-  active: ['助手就绪', 'Assistant ready'],
-  contended: ['助手正在其他窗口工作', 'Assistant active in another window'],
-  error: ['助手连接失败', 'Assistant connection failed'],
-} satisfies Record<WebSurfaceAgentStatus, readonly [string, string]>
 
 const roleMessageKeys: Record<SessionContext['actor']['roleCode'], WorkspaceMessageKey> = {
   administrator: 'role_administrator',
@@ -248,14 +238,13 @@ export function AppearanceControls({
   showLocale = true,
   theme,
 }: PreferenceControlProps): React.JSX.Element {
-  const runtime = useWebRuntime()
   return (
     <div className="flex flex-col gap-2 group-data-[collapsible=icon]:hidden">
       {showLabel ? (
         <div className="text-xs font-medium text-muted-foreground">{messages.appearanceLabel}</div>
       ) : null}
       <div className="flex items-center justify-between gap-2">
-        {showLocale && runtime.mode === 'standalone' ? (
+        {showLocale ? (
           <ToggleGroup
             aria-label={messages.languageLabel}
             onValueChange={values => {
@@ -274,37 +263,34 @@ export function AppearanceControls({
             ))}
           </ToggleGroup>
         ) : null}
-        {runtime.mode === 'standalone' ? (
-          <ToggleGroup
-            aria-label={messages.themeLabel}
-            onValueChange={values => {
-              const value = firstValue(values as WorkspaceTheme[])
-              if (value !== undefined) onThemeChange(value)
-            }}
-            size="sm"
-            spacing={0}
-            value={[theme]}
-            variant="outline"
-          >
-            {themeOptions.map(option => (
-              <ToggleGroupItem
-                aria-label={messages[option.label]}
-                key={option.value}
-                title={messages[option.label]}
-                value={option.value}
-              >
-                <option.icon aria-hidden="true" />
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        ) : null}
+        <ToggleGroup
+          aria-label={messages.themeLabel}
+          onValueChange={values => {
+            const value = firstValue(values as WorkspaceTheme[])
+            if (value !== undefined) onThemeChange(value)
+          }}
+          size="sm"
+          spacing={0}
+          value={[theme]}
+          variant="outline"
+        >
+          {themeOptions.map(option => (
+            <ToggleGroupItem
+              aria-label={messages[option.label]}
+              key={option.value}
+              title={messages[option.label]}
+              value={option.value}
+            >
+              <option.icon aria-hidden="true" />
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
       </div>
     </div>
   )
 }
 
 function UserMenu({
-  locale,
   settingsMode,
   messages,
   onRoleChange,
@@ -315,7 +301,6 @@ function UserMenu({
   theme,
   session,
 }: Pick<PreferenceControlProps, 'messages' | 'onThemeChange' | 'theme'> & {
-  locale: WorkspaceLocale
   settingsMode: boolean
   onRoleChange: (practitionerRoleId: string) => void
   onSignOut: () => void
@@ -323,7 +308,6 @@ function UserMenu({
   session: SessionContext
   signOutPending: boolean
 }): React.JSX.Element {
-  const runtime = useWebRuntime()
   const activeRole = session.availableRoles.find(role => role.id === session.actor.practitionerRoleId)
   const people = new Map<string, SessionContext['availableRoles'][number]>()
   for (const role of session.availableRoles) {
@@ -397,34 +381,25 @@ function UserMenu({
           <DropdownMenuItem render={<Link to={workspaceRoutes.find(route => route.key === roleSections[session.actor.roleCode])?.path ?? '/'} />}>
             <LayoutDashboardIcon aria-hidden="true" />{messages[roleSections[session.actor.roleCode]]}
           </DropdownMenuItem>
-          {runtime.mode === 'standalone' ? <DropdownMenuItem render={<Link to="/settings" />}><SettingsIcon aria-hidden="true" />{messages.settings}</DropdownMenuItem> : null}
-          {settingsMode && runtime.mode === 'standalone' ? <SettingsNavigationItem label={messages.settingsNavigation} /> : null}
-          {runtime.surfaceDisplay?.conversation && !runtime.surfaceDisplay.fullscreen ? <DropdownMenuItem onClick={runtime.surfaceDisplay.conversation.toggle}>
-            {locale === 'zh-CN'
-              ? runtime.surfaceDisplay.conversation.collapsed ? '展开会话' : '收起会话'
-              : runtime.surfaceDisplay.conversation.collapsed ? 'Expand conversation' : 'Collapse conversation'}
-          </DropdownMenuItem> : null}
+          <DropdownMenuItem render={<Link to="/settings" />}><SettingsIcon aria-hidden="true" />{messages.settings}</DropdownMenuItem>
+          {settingsMode ? <SettingsNavigationItem label={messages.settingsNavigation} /> : null}
           <NotificationsMenu messages={messages} />
         </DropdownMenuGroup>
-        {runtime.mode === 'standalone' ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>{messages.themeLabel}</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                onValueChange={value => onThemeChange(value as WorkspaceTheme)}
-                value={theme}
-              >
-                {themeOptions.map(option => (
-                  <DropdownMenuRadioItem key={option.value} value={option.value}>
-                    <option.icon aria-hidden="true" />
-                    {messages[option.label]}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
-          </>
-        ) : null}
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>{messages.themeLabel}</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            onValueChange={value => onThemeChange(value as WorkspaceTheme)}
+            value={theme}
+          >
+            {themeOptions.map(option => (
+              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                <option.icon aria-hidden="true" />
+                {messages[option.label]}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem disabled={signOutPending} onClick={onSignOut}>
           <LogOutIcon aria-hidden="true" />
@@ -458,8 +433,6 @@ function SettingsNavigationItem({ label }: { label: string }) {
 }
 
 function WorkspaceDisplayButton({ locale }: { locale: WorkspaceLocale }) {
-  const runtime = useWebRuntime()
-  if (runtime.mode === 'surface') return <SurfaceDisplayButton locale={locale} icon={runtime.surfaceDisplay?.fullscreen ? MinimizeIcon : MaximizeIcon} />
   return <StandaloneDisplayButton locale={locale} />
 }
 
@@ -501,10 +474,7 @@ export function WorkspaceShell({
   theme,
 }: WorkspaceShellProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
-  const runtime = useWebRuntime()
-  const navigate = useNavigate()
   const mode = useWorkspaceMode(workspaceModeScope(session))
-  const assistantLabel = assistantLabels[runtime.surfaceAgentStatus ?? 'unavailable'][locale === 'zh-CN' ? 0 : 1]
   const activeRoleSection = roleSections[session.actor.roleCode]
   const inpatientTitles: Partial<Record<SessionContext['actor']['roleCode'], string>> = {
     registrar: locale === 'zh-CN' ? '住院登记' : 'Inpatient registration',
@@ -514,20 +484,7 @@ export function WorkspaceShell({
   const workspaceTitle = mode === 'inpatient' ? inpatientTitles[session.actor.roleCode] ?? messages[activeRoleSection] : messages[activeRoleSection]
   const visibleRoutes = useMemo(() => workspaceRoutes.filter(route => (
     route.key === activeRoleSection
-  )), [activeRoleSection, session.actor.roleCode])
-  useEffect(() => {
-    if (runtime.mode !== 'surface' || !runtime.surfaceNavigation) return
-    const routes = [...visibleRoutes, ...settingsRoutes.filter(route => route.key !== 'settingsGeneral')]
-    return runtime.surfaceNavigation.register({
-      items: routes.map(route => ({ path: route.path, label: route.key === activeRoleSection ? workspaceTitle : messages[route.key] })),
-      activePath: routes.find(route => route.key === activeSection)?.path ?? '/',
-      locale,
-      navigate(path) {
-        const target = routes.find(route => route.path === path)
-        if (target) void navigate({ to: target.path })
-      },
-    })
-  }, [activeSection, activeRoleSection, locale, messages, navigate, runtime.mode, runtime.surfaceNavigation, visibleRoutes, workspaceTitle])
+  )), [activeRoleSection])
   const settingsMode = isSettingsSection(activeSection)
   const workingRoles = session.availableRoles.filter(role => role.practitionerId === session.actor.practitionerId
     && role.code === session.actor.roleCode)
@@ -545,13 +502,9 @@ export function WorkspaceShell({
         </h1>
         <WorkspaceHeaderPatientSlot />
         <WorkspaceHeaderFlowSlot />
-        <div className="clinmesh-shell-assistant min-w-0 max-w-[35%] text-xs text-muted-foreground" data-agent-feedback-status="">
-          <span className="clinmesh-shell-assistant-placeholder block truncate">{assistantLabel}</span>
-        </div>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <WorkspaceDisplayButton locale={locale} />
           <UserMenu
-            locale={locale}
             settingsMode={settingsMode}
             messages={messages}
             onRoleChange={onRoleChange}
@@ -587,10 +540,10 @@ export function WorkspaceShell({
     </>
   )
 
-  if (runtime.mode === 'surface' || !settingsMode) {
+  if (!settingsMode) {
     return (
       <WorkspaceHeaderProvider><TooltipProvider>
-        <main className={runtime.mode === 'surface' ? 'flex h-full min-h-0 min-w-0 flex-col overflow-hidden' : 'flex h-svh min-h-0 min-w-0 flex-col overflow-hidden'}>
+        <main className="flex h-svh min-h-0 min-w-0 flex-col overflow-hidden">
           {content}
         </main>
       </TooltipProvider></WorkspaceHeaderProvider>

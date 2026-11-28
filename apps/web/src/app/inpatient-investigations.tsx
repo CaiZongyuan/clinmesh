@@ -17,8 +17,6 @@ import { apiGet, getImagingStudy, getImagingStudyBlock } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
-import { AgentReviewAnchor } from './agent-review.tsx'
-import { inpatientReportAnchor, useInpatientAgentState } from './inpatient-agent-tools.tsx'
 import { InpatientPrimaryAction } from './inpatient-workspace-actions.tsx'
 import { WorkspaceActionBar } from './workspace-card-layout.tsx'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
@@ -79,7 +77,6 @@ export function InpatientInvestigations({admission,session,locale,write,onOpenSt
           <InpatientReportBody locale={locale} report={request.report}/>
         </div></details>:null}
         {imageContent}
-        <AgentReviewAnchor id={inpatientReportAnchor(admission.id, request.id)} />
       </InpatientItemRow>
       return kind === 'imaging' && 'service' in request && request.report
         ? <InpatientImage key={`${reportKey(admission.id, request.report)}:${request.status}`} admissionId={admission.id} request={request} locale={locale} scope={key} onShown={markShown}>{renderRow}</InpatientImage>
@@ -130,15 +127,9 @@ function InpatientReportDetails({ request, name, locale }: { request: Investigat
 
 function InpatientImage({admissionId,request,locale,scope,onShown,children}:{admissionId:string;request:ImagingRequest;locale:WorkspaceLocale;scope:unknown[];onShown:(reportId:string,shown:boolean)=>void;children:(actions:ReactNode,viewer:ReactNode)=>ReactNode}) {
   const zh=locale==='zh-CN',[open,setOpen]=useState(false),[shown,setShown]=useState(false)
-  const agent = useInpatientAgentState()
-  const shownReport = useMemo(() => ({ admissionId, requestId: request.id, diagnosticReportId: request.report!.diagnosticReportId,
-    diagnosticReportVersion: request.report!.diagnosticReportVersion }), [admissionId, request.id, request.report?.diagnosticReportId, request.report?.diagnosticReportVersion])
-  const setReportShown = agent?.setReportShown
   const studyId=request.report!.studyId
   const study=useQuery({queryKey:[...scope,'inpatient-imaging-study',studyId],enabled:open,gcTime:0,queryFn:({signal})=>getImagingStudy(studyId,signal)})
   const source=useMemo(()=>study.data===undefined?undefined:{study:study.data,loadBlock:(path:string,signal:AbortSignal)=>getImagingStudyBlock(studyId,path,signal)},[study.data,studyId])
-  useEffect(() => () => setReportShown?.(shownReport, false), [setReportShown, shownReport])
-  useEffect(() => { if (study.data?.available !== true || study.error) setReportShown?.(shownReport, false) }, [study.data?.available, study.error, setReportShown, shownReport])
   const reportId = reportKey(admissionId, request.report!), available = study.data?.available === true && !study.error
   useEffect(() => { onShown(reportId, shown && available); return () => onShown(reportId, false) }, [onShown, reportId, shown, available])
   const actions = <>
@@ -146,7 +137,7 @@ function InpatientImage({admissionId,request,locale,scope,onShown,children}:{adm
   </>
   const viewer = <>
     {study.error?<Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(study.error,getWorkspaceMessages(locale))}</AlertDescription></Alert>:null}
-    {open&&source?<Suspense fallback={<p>{zh?'正在加载影像':'Loading images'}</p>}><ImagingViewer key={studyId} locale={locale} source={source} onFrameShown={()=>{ setShown(true); if (study.data?.available === true) setReportShown?.(shownReport, true) }}/></Suspense>:null}
+    {open&&source?<Suspense fallback={<p>{zh?'正在加载影像':'Loading images'}</p>}><ImagingViewer key={studyId} locale={locale} source={source} onFrameShown={()=>{ setShown(true) }}/></Suspense>:null}
   </>
   return children(actions, viewer)
 }

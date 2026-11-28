@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apiErrorSchema, commandResponseSchema, registrationCatalogSchema, registrationQueueSchema } from '@clinmesh/contracts/his'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
-import { patientPersonaRevisionSchema, scenarioGenerationJobSchema, startSyntheticCaseResultSchema, syntheticCaseInstanceSchema, syntheticPatientProfileDetailSchema } from '@clinmesh/contracts/scenario'
+import { patientPersonaRevisionSchema, startSyntheticCaseResultSchema, syntheticCaseInstanceSchema, syntheticPatientProfileDetailSchema } from '@clinmesh/contracts/scenario'
 import { expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, StubSyntheaProvider } from './fixtures/consultation.ts'
@@ -28,13 +28,17 @@ it('recovers an administrator patient-library start after a runtime restart with
       body: JSON.stringify(body), method,
       headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost', 'idempotency-key': key },
     })
-    const generationResponse = await request('/api/sim/v1/scenario-generation-jobs', {
-      name: '合成患者库恢复', population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
-      providerId: 'synthea', seeds: { clinical: 7331, population: 4242 },
-      timeRange: { end: '2026-08-01', start: '2020-01-01' }, timeZone: 'Asia/Shanghai',
-    })
-    expect(generationResponse.status).toBe(200)
-    const queued = commandResponseSchema(scenarioGenerationJobSchema).parse(await generationResponse.json()).data
+    const adminContext = (await runtime.identity.resolveSessionContext(new Headers({ cookie }))).actor
+    const queued = (await runtime.scenarioData.enqueueGeneration({
+      context: adminContext,
+      idempotencyKey: randomUUID(),
+      request: {
+        moduleMode: 'all', modules: [],
+        name: '合成患者库恢复', population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+        providerId: 'synthea', seeds: { clinical: 7331, population: 4242 },
+        timeRange: { end: '2026-08-01', start: '2020-01-01' }, timeZone: 'Asia/Shanghai',
+      },
+    })).data
     const generated = await runtime.scenarioData.processNextGenerationJob()
     expect(generated).toMatchObject({ jobId: queued.jobId, status: 'succeeded' })
     const caseId = generated?.caseIds[0], profileId = generated?.profileIds[0]

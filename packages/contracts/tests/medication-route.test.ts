@@ -25,7 +25,6 @@ import {
   doctorRecommendationSuggestionSchema,
 } from '@clinmesh/contracts/doctor-recommendations'
 import { doctorInpatientHistoryRecordSchema } from '../src/doctor-history.ts'
-import { parseAgentToolInput } from '../src/agent-tool-input.ts'
 import { getHisOperation } from '@clinmesh/contracts/his-operations'
 
 describe('MedicationRoute contracts and operation catalog versions', () => {
@@ -148,13 +147,6 @@ describe('MedicationRoute contracts and operation catalog versions', () => {
       pageSize: 20,
       total: 1,
     }).success).toBe(true)
-
-    expect(parseAgentToolInput('outpatient.prescription.draft.set', { items: [draftItem] })).toEqual({ items: [draftItem] })
-    expect(parseAgentToolInput('outpatient.revisit.draft.set', {
-      diagnosis: { code: 'I20.0', display: '不稳定型心绞痛' },
-      document: { assessment: '心绞痛复诊', plan: '继续二级预防' },
-      medications: [{ catalogItemId: 'medication-nitroglycerin', doseText: '0.5 mg', frequencyCode: 'PRN', quantity: 10, routeCode: 'SL' }],
-    }).medications[0]?.routeCode).toBe('SL')
   })
 
   it('enforces medication routeCode on inpatient medication orders while forbidding routeCode on service orders', () => {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { SessionContext, PathologyRequest, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
-import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
+import type { DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -224,54 +224,6 @@ describe('doctor imaging page', () => {
   })
   afterEach(() => { cleanup(); sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-  it('confirms prepared imaging orders directly with the current draft version without writing a temporary draft', async () => {
-    const confirmations: unknown[] = []
-    const calls = stubFetch(({ path, body }) => {
-      if (path.endsWith('/imaging-services')) return Response.json(services)
-      if (path.endsWith('/actions/confirm')) {
-        confirmations.push(confirmDoctorPreparationRequestSchema.parse(body))
-        return Response.json(confirmDoctorPreparationResponseSchema.parse(commandResponse({ kind: 'imaging', draftVersion: 3, encounterVersion: '3', recordIds: ['request-new'] })))
-      }
-      return Response.json(recommendations())
-    })
-    const onChanged = vi.fn()
-    renderPage(<Page onChanged={onChanged} state={{ draftVersion: 2, requests: [request({ report })] }} />)
-    const panel = within(screen.getByRole('region', { name: '待开具放射检查' }))
-    await panel.findByRole('checkbox', { name: '选择胸部 CT 平扫' })
-    await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
-    await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-1': '3' }, input: {
-      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-imaging-suggestion', kind: 'imaging', reviewedService: { id: ctService.id, version: ctService.version, outpatientBilling: ctService.outpatientBilling ?? null }, serviceId: ctService.id, indication: '持续咳嗽，需要医生核对检查指征。' }],
-    } }]))
-    expect(calls.filter(call => call.method !== 'GET').map(call => call.path)).toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/imaging/actions/confirm'])
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(onChanged).not.toHaveBeenCalled()
-  })
-
-  it('preserves saved request contents when suggestions refresh and discards cancelled list adjustments', async () => {
-    let current = recommendations()
-    stubFetch(({ method, path }) => {
-      if (path.endsWith('/imaging-services')) return Response.json(services)
-      if (method === 'POST' && path.endsWith('/actions/generate')) {
-        current = recommendations({ generation: 2, items: [{ ...current.items[0]!, rationale: '重新核对后的检查建议。' }] })
-        return Response.json(commandResponse(current))
-      }
-      return Response.json(current)
-    })
-    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 1, requests: [], draft: { service: ctService, indication: '已保存的医生检查指征。' } }} />)
-    const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: /^(调整|核对)$/ }))
-    const dialog = within(screen.getByRole('dialog', { name: '调整项目' }))
-    await user.type(dialog.getByLabelText('检查目的'), '继续手工核对。')
-    await user.keyboard('{Escape}')
-    await user.click(screen.getByRole('button', { name: '刷新' }))
-    await user.click(screen.getByRole('button', { name: '依据与说明' }))
-    expect(await screen.findByText('重新核对后的检查建议。')).toBeTruthy()
-    await user.keyboard('{Escape}')
-    expect(screen.getByRole('region', { name: '待开具放射检查' }).textContent).toContain('已保存的医生检查指征。')
-    await user.click(await screen.findByRole('button', { name: /^(调整|核对)$/ }))
-    expect(within(screen.getByRole('dialog')).getByLabelText('检查目的')).toHaveProperty('value', '已保存的医生检查指征。')
-  })
-
   it('cannot issue an examination that is unavailable in the hospital catalog', async () => {
     const state = recommendations()
     state.items = [{ ...state.items[0]!, kind: 'imaging', serviceId: radiographService.id,
@@ -300,7 +252,7 @@ describe('doctor imaging page', () => {
     const dialog = within(screen.getByRole('dialog', { name: '选择放射检查' }))
     await user.type(dialog.getByRole('textbox', { name: '搜索放射目录' }), 'CT')
     expect(dialog.queryByRole('button', { name: /^胸片/ })).toBeNull()
-    await user.click(dialog.getByRole('button', { name: /^胸部 CT 平扫/ }))
+    await user.click(await dialog.findByRole('button', { name: /^胸部 CT 平扫/ }))
     expect(dialog.getByText('¥25.00 / 项目 × 1')).toBeTruthy()
     expect(dialog.getByText(ctService.applicability)).toBeTruthy()
     await user.type(dialog.getByLabelText('检查指征'), '咳嗽两周，排查肺部病变')
@@ -375,33 +327,6 @@ describe('doctor imaging page', () => {
     expect(screen.getByText('医生在清单中补充的检查指征')).toBeTruthy()
     expect(screen.getByText('胸片独立指征')).toBeTruthy()
     expect(screen.getAllByRole('checkbox')).toHaveLength(2)
-  })
-
-  it('preserves an existing manual examination when another automatic examination is adjusted', async () => {
-    const calls = stubFetch(({ path }) => path.endsWith('/imaging-services')
-      ? Response.json({ items: services.items.map(item => ({ ...item, available: true })) })
-      : path.endsWith('/actions/confirm')
-        ? Response.json(commandResponse({ kind: 'imaging', draftVersion: 3, encounterVersion: '3', recordIds: ['manual-new', 'adjusted-new'] }))
-        : Response.json(recommendations()))
-    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 2, requests: [],
-      draft: { service: radiographService, indication: '医生已保存的胸片指征' } }} />)
-    const user = userEvent.setup()
-    await screen.findByRole('checkbox', { name: '选择胸部 CT 平扫' })
-    await user.click(screen.getAllByRole('button', { name: '调整' })[1]!)
-    const dialog = screen.getByRole('dialog', { name: '调整项目' })
-    const input = within(dialog).getByRole('textbox', { name: '检查目的' })
-    await user.clear(input)
-    await user.type(input, '医生补充的 CT 检查指征')
-    await user.click(within(dialog).getByRole('button', { name: '保留本次调整' }))
-    expect(screen.getByRole('checkbox', { name: '选择胸片' })).toBeTruthy()
-    expect(screen.getByRole('checkbox', { name: '选择胸部 CT 平扫' })).toBeTruthy()
-    expect(screen.getByText('医生已保存的胸片指征')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
-    await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
-    expect(calls.find(call => call.method !== 'GET')?.body).toMatchObject({ input: { selections: [
-      { source: 'manual', kind: 'imaging', serviceId: radiographService.id, indication: '医生已保存的胸片指征' },
-      { source: 'agent', kind: 'imaging', serviceId: ctService.id, indication: '医生补充的 CT 检查指征', suggestionId: expect.any(String) },
-    ] } })
   })
 
   it('keeps a saved manual row visible with a retryable error when removing its draft fails', async () => {

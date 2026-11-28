@@ -6,7 +6,6 @@ import { InpatientSurgeryMaterials } from './inpatient-surgery-materials.tsx'
 import { inpatientAngiographyReportsSchema, type InpatientAngiographyReport } from '@clinmesh/contracts/inpatient-angiography'
 import { inpatientPciSelectionSchema, pciSelectionProcedureCodes } from '@clinmesh/contracts/inpatient-pci-selection'
 import { inpatientMaterialEstimateResponseSchema, inpatientMaterialEstimatesSchema, inpatientMaterialEstimateSaveInputSchema, type InpatientMaterialEstimate } from '@clinmesh/contracts/inpatient-material-estimate'
-import { inpatientGuidelineAdviceListSchema, type InpatientGuidelineAdvice } from '@clinmesh/contracts/inpatient-guideline-advice'
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import type { z } from 'zod'
 import {
@@ -256,7 +255,6 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
     refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/material-estimates`, inpatientMaterialEstimatesSchema, signal),
   })
-  const guidelines = preopQuery('guideline-advice', inpatientGuidelineAdviceListSchema)
   const completedExecutions = surgery.data?.executions ?? []
   const hasCoronaryProcedure = Boolean(
     surgery.data?.requests.some(item => coronaryProcedureCodes.has(item.plannedProcedure.coding.code))
@@ -299,7 +297,6 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const currentEstimate = selectedPlan ? estimates.data?.estimates.find(item => item.requestId === selectedPlan.id && (item.surgeryStage ?? 'primary') === selectedPlanStage) : undefined
   const currentDraft = selectedPlan ? selection.data?.drafts?.find(item => item.requestId === selectedPlan.id) : undefined
   const currentConfirmed = selectedPlan && selection.data?.confirmation?.parameters.requestId === selectedPlan.id ? selection.data.confirmation.parameters : undefined
-  const currentAdvice = selectedPlan ? guidelines.data?.advice.find(item => item.requestId === selectedPlan.id) : undefined
   const selectedAngiographyReport = (currentDraft ? angiographyReports.data?.reports.find(item => item.id === currentDraft.reportId) : undefined)
     ?? angiographyReports.data?.reports.find(item => item.status === 'final' || item.status === 'partial')
   const selectedCompletedCode = selectedCompletedExecution?.actualProcedure.coding.code
@@ -444,7 +441,6 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
           }
           void selection.refetch()
           void estimates.refetch()
-          void guidelines.refetch()
         }}
       /> : null}
       {doctor && selectedPlan && showStepTwo ? <PciStepTwoCard
@@ -457,7 +453,6 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
         done={preparation?.materialsDone ?? false}
         selectionEditedAfterReserve={preparation?.selectionChanged ?? false}
         estimate={currentEstimate}
-        advice={currentAdvice}
         reservations={activeReservations}
         encounterVersion={reservations.data?.encounterVersion ?? surgery.data?.encounterVersion}
         reservationFingerprint={reservations.data?.reservationSets.find(set => set.requestId === selectedPlan.id)?.fingerprint}
@@ -985,7 +980,7 @@ function PciStepOneCard({ admission, plan, selectionData, draft, confirmed, repo
   </section>
 }
 
-function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, done, selectionEditedAfterReserve, estimate, advice, reservations, encounterVersion, reservationFingerprint, locale, write, blocked, onEdit, onConfirmed, onOpenUsage }: {
+function PciStepTwoCard({ admission, plan, estimateQueryKey, selDone, done, selectionEditedAfterReserve, estimate, reservations, encounterVersion, reservationFingerprint, locale, write, blocked, onEdit, onConfirmed, onOpenUsage }: {
   admission: InpatientAdmission
   plan: Request
   isPci: boolean
@@ -994,7 +989,6 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
   done: boolean
   selectionEditedAfterReserve: boolean
   estimate: InpatientMaterialEstimate | undefined
-  advice: InpatientGuidelineAdvice | undefined
   reservations: InpatientMaterialReservation[]
   encounterVersion: string | undefined
   reservationFingerprint: string | undefined
@@ -1149,26 +1143,6 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
     const candidate = candidates.find(c => c.materialId === item.materialId && c.catalogVersion === item.catalogVersion)
     return candidate !== undefined && candidate.eligibility !== 'valid'
   })
-  const guidelineRows: Array<[string, string]> = advice?.result?.conclusions.length
-    ? advice.result.conclusions.slice(0, 3).map((item, idx) => [
-      idx === 0 ? t('支架类别', 'Stent category') : idx === 1 ? t('影像指导', 'Imaging guidance') : t('测量要求', 'Measurement rule'),
-      item.text,
-    ])
-    : []
-  const renderGuideBox = () => <div className="flex flex-col gap-1.5 rounded-lg bg-info/10 px-3 py-2.5 text-xs">
-    <div className="flex flex-wrap items-center gap-2">
-      <strong className="font-semibold">{t('指南参考', 'Guideline reference')}</strong>
-      <span className="rounded border border-info/40 px-1 py-0.5 text-[11px] font-semibold text-info">{t('助手', 'Assistant')}</span>
-      <span className="text-muted-foreground">{t('按确认的选型参数生成 · 合成 PCI 指南摘录', 'Generated from confirmed selection parameters · synthetic PCI guideline excerpt')}</span>
-    </div>
-    {guidelineRows.length > 0 ? guidelineRows.map(([label, text]) => <div key={label} className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span>{text}</span>
-    </div>) : advice ? <p className="text-muted-foreground">
-      {advice.message}
-      {advice.status === 'unknown' && onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage(advice.taskId ?? undefined, 'guideline')}>{t('查看原因', 'View reason')}</Button> : null}
-    </p> : <p className="text-muted-foreground">{t('尚无本计划的指南参考结果。', 'No guideline advice is available for this plan.')}</p>}
-  </div>
   const warnBox = (body: ReactNode, asAlert = false) => <div {...(asAlert ? { role: 'alert' } : {})} className="flex items-start gap-2 rounded-lg bg-warning/15 px-3 py-2 text-xs">
     <AlertCircleIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
     {body}
@@ -1191,13 +1165,9 @@ function PciStepTwoCard({ admission, plan, isPci, estimateQueryKey, selDone, don
     {loading ? <div role="status" className="flex items-start gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
       <Spinner aria-hidden="true" className="mt-0.5 size-3.5" />
       <p>{t('助手正在预填耗材，可直接填写。', 'Assistant is prefilling materials; you may enter directly.')}</p>
-    </div> : changedAfterReserve ? <>
-      {warnBox(<p className="font-medium">{t('选型已变化，请核对耗材后再次确认。', 'Selection changed; review materials and confirm again.')}</p>)}
-      {isPci ? renderGuideBox() : null}
-    </> : failed && !changedAfterReserve ? <>
-      {isPci && advice?.result ? renderGuideBox() : null}
-      {warnBox(<div><p>{t('助手这次未能预填耗材，请直接填写。', 'Assistant could not prefill materials this time; please enter directly.')}{onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage(estimate?.id, 'estimate')}>{t('查看原因', 'View reason')}</Button> : null}</p></div>)}
-    </> : isPci ? renderGuideBox() : null}
+    </div> : changedAfterReserve ? warnBox(<p className="font-medium">{t('选型已变化，请核对耗材后再次确认。', 'Selection changed; review materials and confirm again.')}</p>)
+      : failed && !changedAfterReserve ? warnBox(<div><p>{t('助手这次未能预填耗材，请直接填写。', 'Assistant could not prefill materials this time; please enter directly.')}{onOpenUsage ? <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs text-info" onClick={() => onOpenUsage(estimate?.id, 'estimate')}>{t('查看原因', 'View reason')}</Button> : null}</p></div>)
+      : null}
     <EquivalentMaterialAdvice locale={locale} assistantExplanation={estimate?.status === 'succeeded' && estimate.analysis?.basisFingerprint === estimate.basisFingerprint ? estimate.analysis.costExplanation : null} disabled={blocked || write.mutation.isPending}
       suggestions={(estimate?.equivalentSuggestions ?? []).filter(suggestion => currentItems.some(item => item.materialId === suggestion.from.id && Number(item.quantity) === suggestion.quantity))}
       onPick={suggestion => { void replaceEquivalent(suggestion) }}

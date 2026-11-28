@@ -131,7 +131,6 @@ import {
 } from './component-catalog-i18n.ts'
 import { useWebPreferences } from './preferences-context.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
-import { useWebRuntime } from './web-runtime.tsx'
 
 function FoundationShowcase({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
   return (
@@ -578,14 +577,10 @@ export function ComponentCatalog({
   const { preferences } = useWebPreferences()
   const locale = providedLocale ?? preferences.locale
   const messages = getComponentCatalogMessages(locale)
-  const runtime = useWebRuntime()
 
   useEffect(() => {
-    const root = runtime.mode === 'surface'
-      ? runtime.appearanceRoot.current
-      : document.documentElement
-    if (root !== null) root.lang = locale
-  }, [locale, runtime.appearanceRoot, runtime.mode])
+    document.documentElement.lang = locale
+  }, [locale])
 
   return (
     <main className={cn(

@@ -10,7 +10,6 @@ import {
   clinicalDocumentDraftContentSchema,
   clinicalDocumentDraftResponseSchema,
   clinicalDocumentFieldSchema,
-  clinicalDocumentQualityControlStateSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   clinicalDocumentSignResponseSchema,
@@ -28,7 +27,6 @@ import {
 } from '@clinmesh/contracts/his'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
-import type { ClinicalDocumentQualityControl } from './clinical-document-quality.ts'
 import {
   clinicalVisitKindSystem,
   clinicalVisitTypes,
@@ -41,7 +39,6 @@ import {
   type CommandResponse,
   type CommandTransaction,
 } from './command-executor.ts'
-import type { ConsultationRecordingService } from './consultation-recording-service.ts'
 import {
   clinicalSignExpectedVersionsSchema,
   diagnosisStateRowSchema,
@@ -220,8 +217,6 @@ function legacyClinicalDocumentFromComposition(resource: FhirResource) {
 
 export interface OutpatientClinicalDocumentHost {
   readonly clinicalQuality: ClinicalQualityService
-  readonly consultationRecording: ConsultationRecordingService
-  readonly qualityControl: ClinicalDocumentQualityControl
   assertMedicationAllergies(
     context: ActorContext,
     patientId: string,
@@ -1750,7 +1745,6 @@ export class OutpatientClinicalDocumentService {
           `).get(input.context.workspaceId, input.context.epoch, source.case_id),
         )
         const nextDraftVersion = (currentDraft?.version ?? 0) + 1
-        this.#host.consultationRecording.trackDraftSave(input.context, source.case_id, input.revision.document)
         this.#context.database.driver.prepare(`
           INSERT INTO clinical_document_draft (
             workspace_id, epoch, case_id, version, content_json, updated_by, updated_at
@@ -1901,7 +1895,6 @@ export class OutpatientClinicalDocumentService {
       })
       this.#context.database.driver.prepare(`UPDATE clinical_document_sign_preview SET consumed_at = ? WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND consumed_at IS NULL`)
         .run(this.#context.now().toISOString(), input.context.workspaceId, input.context.epoch, clinicalCase.case_id)
-      this.#host.consultationRecording.resumeAfterSigning(input.context, transaction, clinicalCase.case_id)
       return { data: { caseId: clinicalCase.case_id, encounterId: input.encounterId, encounterVersion: updated.meta!.versionId! }, effects: [
         { kind: 'updated' as const, reference: `Encounter/${input.encounterId}`, versionId: updated.meta!.versionId! },
         { kind: 'created' as const, reference: `Provenance/${provenance.id}`, versionId: '1' },
@@ -1959,12 +1952,6 @@ export class OutpatientClinicalDocumentService {
       }
       const draftVersion = currentVersion + 1
       const now = this.#context.virtualTime(input.context)
-      this.#host.consultationRecording.trackDraftSave(input.context, outpatientCase.case_id, input.document)
-      const before = current === undefined
-        ? { assessment: '', chiefComplaint: '', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '' }
-        : clinicalDocumentDraftContentSchema.parse(JSON.parse(current.content_json))
-      this.#host.qualityControl.trackDraft(input.context, outpatientCase.case_id, before, input.document,
-        input.agentGenerated === true || input.context.agentGrantId !== undefined, input.agentFacts)
       this.#context.database.driver.prepare(`
         INSERT INTO clinical_document_draft (
           workspace_id, epoch, case_id, version, content_json, updated_by, updated_at
@@ -1983,7 +1970,6 @@ export class OutpatientClinicalDocumentService {
         input.context.actorId,
         now,
       )
-      this.#host.qualityControl.enqueue(input.context, transaction, outpatientCase.case_id)
       return {
         data: { caseId: outpatientCase.case_id, draftVersion },
         effects: [{
@@ -1996,8 +1982,7 @@ export class OutpatientClinicalDocumentService {
   }
 
   #assertNoConsultationForLegacySigning(context: ActorContext, caseId: string): void {
-    if (this.#context.consultationState(context, caseId) !== undefined
-      || this.#host.consultationRecording.signingProgress(context, caseId).hasRegisteredSources) {
+    if (this.#context.consultationState(context, caseId) !== undefined) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'Use structured clinical document signing to review the Consultation')
     }
   }
@@ -2010,7 +1995,7 @@ export class OutpatientClinicalDocumentService {
       dataSchema: cancelClinicalDocumentSignResponseSchema.shape.data,
       expectedVersions: input.expectedVersions, idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, previewId: input.previewId },
-    }, transaction => {
+    }, () => {
       this.#context.assertRole(input.context, ['outpatient-doctor'])
       const outpatientCase = this.#context.caseByEncounter(input.context, input.encounterId)
       this.#context.assertCaseResponsibility(input.context, outpatientCase.case_id)
@@ -2026,8 +2011,6 @@ export class OutpatientClinicalDocumentService {
       this.#context.database.driver.prepare(`UPDATE clinical_document_sign_preview SET consumed_at = ?
         WHERE workspace_id = ? AND epoch = ? AND preview_id = ?
       `).run(this.#context.now().toISOString(), input.context.workspaceId, input.context.epoch, input.previewId)
-      this.#host.consultationRecording.suspendForSigning(input.context, outpatientCase.case_id)
-      this.#host.consultationRecording.resumeAfterSigning(input.context, transaction, outpatientCase.case_id)
       return { data: { previewId: input.previewId }, effects: [{ kind: 'updated' as const,
         reference: `ClinicalDocumentSignPreview/${input.previewId}`, versionId: '2' }] }
     })
@@ -2036,7 +2019,7 @@ export class OutpatientClinicalDocumentService {
   #consultationSignSnapshot(context: ActorContext, caseId: string, encounterId: string) {
     return {
       consultationVersion: this.#context.consultationState(context, caseId)?.version ?? 0,
-      sourceCount: this.#host.consultationRecording.signingProgress(context, caseId).sourceCount ?? 0,
+      sourceCount: 0,
       historyContext: this.#clinicalHistoryContext(context, encounterId).fingerprint,
     }
   }
@@ -2048,7 +2031,6 @@ export class OutpatientClinicalDocumentService {
     expectedVersions: Record<string, string>
     idempotencyKey: string
   }): CommandResponse<{
-    qualityControl?: z.infer<typeof clinicalDocumentQualityControlStateSchema> | undefined
     commitToken: string
     document: { content: ClinicalDocumentContent; version: number }
     expiresAt: string
@@ -2104,7 +2086,6 @@ export class OutpatientClinicalDocumentService {
       this.#context.database.driver.prepare(`UPDATE clinical_document_sign_preview SET consumed_at = ?
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND consumed_at IS NULL
       `).run(this.#context.now().toISOString(), input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
-      this.#host.consultationRecording.suspendForSigning(input.context, outpatientCase.case_id)
       this.#context.database.driver.prepare(`
         INSERT INTO clinical_document_sign_preview (
           workspace_id, epoch, preview_id, case_id, draft_version,
@@ -2125,7 +2106,6 @@ export class OutpatientClinicalDocumentService {
       )
       return {
         data: {
-          qualityControl: this.#host.qualityControl.read(input.context, outpatientCase.case_id),
           commitToken,
           document: { content: document, version: draft.version },
           expiresAt,
@@ -2237,7 +2217,6 @@ export class OutpatientClinicalDocumentService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')
       }
       const now = this.#context.virtualTime(input.context)
-      this.#host.consultationRecording.suspendForSigning(input.context, outpatientCase.case_id)
       const compositionId = uuidv7()
       const composition = transaction.fhir.createImmutable(input.context, {
         resourceType: 'Composition',

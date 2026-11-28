@@ -109,7 +109,7 @@ export class InpatientService {
     this.followup = new InpatientDrgFollowup(this, backgroundContextStatus)
     this.drgAgent = new InpatientDrgAgent(this)
     this.materialPlans = new InpatientMaterialPlans(this)
-    this.guidelineAdvice = new InpatientGuidelineAdvice(this, { contextStatus: estimateContextStatus, ...(guidelines === undefined ? {} : { guidelines }) })
+    this.guidelineAdvice = new InpatientGuidelineAdvice(this, guidelines === undefined ? {} : { guidelines })
     this.materialEstimates = new InpatientMaterialEstimate(this, estimateContextStatus)
     this.drgReview = new InpatientDrgReview(this)
     this.surgeryRequestReasons = new InpatientSurgeryRequestReason(this, estimateContextStatus)

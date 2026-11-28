@@ -131,7 +131,7 @@ async function captureAndVerify(
   report: DiffEntry[],
   options: { fullPage?: boolean; maxDiffRatio?: number; maxBodyDiffRatio?: number; allowSkeleton?: boolean } = {},
 ): Promise<void> {
-  await freezeVisuals(page, { allowSkeleton: options.allowSkeleton })
+  await freezeVisuals(page, options.allowSkeleton === undefined ? {} : { allowSkeleton: options.allowSkeleton })
   const actual = await page.screenshot({ animations: 'disabled', fullPage: options.fullPage ?? false })
   const baselinePath = join(SCREENSHOTS_DIR, `${name}.png`)
 

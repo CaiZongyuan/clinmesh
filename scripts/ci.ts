@@ -23,7 +23,6 @@ export type CiStage = typeof stages[number]
 const testPackages = [
   ['apps/server', '@clinmesh/server', /^(src|tests)\/.*\.(test|spec)\.ts$/],
   ['apps/web', '@clinmesh/web', /^src\/.*\.(test|spec)\.tsx?$/],
-  ['apps/dsh-web', '@clinmesh/dsh-web', /^src\/.*\.(test|spec)\.tsx?$/],
   ['apps/cli', '@clinmesh/cli', /^(src|tests)\/.*\.(test|spec)\.ts$/],
   ['packages/contracts', '@clinmesh/contracts', /^(src|tests)\/.*\.(test|spec)\.ts$/],
   ['packages/core', '@clinmesh/core', /^(src|tests)\/.*\.(test|spec)\.ts$/],
@@ -36,7 +35,7 @@ function testOwner(path: string) {
 
 function testStage(path: string): Exclude<CiStage, 'checks'> | undefined {
   if (!isSafePath(path)) return
-  if (/^apps\/(web|dsh-web)\/src\/.*\.browser\.test\.ts$/.test(path)) return 'browser'
+  if (/^apps\/web\/src\/.*\.browser\.test\.ts$/.test(path)) return 'browser'
   if (/^apps\/web\/e2e\/[^/]+\.spec\.ts$/.test(path)) return 'e2e'
   if (path.includes('/e2e/') || path.includes('.browser.test.')) return
   const owner = testOwner(path)
@@ -57,11 +56,9 @@ function isFrontendSource(path: string): boolean {
   if (!isSafePath(path) || path.endsWith('.d.ts')
     || /(^|[./_-])(test|spec|fixture|fixtures|stub|setup|journey)([./_-]|$)/.test(path)
     || /(^|[./_-])(auth|agent|api|bridge|proof|session|binding|permission|runtime|recovery|receipt|adapter|controller)([./_-]|$)/.test(path)
-    || ['apps/web/src/app/web-app.tsx', 'apps/web/src/app/inpatient-write-intent.ts',
-      'apps/dsh-web/src/client/index.tsx', 'apps/dsh-web/src/client/model-settings.tsx'].includes(path)) return false
+    || ['apps/web/src/app/web-app.tsx', 'apps/web/src/app/inpatient-write-intent.ts'].includes(path)) return false
   return /^apps\/web\/src\/app\/.*\.(tsx?|css)$/.test(path)
-    || /^apps\/dsh-web\/src\/client\/.*\.(tsx|css)$/.test(path)
-    || /^packages\/(ui|views)\/src\/.*\.(tsx?|css)$/.test(path)
+    || /^packages\/ui\/src\/.*\.(tsx?|css)$/.test(path)
 }
 
 export function createCiPlan(event: string, changes?: ChangedFile[]): CiPlan {
@@ -118,7 +115,7 @@ export function ciCommands(plan: CiPlan, stage: CiStage, shard = '1/1'): string[
       return commands
     }
     return [['verify:boundaries'], ['typecheck'], ['lint'], ['perf:ci'],
-      ['doc-sync'], ['build'], ...(plan.mode === 'full' ? [['check:mobile']] : [])]
+      ['doc-sync'], ['build']]
   }
   if (stage === 'unit') {
     if (plan.mode === 'tests') return plan.tests.filter(path => testStage(path) === 'unit').map(path => {
@@ -126,8 +123,8 @@ export function ciCommands(plan: CiPlan, stage: CiStage, shard = '1/1'): string[
       if (!owner) throw new Error('测试所属包不明')
       return ['--filter', owner[1], 'exec', 'vitest', 'run', path.slice(owner[0].length + 1)]
     })
-    if (plan.mode === 'frontend') return [['-r', '--filter', '@clinmesh/ui', '--filter', '@clinmesh/views',
-      '--filter', '@clinmesh/web', '--filter', '@clinmesh/dsh-web', '--filter', '@clinmesh/desktop', 'test', ...shardArgs]]
+    if (plan.mode === 'frontend') return [['-r', '--filter', '@clinmesh/ui',
+      '--filter', '@clinmesh/web', 'test', ...shardArgs]]
     return [['test:packages', '--', ...shardArgs], ['test:scripts', ...shardArgs]]
   }
   if (plan.mode === 'tests') return [
@@ -256,7 +253,7 @@ interface Scanner {
 }
 
 function tailwindCandidates(paths: string[]): string[] {
-  const vite = createRequire(new URL('../apps/dsh-web/package.json', import.meta.url)).resolve('@tailwindcss/vite')
+  const vite = createRequire(new URL('../apps/web/package.json', import.meta.url)).resolve('@tailwindcss/vite')
   const load = createRequire(vite)
   const oxide: unknown = load(load.resolve('@tailwindcss/oxide'))
   if (!isObject(oxide) || typeof oxide.Scanner !== 'function') throw new Error('Tailwind 扫描器不可用')
@@ -359,7 +356,6 @@ async function main(): Promise<void> {
   }
   const plan = parsePlan(process.env.CI_PLAN)
   if (command === 'prepare' && stage === undefined) {
-    if (plan.mode !== 'docs') await execute(['--filter', '@clinmesh/dsh-web', 'build:styles'])
     return
   }
   if (command === 'verify' && stage === undefined) {

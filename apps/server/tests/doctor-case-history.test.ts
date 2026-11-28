@@ -3,8 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { scenarioGenerationRequestSchema } from '@clinmesh/contracts/scenario'
-import { agentPageContextBindingSchema } from '@clinmesh/contracts/agent'
-import { validateAgentToolInputForContext } from '../src/application/agent-context-policy.ts'
 import type { ActorContext } from '../src/application/command-executor.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import { compileSyntheaIndexCase } from '../src/application/scenario-data/synthea-index-case.ts'
@@ -42,7 +40,6 @@ describe('current doctor case authorized history', () => {
       cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
       databasePath: join(directory, 'clinmesh.sqlite'),
       demoPassword: 'Test-Synthetic-History-Aa1!',
-      dshBridgeSecret: 'test-dsh-bridge-secret-with-at-least-32-characters',
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
     })
@@ -290,45 +287,6 @@ describe('current doctor case authorized history', () => {
         entryId, source: 'visible-source',
       })).toThrow('authorized history')
     }
-  })
-
-  it('publishes history operations for the responsible case and validates the allowed entry set', async () => {
-    const runtime = await setup()
-    createCase(runtime, 'current', 'patient-current')
-    createCase(runtime, 'prior', 'patient-current', { completedAt: '2026-08-20T10:00:00+08:00' })
-    createCase(runtime, 'other-patient', 'patient-other', { completedAt: '2026-08-20T10:00:00+08:00' })
-    materializeHistory(runtime)
-    const signIn = await runtime.app.request('/api/auth/sign-in/email', {
-      body: JSON.stringify({ email: 'doctor@demo.clinmesh.local', password: 'Test-Synthetic-History-Aa1!' }),
-      headers: { 'content-type': 'application/json', origin: 'http://localhost' }, method: 'POST',
-    })
-    const cookie = signIn.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
-    const response = await runtime.app.request('/api/agent/v1/page-contexts', {
-      body: JSON.stringify({
-        claim: {
-          taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc',
-          activeSection: 'diagnosis', selection: { kind: 'case', id: 'current', version: '1' },
-          ui: { status: 'ready' }, version: 1, viewId: 'consultation', viewRevision: 'history-frame-1',
-        },
-        client: { id: 'history-client', revision: 1 }, dshSessionId: 'history-session',
-      }),
-      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' }, method: 'POST',
-    })
-    expect(response.status).toBe(201)
-    const binding = agentPageContextBindingSchema.parse(await response.json())
-    expect(binding.snapshot.allowedOperationIds).toEqual(expect.arrayContaining([
-      'outpatient.history.search', 'outpatient.history.read',
-    ]))
-    const user = runtime.database.driver.prepare('SELECT id FROM user WHERE email = ?')
-      .get('doctor@demo.clinmesh.local') as { id: string }
-    const validate = (source: 'local-completed' | 'visible-source', entryId: string) => validateAgentToolInputForContext(
-      runtime.database, new SyntheticCaseRepository(runtime.database), binding.snapshot,
-      user.id, 'outpatient.history.read', { entryId, source },
-    )
-    expect(validate('local-completed', 'prior')).toEqual({ entryId: 'prior', source: 'local-completed' })
-    expect(validate('local-completed', 'other-patient')).toBeUndefined()
-    expect(validate('visible-source', 'urn:uuid:prior-condition')).toEqual({ entryId: 'urn:uuid:prior-condition', source: 'visible-source' })
-    expect(validate('visible-source', 'urn:uuid:index-condition')).toBeUndefined()
   })
 
   it('rechecks responsibility, materialized patient links, and current resource access at query time', async () => {

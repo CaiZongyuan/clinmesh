@@ -47,8 +47,6 @@ import {
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import {
-  patientPersonaJobSchema,
-  scenarioGenerationJobSchema,
   startSyntheticCaseResultSchema,
   syntheticCaseInstanceSchema,
   type PatientPersonaContent,
@@ -554,35 +552,31 @@ describe('clinmesh CLI process over real HTTP', () => {
       cookie,
       origin: serverOrigin,
     }
-    const generationResponse = await fetch(`${serverOrigin}/api/sim/v1/scenario-generation-jobs`, {
-      body: JSON.stringify({
+    const adminContext = (await runtime.identity.resolveSessionContext(new Headers({ cookie }))).actor
+    await runtime.scenarioData.enqueueGeneration({
+      context: adminContext,
+      idempotencyKey: 'cli-cross-role-generation-1',
+      request: {
+        moduleMode: 'all',
+        modules: [],
         name: 'CLI 跨岗位病例',
         population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
         providerId: 'synthea',
         seeds: { clinical: 7331, population: 4242 },
         timeRange: { end: '2026-08-01', start: '2020-01-01' },
         timeZone: 'Asia/Shanghai',
-      }),
-      headers: { ...controlHeaders, 'idempotency-key': 'cli-cross-role-generation-1' },
-      method: 'POST',
+      },
     })
-    expect(generationResponse.status).toBe(200)
-    commandResponseSchema(scenarioGenerationJobSchema).parse(await generationResponse.json())
     const generation = await runtime.scenarioData.processNextGenerationJob()
     expect(generation).toMatchObject({ status: 'succeeded' })
     const caseId = generation?.caseIds[0]
     if (caseId === undefined) throw new Error('CLI cross-role generation produced no Synthetic Case')
 
-    const briefResponse = await fetch(
-      `${serverOrigin}/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-jobs`,
-      {
-        body: '{}',
-        headers: { ...controlHeaders, 'idempotency-key': 'cli-cross-role-brief-1' },
-        method: 'POST',
-      },
-    )
-    expect(briefResponse.status).toBe(200)
-    commandResponseSchema(patientPersonaJobSchema).parse(await briefResponse.json())
+    await runtime.patientPersona.enqueue({
+      caseId,
+      context: adminContext,
+      idempotencyKey: 'cli-cross-role-brief-1',
+    })
     expect(await runtime.patientPersona.processNext()).toMatchObject({ status: 'succeeded' })
     const caseResponse = await fetch(
       `${serverOrigin}/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}`,

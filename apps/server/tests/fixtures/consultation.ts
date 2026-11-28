@@ -131,29 +131,39 @@ export async function signIn(runtime: Awaited<ReturnType<typeof createClinMeshRu
 
 export async function startConsultationCase(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, password = 'Synthetic-Demo-Password-2026!', origin = 'http://localhost', presentation?: { chiefComplaint: string; temperatureC: number }) {
   const admin = await signIn(runtime, 'admin@demo.clinmesh.local', password, origin)
-  await runtime.app.request('/api/sim/v1/scenario-generation-jobs', {
-    body: JSON.stringify({
+  const adminContext = {
+    actorId: 'actor-administrator',
+    epoch: 'epoch-1',
+    locationId: 'location-administrator',
+    organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-administrator',
+    practitionerRoleId: 'practitioner-role-administrator',
+    roleCode: 'administrator' as const,
+    scenarioRunId: 'scenario-run-1',
+    workspaceId: 'workspace-demo',
+  }
+  await runtime.scenarioData.enqueueGeneration({
+    context: adminContext,
+    idempotencyKey: randomUUID(),
+    request: {
+      moduleMode: 'all',
+      modules: [],
       name: '对话演练患者',
       population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
       providerId: 'synthea',
       seeds: { clinical: 7331, population: 4242 },
       timeRange: { end: '2026-08-01', start: '2020-01-01' },
       timeZone: 'Asia/Shanghai',
-    }),
-    headers: { 'content-type': 'application/json', cookie: admin, 'idempotency-key': randomUUID(), origin },
-    method: 'POST',
+    },
   })
   const generated = await runtime.scenarioData.processNextGenerationJob()
   const caseId = generated?.caseIds[0]
   if (caseId === undefined) throw new Error('No generated case')
-  await runtime.app.request(
-    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-jobs`,
-    {
-      body: '{}',
-      headers: { 'content-type': 'application/json', cookie: admin, 'idempotency-key': randomUUID(), origin },
-      method: 'POST',
-    },
-  )
+  await runtime.patientPersona.enqueue({
+    caseId,
+    context: adminContext,
+    idempotencyKey: randomUUID(),
+  })
   const personaJob = await runtime.patientPersona.processNext()
   if (personaJob?.status !== 'succeeded') throw new Error('Persona generation failed')
 

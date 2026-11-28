@@ -37,7 +37,6 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { CircleAlertIcon, LogInIcon } from 'lucide-react'
-import type { SessionContext } from '@clinmesh/contracts/his'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyResolvedWebTheme,
@@ -58,51 +57,25 @@ import {
 } from './api-client.ts'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { RoleWorkspace } from './role-workspaces.tsx'
-import { useWorkspaceMode, workspaceModeScope } from './workspace-mode.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { ComponentCatalog } from './component-catalog.tsx'
-import { SurfaceDisplayFallback } from './surface-display-control.tsx'
 import { SettingsWorkspace } from './settings-workspace.tsx'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import {
-  useWebRuntime,
   WebRuntimeProvider,
   type WebRuntimeOptions,
 } from './web-runtime.tsx'
-import { AgentPageRegistryProvider } from './agent-page-context.tsx'
-import { useSurfaceAgentPublisher } from './surface-agent-publisher.ts'
-import { AgentReviewProvider } from './agent-review.tsx'
-import { AgentActionFeedbackProvider } from './agent-action-feedback.tsx'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 import { RuntimeErrorBoundary } from './runtime-error-boundary.tsx'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 
-function SurfaceAgentBinding({
-  activeSection,
-  navigate,
-  session,
-}: {
-  activeSection: Exclude<AppSection, 'modelUsage'>
-  navigate: ReturnType<typeof useNavigate>
-  session: SessionContext
-}): null {
-  const mode = useWorkspaceMode(workspaceModeScope(session))
-  useSurfaceAgentPublisher({
-    activeSection: session.actor.roleCode === 'cashier' && activeSection === 'billing' && mode === 'inpatient' ? 'inpatient' : activeSection,
-    navigate,
-    session,
-  })
-  return null
-}
-
 function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.JSX.Element {
   const { preferences, setPreferences } = useWebPreferences()
   const messages = getWorkspaceMessages(preferences.locale)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const runtime = useWebRuntime()
   const session = useQuery({
     queryFn: ({ signal }) => getSession(signal),
     queryKey: sessionQueryKey,
@@ -131,32 +104,25 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
     },
   })
   const roleCode = session.data?.actor.roleCode
-  const retiredGeneralSettings = runtime.mode === 'surface' && activeSection === 'settingsGeneral'
 
   useEffect(() => {
     if (roleCode === undefined) return
-    if (isSettingsSection(activeSection) && !retiredGeneralSettings) return
+    if (isSettingsSection(activeSection)) return
     const roleSection = roleSections[roleCode]
-    if (
-      activeSection === roleSection
-    ) return
+    if (activeSection === roleSection) return
     const roleRoute = workspaceRoutes.find(route => route.key === roleSection)
     void navigate({ replace: true, to: roleRoute?.path ?? '/' })
-  }, [activeSection, navigate, roleCode, retiredGeneralSettings])
+  }, [activeSection, navigate, roleCode])
 
   useEffect(() => {
-    const root = runtime.mode === 'surface'
-      ? runtime.appearanceRoot.current
-      : document.documentElement
-    if (root !== null) root.lang = preferences.locale
-  }, [preferences.locale, runtime.appearanceRoot, runtime.mode])
+    document.documentElement.lang = preferences.locale
+  }, [preferences.locale])
 
   if (session.isPending) {
     return (
       <main aria-label={messages.loading} className="mx-auto flex min-h-svh w-full max-w-lg flex-col justify-center gap-3 p-6">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-24 w-full" />
-        <SurfaceDisplayFallback locale={preferences.locale} />
       </main>
     )
   }
@@ -173,13 +139,12 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
           <AlertTitle>{getWorkspaceErrorTitle(session.error, messages, messages.serviceError)}</AlertTitle>
           <AlertDescription>{getWorkspaceErrorMessage(session.error, messages)}</AlertDescription>
         </Alert>
-        <SurfaceDisplayFallback locale={preferences.locale} />
       </main>
     )
   }
 
   const roleSection = roleSections[session.data.actor.roleCode]
-  const effectiveSection = isSettingsSection(activeSection) && !retiredGeneralSettings
+  const effectiveSection = isSettingsSection(activeSection)
     ? activeSection
     : activeSection === roleSection
       ? activeSection
@@ -198,11 +163,6 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       signOutPending={signOutRequest.isPending}
       theme={preferences.theme}
     >
-      {effectiveSection === 'modelUsage' ? null : <SurfaceAgentBinding
-        activeSection={effectiveSection}
-        navigate={navigate}
-        session={session.data}
-      />}
       {roleChange.isError ? (
         <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" />
@@ -313,7 +273,6 @@ function SignInScreen({ locale }: { locale: 'en-US' | 'zh-CN' }): React.JSX.Elem
           </form>
         </CardContent>
         <CardFooter>
-          <SurfaceDisplayFallback locale={locale} />
           <Button className="ml-auto" disabled={mutation.isPending} form="clinmesh-sign-in" type="submit">
             <LogInIcon data-icon="inline-start" />
             {mutation.isPending ? messages.signingIn : messages.signIn}
@@ -403,69 +362,22 @@ function WebApplication({
   }))
   useEffect(() => apiConfiguration.release, [apiConfiguration])
   const runtime = useMemo(() => ({
-    ...(runtimeOptions.surfaceDoctorInput === undefined ? {} : { surfaceDoctorInput: runtimeOptions.surfaceDoctorInput }),
-    ...(runtimeOptions.surfaceNavigation === undefined ? {} : { surfaceNavigation: runtimeOptions.surfaceNavigation }),
-    ...(runtimeOptions.surfaceDisplay === undefined ? {} : { surfaceDisplay: runtimeOptions.surfaceDisplay }),
-    ...(runtimeOptions.surfaceVoiceInput === undefined ? {} : { surfaceVoiceInput: runtimeOptions.surfaceVoiceInput }),
     appearanceRoot: applicationRoot,
-    mode: runtimeOptions.mode ?? 'standalone',
-    ...(runtimeOptions.onExit === undefined ? {} : { onExit: runtimeOptions.onExit }),
-    ...(runtimeOptions.surfaceActive === undefined ? {} : { surfaceActive: runtimeOptions.surfaceActive }),
-    ...(runtimeOptions.surfaceAgent === undefined ? {} : { surfaceAgent: runtimeOptions.surfaceAgent }),
-    ...(runtimeOptions.surfaceAgentStatus === undefined
-      ? {}
-      : { surfaceAgentStatus: runtimeOptions.surfaceAgentStatus }),
-    ...(runtimeOptions.surfaceColorScheme === undefined
-      ? {}
-      : { surfaceColorScheme: runtimeOptions.surfaceColorScheme }),
-    ...(runtimeOptions.surfaceSessionId === undefined
-      ? {}
-      : { surfaceSessionId: runtimeOptions.surfaceSessionId }),
-  }), [
-    runtimeOptions.mode,
-    runtimeOptions.surfaceDoctorInput,
-    runtimeOptions.surfaceNavigation,
-    runtimeOptions.surfaceDisplay,
-    runtimeOptions.surfaceVoiceInput,
-    runtimeOptions.onExit,
-    runtimeOptions.surfaceActive,
-    runtimeOptions.surfaceAgent,
-    runtimeOptions.surfaceAgentStatus,
-    runtimeOptions.surfaceColorScheme,
-    runtimeOptions.surfaceSessionId,
-  ])
-  const locale = runtime.mode === 'surface'
-    ? runtimeOptions.surfaceLocale ?? 'zh-CN'
-    : preferences.locale
-  const fontSize = runtime.mode === 'surface'
-    ? runtimeOptions.surfaceFontSize ?? preferences.fontSize
-    : preferences.fontSize
+    mode: 'standalone' as const,
+  }), [])
   const preferencesContext = useMemo(() => ({
-    preferences: { ...preferences, locale, fontSize },
+    preferences,
     setPreferences,
-  }), [preferences, locale, fontSize])
+  }), [preferences])
   useEffect(() => writeWebPreferences(preferences), [preferences])
 
   useEffect(() => {
-    const root = runtime.mode === 'surface'
-      ? runtime.appearanceRoot.current
-      : document.documentElement
-    if (root === null) return
-    // Standalone keeps the shell-level class on <html> for the no-flash boot script, but the
-    // application root re-declares every theme token, so it must carry the theme itself or its
-    // light declarations shadow the dark tokens for the whole subtree.
     const applyTheme = (theme: ResolvedWebTheme): void => {
-      applyResolvedWebTheme(theme, root)
-      if (runtime.mode === 'standalone') {
-        const appRoot = applicationRoot.current
-        if (appRoot !== null) applyResolvedWebTheme(theme, appRoot)
-      }
+      applyResolvedWebTheme(theme, document.documentElement)
+      const appRoot = applicationRoot.current
+      if (appRoot !== null) applyResolvedWebTheme(theme, appRoot)
     }
-    if (runtime.mode === 'surface' && runtime.surfaceColorScheme !== undefined) {
-      applyTheme(runtime.surfaceColorScheme)
-      return
-    }
-    if (runtime.mode === 'standalone' && preferences.theme !== 'system') {
+    if (preferences.theme !== 'system') {
       applyTheme(preferences.theme)
       return
     }
@@ -479,32 +391,24 @@ function WebApplication({
     mediaQuery.addEventListener('change', applySystemTheme)
 
     return () => mediaQuery.removeEventListener('change', applySystemTheme)
-  }, [applicationRoot, preferences.theme, runtime.appearanceRoot, runtime.mode, runtime.surfaceColorScheme])
+  }, [preferences.theme])
 
   return (
     <WebPreferencesProvider value={preferencesContext}>
       <WebRuntimeProvider value={runtime}>
         <PortalContainerProvider container={portalRoot}>
           <div
-            className={runtime.mode === 'surface'
-              ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
-              : 'clinmesh-web-root'}
+            className="clinmesh-web-root"
             data-clinmesh-app="web"
-            data-font-size={fontSize}
-            lang={locale}
+            data-font-size={preferences.fontSize}
+            lang={preferences.locale}
             ref={applicationRoot}
           >
             <div data-clinmesh-portal-root="" ref={portalRoot} />
             <QueryClientProvider client={queryClient}>
-              <AgentPageRegistryProvider>
-                <AgentActionFeedbackProvider>
-                  <AgentReviewProvider locale={locale}>
-                    <Toaster>
-                      <RouterProvider router={router} />
-                    </Toaster>
-                  </AgentReviewProvider>
-                </AgentActionFeedbackProvider>
-              </AgentPageRegistryProvider>
+              <Toaster>
+                <RouterProvider router={router} />
+              </Toaster>
             </QueryClientProvider>
           </div>
         </PortalContainerProvider>
@@ -514,8 +418,7 @@ function WebApplication({
 }
 
 export function WebApp(props: WebAppProps = {}): React.JSX.Element {
-  const locale = props.runtime?.mode === 'surface' ? props.runtime.surfaceLocale ?? 'zh-CN' : undefined
-  return <RuntimeErrorBoundary locale={locale} surfaceDisplay={props.runtime?.surfaceDisplay}><WebApplication {...props} /></RuntimeErrorBoundary>
+  return <RuntimeErrorBoundary><WebApplication {...props} /></RuntimeErrorBoundary>
 }
 
 export type { WebRuntimeOptions } from './web-runtime.tsx'

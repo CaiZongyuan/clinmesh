@@ -34,7 +34,6 @@ import {
   RefreshCwIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { AgentReviewAnchor } from '../agent-review.tsx'
 import { laboratoryGenerationErrorMessage } from '../laboratory-generation-error.ts'
 import { OrderSetSelectorBar } from '../order-set-selector.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
@@ -644,7 +643,7 @@ function LaboratoryRequestEditor({
           statusLabel: laboratoryRequestStatusLabel(request, messages), unread: request.status === 'reported',
           inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status) }))}>
         {activeRequest === undefined ? null : (
-          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)} ref={recordRef} tabIndex={-1}><AgentReviewAnchor id={`doctor-investigation:${activeRequest.id}`}>
+          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)} ref={recordRef} tabIndex={-1}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">{requestName(activeRequest)}</h3>
               <Badge variant="outline">{laboratoryRequestStatusLabel(activeRequest, messages)}</Badge>
@@ -663,7 +662,7 @@ function LaboratoryRequestEditor({
                 itemName={requestName(activeRequest)} key={`report:${activeRequest.id}:${activeRequest.report.diagnosticReportId}`}
                 locale={locale} messages={messages} readOnly={readOnly} request={activeRequest} selectedReportId={selectedReportId} showCorrection={showCorrection} />
             )}
-          </AgentReviewAnchor></section>
+          </section>
         )}
       </InvestigationRequestWorkspace>
     </>

@@ -49,7 +49,6 @@ import {
   verifyReferenceDatabase,
   type ReferenceDatabase,
 } from './infrastructure/sqlite/reference-database.ts'
-import { SyntheaScenarioGenerationProvider } from './infrastructure/scenario-generation/synthea-provider.ts'
 import { syntheticNhsaMedicationProductSnapshot } from './application/scenario-data/medication-product-snapshot.ts'
 import {
   syntheticNhcMedicalServiceSnapshot,
@@ -57,14 +56,11 @@ import {
 } from './application/scenario-data/medical-service-snapshot.ts'
 import type { ScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performance-observer.ts'
-import { AgentIntegrationService } from './application/agent-integration-service.ts'
 import { reportRuntimeError } from './runtime-error-reporting.ts'
 import { GenerationModelBinding } from './application/generation-model-binding.ts'
 import { DoctorRecommendationsService } from './application/doctor-recommendations-service.ts'
 import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
 import type { GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
-import { DshModelProvider } from './infrastructure/ai/dsh-model-provider.ts'
-import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
 import { ExaminationResultResolver } from './application/examination-result-resolver.ts'
 import { ImagingStudyReader } from './application/imaging-study-reader.ts'
@@ -131,7 +127,6 @@ function pathologyActorContext(event: {
 export interface CreateClinMeshRuntimeOptions {
   modelUsageControl?: ModelUsagePolicyConfig
   modelPricing?: ModelPricingConfig
-  dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   activeReferenceReleaseId?: string
   ai?: {
     apiKey: string
@@ -157,7 +152,6 @@ export interface CreateClinMeshRuntimeOptions {
   guidelineDeploymentPolicy?: GuidelineDeploymentPolicy
   guidelineLocalEvaluation?: boolean
   demoPassword: string
-  dshBridgeSecret?: string
   imagingAssetDirectory?: string
   imagingCatalogDirectory?: string
   pathologyAssetDirectory?: string
@@ -167,7 +161,6 @@ export interface CreateClinMeshRuntimeOptions {
   investigationModel?: string
   catalogEnrichmentModel?: string
   consultationModel?: string
-  consultationRecordingModel?: string
   patientPersonaModel?: string
   now?: () => Date
   outboxRetryDelayMs?: number
@@ -175,7 +168,6 @@ export interface CreateClinMeshRuntimeOptions {
   referenceDatabasePath?: string
   referencePerformanceObserver?: SqlitePerformanceObserver
   syntheaProvider?: ScenarioGenerationProvider
-  syntheaProviderUrl?: string
   trustedOrigins: string[]
   webRoot?: string
 }
@@ -241,7 +233,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const laboratoryServicePublications = new LaboratoryServicePublicationRepository(database)
     const modelUsage = new ModelUsageService(database, commands, options.modelUsageControl, options.modelPricing)
     const unaccountedChatCompletions: JsonChatCompletionsProvider | undefined = options.chatCompletionsProvider
-      ?? (options.dshModelBridge === undefined ? undefined : new DshModelProvider(options.dshModelBridge))
       ?? (options.ai === undefined
         ? undefined
         : new OpenAIChatCompletionsClient({
@@ -257,15 +248,13 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       completeJson: input => modelUsage.run(input.usageContext?.workspaceId ?? 'workspace-demo', input.signal,
         signal => unaccountedChatCompletions.completeJson({ ...input, signal, usageRecorder: modelUsage })),
     }
-    const modelTasks = new ModelTaskRecovery(database, modelUsage, unaccountedChatCompletions instanceof DshModelProvider)
+    const modelTasks = new ModelTaskRecovery(database, modelUsage)
     const recoverableChatCompletions = chatCompletions === undefined ? undefined : modelTasks.provider(chatCompletions)
-    const hostModel = options.dshModelBridge === undefined ? undefined : dshDefaultModel
     const models = new GenerationModelBinding(database, chatCompletions)
-    const patientPersonaModel = hostModel ?? options.patientPersonaModel ?? options.ai?.briefModel
-    const consultationModel = hostModel ?? options.consultationModel ?? options.ai?.consultationModel
-    const recordingModel = options.consultationRecordingModel ?? consultationModel
-    const investigationModel = hostModel ?? options.investigationModel ?? options.ai?.investigationModel
-    const catalogEnrichmentModel = hostModel ?? options.catalogEnrichmentModel
+    const patientPersonaModel = options.patientPersonaModel ?? options.ai?.briefModel
+    const consultationModel = options.consultationModel ?? options.ai?.consultationModel
+    const investigationModel = options.investigationModel ?? options.ai?.investigationModel
+    const catalogEnrichmentModel = options.catalogEnrichmentModel
       ?? options.ai?.catalogEnrichmentModel
     const investigation = new InvestigationService({
       models,
@@ -282,10 +271,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         return inpatientInsurance.read(context, { kind: 'inpatient', id: target.id })
       },
       assertInpatientInsuranceChangeAllowed: (context, source) => inpatientInsurance.assertFirstSettlementWritable(context, source.target.id),
-      consultationRecordingEnabled: options.dshModelBridge !== undefined,
-      qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,
-      qualityContextStatus: context => identity.clinicalDocumentQualityContextStatus(context),
-      consultationRecordingContextStatus: context => identity.consultationRecordingContextStatus(context),
       ...(guidelineCorpus === undefined ? {} : { guidelines: guidelineCorpus }),
       investigation,
       ...clockOptions,
@@ -321,18 +306,14 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       { replaySyntheticCases: input => { workflow.replaySyntheticCases(input); caseVisits.replayInpatientCases(input) } },
     )
     const syntheaProvider = options.syntheaProvider
-      ?? (options.syntheaProviderUrl === undefined
-        ? new UnavailableScenarioGenerationProvider({
-            available: false,
-            maxPopulation: 10,
-            modules: [],
-            providerId: 'synthea',
-            providerName: 'Synthea',
-            unavailableReason: '未配置 Synthea Provider',
-          })
-        : new SyntheaScenarioGenerationProvider({
-            baseUrl: options.syntheaProviderUrl,
-          }))
+      ?? new UnavailableScenarioGenerationProvider({
+        available: false,
+        maxPopulation: 10,
+        modules: [],
+        providerId: 'synthea',
+        providerName: 'Synthea',
+        unavailableReason: 'Synthea dynamic generation is disabled; use Authored Case Pack.',
+      })
     generationJobs.requeueInterrupted(new Date().toISOString())
     patientPersonas.requeueInterrupted(new Date().toISOString())
     laboratoryServicePublications.requeueInterrupted(new Date().toISOString())
@@ -446,15 +427,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       password: options.demoPassword,
       workspaceId: 'workspace-demo',
     })
-    const agentIntegration = options.dshBridgeSecret === undefined
-      ? undefined
-      : new AgentIntegrationService(database, {
-          cases: syntheticCases,
-          ...clockOptions,
-          secret: options.dshBridgeSecret,
-        })
-    modelUsage.setWaitingCount(workspaceId => modelControlWaitingCount(database, workspaceId)
-      + (agentIntegration?.hostModelWaiting.count(workspaceId) ?? 0))
+    modelUsage.setWaitingCount(workspaceId => modelControlWaitingCount(database, workspaceId))
     const lisPayloadSchema = z.object({
       caseId: z.string().min(1),
       encounterId: z.string().min(1),
@@ -469,56 +442,29 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       caseId: z.string().min(1),
       prescriptionId: z.string().min(1),
     })
-    // Resolve plus two structured-output attempts each receive their own configured deadline.
-    const aiTimeoutMs = options.dshModelBridge === undefined ? options.ai?.timeoutMs ?? 60_000
-      : 3 * (options.dshModelBridge.timeoutMs + 1_000)
+    const aiTimeoutMs = options.ai?.timeoutMs ?? 60_000
     const recommendationTimeoutMs = 2 * aiTimeoutMs
     const recommendationModel = consultationModel ?? investigationModel ?? patientPersonaModel
     const doctorRecommendations = new DoctorRecommendationsService({
-      recovery: modelTasks, automaticRetries: workspaceId => modelUsage.automaticRetries(workspaceId),
-      database, workflow, commands, models, referenceData,
-      ...(guidelineCorpus === undefined ? {} : { guidelines: guidelineCorpus }),
-      contextStatus: context => identity.consultationRecordingContextStatus(context),
-      ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
-      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      database,
+      workflow,
+      commands,
+      referenceData,
+      contextStatus: context => identity.doctorTaskContextStatus(context),
       investigationCatalogs: async (context, caseId, kind) => {
         if (kind === 'imaging') return { imaging: workflow.imaging.serviceCatalog(context, await imagingLibrary.readyExamCodes()) }
         const offering = await pathologyPreparation.offering(context, { outpatientCaseId: caseId })
         return { pathology: workflow.pathology.serviceCatalog(context, offering.readyExamCodes, offering.sourceProcedures) }
       },
     })
-    workflow.consultationRecording.recoverQueued()
-    const recordHistory = (event: Parameters<typeof workflow.consultationRecording.process>[0], timeoutMs: number) => workflow.consultationRecording.process(event, {
-      models, shutdownSignal: generationAbort.signal, recovery: modelTasks,
-      ...(recordingModel === undefined ? {} : { model: recordingModel }),
-      ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
-      signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(timeoutMs)]),
-    })
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
         'inpatient.angiography.report': event => inpatient.angiography.process(event, lisActorContext(event)),
-        'inpatient.drg.followup': event => inpatient.followup.process(event),
-        'inpatient.guideline-advice.prepare': event => inpatient.guidelineAdvice.process(event, {
-          models, recovery: modelTasks, signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),
-          ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
-          ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
-        }),
         'inpatient.drg.agent.analyze': event => inpatient.drgAgent.process(event, {
           models, recovery: modelTasks, signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),
           ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
           ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
         }),
-        'clinical-document.check-quality': event => workflow.qualityControl.process(event, {
-          models, shutdownSignal: generationAbort.signal, recovery: modelTasks, automaticRetries: workspaceId => modelUsage.automaticRetries(workspaceId),
-          ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
-          ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
-          signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),
-        }),
-        'doctor.generate-recommendations': event => doctorRecommendations.process(event,
-          AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]), generationAbort.signal),
-        'consultation.record-history': event => recordHistory(event, aiTimeoutMs),
-        'consultation.record-history-backfill': event => recordHistory(event, aiTimeoutMs),
-        'consultation.verify-history': event => workflow.consultationRecording.retireVerification(event),
         'laboratory.accept-request': async event => {
           const payload = laboratoryRequestPayloadSchema.parse(event.payload)
           workflow.acceptLaboratoryRequest({
@@ -720,11 +666,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     let closePromise: Promise<void> | undefined
     const generationAbort = new AbortController()
     const lanes = [
-      { id: 'recording', concurrency: 10, filter: { kinds: ['consultation.record-history'] } },
-      { id: 'backfill', concurrency: 1, filter: { kinds: ['consultation.record-history-backfill'] } },
-      { id: 'recommendations', concurrency: 1, filter: { kinds: ['doctor.generate-recommendations'] } },
-      { id: 'business', concurrency: 2, filter: { excludedKinds: ['consultation.record-history',
-        'consultation.record-history-backfill', 'doctor.generate-recommendations'] } },
+      { id: 'business', concurrency: 2, filter: {} },
     ]
     const pumpSlot = (lane: typeof lanes[number], slot: number): Promise<number> => {
       const key = `${lane.id}:${slot}`
@@ -739,9 +681,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       return cycle
     }
     const dispatchPending = async (): Promise<void> => {
-      inpatient.followup.refreshPending()
       inpatient.drgReview.refreshPending()
-      inpatient.drgAgent.refreshPending()
       inpatient.materialEstimates.refreshPending()
       modelTasks.wake()
       const dialogueRecovery = consultationDialogue.resumePending()
@@ -794,7 +734,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ? undefined
       : setInterval(() => {
           modelTasks.wake()
-          try { inpatient.followup.refreshPending(); inpatient.drgReview.refreshPending(); inpatient.drgAgent.refreshPending(); inpatient.materialEstimates.refreshPending() } catch (error) { reportRuntimeError({ error, scope: 'outbox-dispatch' }) }
+          try { inpatient.drgReview.refreshPending(); inpatient.materialEstimates.refreshPending() } catch (error) { reportRuntimeError({ error, scope: 'outbox-dispatch' }) }
           void consultationDialogue.resumePending().catch(error => reportRuntimeError({ error, scope: 'outbox-dispatch' }))
           for (const lane of lanes) for (let slot = 0; slot < lane.concurrency; slot++) {
             if (dispatchCycles.has(`${lane.id}:${slot}`)) continue
@@ -802,20 +742,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
               reportRuntimeError({ error, scope: 'outbox-dispatch' })
             })
           }
-        }, options.autoDispatchIntervalMs)
-    const generationTimer = options.autoDispatchIntervalMs === undefined
-      ? undefined
-      : setInterval(() => {
-          void dispatchScenarioGenerationJobs().catch(error => {
-            reportRuntimeError({ error, scope: 'scenario-generation-dispatch' })
-          })
-        }, options.autoDispatchIntervalMs)
-    const patientPersonaTimer = options.autoDispatchIntervalMs === undefined
-      ? undefined
-      : setInterval(() => {
-          void dispatchPatientPersonaJobs().catch(error => {
-            reportRuntimeError({ error, scope: 'patient-brief-dispatch' })
-          })
         }, options.autoDispatchIntervalMs)
     const laboratoryServicePublicationTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
@@ -826,12 +752,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         }, options.autoDispatchIntervalMs)
     const app = createApp({
       modelUsage,
-      ...(options.dshBridgeSecret === undefined ? {} : { dshBridgeSecret: options.dshBridgeSecret }),
       inpatient,
-      commandEvents: commands,
-      recordingUpdatesSignal: generationAbort.signal,
       doctorRecommendations,
-      ...(agentIntegration === undefined ? {} : { agentIntegration }),
       fhir: {
         repository: fhir,
         resolveContext: request => identity.resolveRequestActor(
@@ -880,14 +802,11 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         closed = true
         clearInterval(modelUsageRetentionTimer)
         if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
-        if (generationTimer !== undefined) clearInterval(generationTimer)
-        if (patientPersonaTimer !== undefined) clearInterval(patientPersonaTimer)
         if (laboratoryServicePublicationTimer !== undefined) {
           clearInterval(laboratoryServicePublicationTimer)
         }
         generationAbort.abort()
         unsubscribeModelRecovery()
-        doctorRecommendations.close()
         inpatient.followup.close()
         inpatient.drgAgent.close()
         inpatient.materialEstimates.close()

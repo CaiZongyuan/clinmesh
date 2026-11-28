@@ -8,7 +8,7 @@ import { inpatientCommandResponseSchema, inpatientDetailSchema, inpatientListSch
 import { inpatientPciDataResponseSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
-import { administratorCaseTruthSchema, patientPersonaJobSchema, patientPersonaRevisionListSchema, patientPersonaRevisionSchema, syntheticCaseInstanceSchema, syntheticPatientProfileDetailSchema, syntheticPatientProfileListSchema } from '@clinmesh/contracts/scenario'
+import { administratorCaseTruthSchema, patientPersonaRevisionListSchema, patientPersonaRevisionSchema, syntheticCaseInstanceSchema, syntheticPatientProfileDetailSchema, syntheticPatientProfileListSchema } from '@clinmesh/contracts/scenario'
 import { patientSearchSchema, registrationQueueSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -145,6 +145,7 @@ it.each([false, true])('旧版未选来源保留原键回执，新准备补齐�
 
 it.each([false, true])('旧版排队 Persona 在固定准备和重启后不再派发（已有人工修订：%s）', async manual => {
   const s = await setup(), admin = await s.login('admin'), registrar = await s.login('registrar')
+  const adminContext = (await s.runtime.identity.resolveSessionContext(new Headers({ cookie: admin }))).actor
   const original = await pendingPciCase(s, admin)
   const caseId = original.ready.caseId
   if (manual) expect((await s.post(admin, `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-revisions`, {
@@ -152,9 +153,7 @@ it.each([false, true])('旧版排队 Persona 在固定准备和重启后不再�
   })).status).toBe(200)
   const jobs = []
   for (let index = 0; index < 2; index++) {
-    const queued = await s.post(admin, `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-jobs`, {})
-    expect(queued.status).toBe(200)
-    jobs.push(patientPersonaJobSchema.parse((await queued.json()).data))
+    jobs.push((await s.runtime.patientPersona.enqueue({ caseId, context: adminContext, idempotencyKey: randomUUID() })).data)
   }
   const prepared = pciCaseSourceResponseSchema.parse(await (await s.post(admin,
     '/api/sim/v1/synthetic-cases/pci/prepare', { input: { expectedEpoch: 'epoch-1' } })).json())
@@ -162,9 +161,7 @@ it.each([false, true])('旧版排队 Persona 在固定准备和重启后不再�
   await s.runtime.dispatchPatientPersonaJobs()
   expect(s.modelCalls()).toBe(0)
   for (const job of jobs) {
-    const stopped = patientPersonaJobSchema.parse(await (await s.runtime.app.request(
-      `/api/sim/v1/patient-persona-jobs/${job.jobId}`, { headers: { cookie: admin } },
-    )).json())
+    const stopped = s.runtime.patientPersona.getJob(adminContext, job.jobId)
     expect(stopped).toMatchObject({ status: 'failed', error: { code: 'PERSONA_JOB_SUPERSEDED' }, resultRevision: null })
     expect(prepared.effects).toContainEqual({ kind: 'updated', reference: `PatientPersonaJob/${job.jobId}`, versionId: 'failed' })
   }
@@ -185,10 +182,10 @@ it('旧版运行和排队 Persona 并存时，原键恢复须等全部旧任务�
   let finish!: (value: { content: string; model: string }) => void
   const completion = new Promise<{ content: string; model: string }>(resolve => { finish = resolve })
   const s = await setup(async () => { markEntered(); return completion }), admin = await s.login('admin')
+  const adminContext = (await s.runtime.identity.resolveSessionContext(new Headers({ cookie: admin }))).actor
   const original = await pendingPciCase(s, admin), caseId = original.ready.caseId
-  const queued = await s.post(admin, `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-jobs`, {})
-  const job = patientPersonaJobSchema.parse((await queued.json()).data)
-  expect((await s.post(admin, `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-jobs`, {})).status).toBe(200)
+  const job = (await s.runtime.patientPersona.enqueue({ caseId, context: adminContext, idempotencyKey: randomUUID() })).data
+  await s.runtime.patientPersona.enqueue({ caseId, context: adminContext, idempotencyKey: randomUUID() })
   const processing = s.runtime.dispatchPatientPersonaJobs()
   await entered
   const key = randomUUID(), path = '/api/sim/v1/synthetic-cases/pci/prepare', body = { input: { expectedEpoch: 'epoch-1' } }
@@ -204,9 +201,7 @@ it('旧版运行和排队 Persona 并存时，原键恢复须等全部旧任务�
     finish({ content: JSON.stringify(original.persona.content), model: 'synthetic' })
     await processing
   }
-  const completed = patientPersonaJobSchema.parse(await (await s.runtime.app.request(
-    `/api/sim/v1/patient-persona-jobs/${job.jobId}`, { headers: { cookie: admin } },
-  )).json())
+  const completed = s.runtime.patientPersona.getJob(adminContext, job.jobId)
   expect(completed).toMatchObject({ status: 'succeeded', resultRevision: 1 })
   const waiting = await s.post(admin, path, body, key)
   expect(waiting.status).toBe(409)
@@ -220,11 +215,9 @@ it('旧版运行和排队 Persona 并存时，原键恢复须等全部旧任务�
 
 it('旧版就绪选用失败时回滚排队任务终止，恢复原键后整体成功', async () => {
   const s = await setup(), admin = await s.login('admin'), original = await pendingPciCase(s, admin)
-  const queued = await s.post(admin, `/api/sim/v1/synthetic-cases/${original.ready.caseId}/patient-persona-jobs`, {})
-  const job = patientPersonaJobSchema.parse((await queued.json()).data)
-  const readJob = async () => patientPersonaJobSchema.parse(await (await s.runtime.app.request(
-    `/api/sim/v1/patient-persona-jobs/${job.jobId}`, { headers: { cookie: admin } },
-  )).json())
+  const adminContext = (await s.runtime.identity.resolveSessionContext(new Headers({ cookie: admin }))).actor
+  const job = (await s.runtime.patientPersona.enqueue({ caseId: original.ready.caseId, context: adminContext, idempotencyKey: randomUUID() })).data
+  const readJob = async () => s.runtime.patientPersona.getJob(adminContext, job.jobId)
   s.runtime.database.driver.exec("CREATE TRIGGER fail_pci_persona_selection BEFORE UPDATE ON synthetic_case_instance WHEN NEW.active_brief_revision IS NOT NULL BEGIN SELECT RAISE(ABORT,'synthetic persona selection failure'); END")
   const key = randomUUID(), path = '/api/sim/v1/synthetic-cases/pci/prepare', body = { input: { expectedEpoch: 'epoch-1' } }
   expect((await s.post(admin, path, body, key)).status).toBe(500)
@@ -237,14 +230,12 @@ it('旧版就绪选用失败时回滚排队任务终止，恢复原键后整体�
 
 it('重复准备已有选用病例时保留操作者明确排队的 Persona 任务', async () => {
   const s = await setup(), admin = await s.login('admin'), original = await readyPciCase(s, admin)
-  const queued = await s.post(admin, `/api/sim/v1/synthetic-cases/${original.ready.caseId}/patient-persona-jobs`, {})
-  const job = patientPersonaJobSchema.parse((await queued.json()).data)
+  const adminContext = (await s.runtime.identity.resolveSessionContext(new Headers({ cookie: admin }))).actor
+  const job = (await s.runtime.patientPersona.enqueue({ caseId: original.ready.caseId, context: adminContext, idempotencyKey: randomUUID() })).data
   const prepared = await s.post(admin, '/api/sim/v1/synthetic-cases/pci/prepare', { input: { expectedEpoch: 'epoch-1' } })
   expect(prepared.status).toBe(409)
   expect(await prepared.json()).toMatchObject({ error: { code: 'PCI_SOURCE_PERSONA_RUNNING' } })
-  expect(patientPersonaJobSchema.parse(await (await s.runtime.app.request(
-    `/api/sim/v1/patient-persona-jobs/${job.jobId}`, { headers: { cookie: admin } },
-  )).json())).toEqual(job)
+  expect(s.runtime.patientPersona.getJob(adminContext, job.jobId)).toEqual(job)
 })
 
 it('选用失败整体回滚来源、模板和回执，原键可继续准备', async () => {

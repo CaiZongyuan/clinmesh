@@ -7,7 +7,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentPageRegistryProvider } from './agent-page-context.tsx'
 import { ExaminationPage } from './doctor/examination-page.tsx'
 import { examinationFixture } from './doctor/examination.test-support.ts'
 import { LaboratoryPage } from './doctor/laboratory-page.tsx'
@@ -214,44 +213,42 @@ describe('OrderSetSelectorBar outpatient & inpatient draft hydration', () => {
     const user = userEvent.setup()
     render(
       <QueryClientProvider client={client}>
-        <AgentPageRegistryProvider>
-          <LaboratoryPage
-            actions={{
-              correct: { allowed: false, error: null, onSubmit: vi.fn(), pending: false },
-              deleteDraft: { error: null, onSubmit: vi.fn(), pending: false },
-              issue: { error: null, onSubmit: vi.fn(), pending: false },
-              save: { error: null, onSubmit: vi.fn(), pending: false },
-            }}
-            catalogError={null}
-            catalogPending={false}
-            detail={detail}
-            elementId="laboratory-tab"
-            indicationCode=""
-            issueLegacyOrderError={null}
-            issueLegacyOrderPending={false}
-            laboratoryCatalog={[]}
-            laboratoryItemId=""
-            locale="zh-CN"
-            messages={messages}
-            onIndicationChange={vi.fn()}
-            onIssueLegacyOrder={vi.fn()}
-            onLaboratoryItemChange={vi.fn()}
-            readOnly={false}
-            recommendationScope="scope-op"
-            referenceSearch={{ data: { items: [labService], page: 1, pageSize: 20, total: 1 }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }}
-            showCorrection={false}
-          />
-          <ExaminationPage
-            actionContext={undefined}
-            active
-            detail={detail}
-            elementId="examination-tab"
-            locale="zh-CN"
-            onSelectRequest={vi.fn()}
-            readOnly={false}
-            recommendationScope="scope-op"
-          />
-        </AgentPageRegistryProvider>
+        <LaboratoryPage
+          actions={{
+            correct: { allowed: false, error: null, onSubmit: vi.fn(), pending: false },
+            deleteDraft: { error: null, onSubmit: vi.fn(), pending: false },
+            issue: { error: null, onSubmit: vi.fn(), pending: false },
+            save: { error: null, onSubmit: vi.fn(), pending: false },
+          }}
+          catalogError={null}
+          catalogPending={false}
+          detail={detail}
+          elementId="laboratory-tab"
+          indicationCode=""
+          issueLegacyOrderError={null}
+          issueLegacyOrderPending={false}
+          laboratoryCatalog={[]}
+          laboratoryItemId=""
+          locale="zh-CN"
+          messages={messages}
+          onIndicationChange={vi.fn()}
+          onIssueLegacyOrder={vi.fn()}
+          onLaboratoryItemChange={vi.fn()}
+          readOnly={false}
+          recommendationScope="scope-op"
+          referenceSearch={{ data: { items: [labService], page: 1, pageSize: 20, total: 1 }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }}
+          showCorrection={false}
+        />
+        <ExaminationPage
+          actionContext={undefined}
+          active
+          detail={detail}
+          elementId="examination-tab"
+          locale="zh-CN"
+          onSelectRequest={vi.fn()}
+          readOnly={false}
+          recommendationScope="scope-op"
+        />
       </QueryClientProvider>,
     )
 
@@ -542,20 +539,18 @@ describe('OrderSetSelectorBar outpatient & inpatient draft hydration', () => {
     const user = userEvent.setup()
     render(
       <QueryClientProvider client={client}>
-        <AgentPageRegistryProvider>
-          <PrescriptionPage
-            actions={actions}
-            allowWithdrawal={false}
-            catalog={catalog}
-            detail={detail}
-            elementId="prescription-tab"
-            locale="zh-CN"
-            messages={messages}
-            readOnly={false}
-            recommendationScope="scope-rx"
-            referenceSearch={{ data: { items: [], page: 1, pageSize: 20, releaseId: 'rel-1', total: 0 }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }}
-          />
-        </AgentPageRegistryProvider>
+        <PrescriptionPage
+          actions={actions}
+          allowWithdrawal={false}
+          catalog={catalog}
+          detail={detail}
+          elementId="prescription-tab"
+          locale="zh-CN"
+          messages={messages}
+          readOnly={false}
+          recommendationScope="scope-rx"
+          referenceSearch={{ data: { items: [], page: 1, pageSize: 20, releaseId: 'rel-1', total: 0 }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }}
+        />
       </QueryClientProvider>,
     )
 

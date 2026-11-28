@@ -764,7 +764,6 @@ describe('HIS operation catalog', () => {
       [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
       [clinicalDocumentOperationIds.cancelSign]: `clinical-${'document'}.cancel-sign`,
       'encounter.consultation.ask': 'consultation.ask-question',
-      'encounter.consultation-recording.control': 'consultation.recording.control',
       'encounter.consultation.reply.retry': 'consultation.reply.retry',
       'encounter.diagnosis.confirm': 'encounter.confirm-diagnosis',
       'encounter.diagnosis.draft.set': 'encounter.save-diagnosis-draft',
@@ -804,9 +803,9 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 6,
       'clinmesh-billing': 18,
-      'clinmesh-doctor': 70,
+      'clinmesh-doctor': 66,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 123,
+      'clinmesh-inpatient': 116,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 8,
       'clinmesh-shared': 1,
@@ -872,7 +871,7 @@ it('keeps functional examinations narrow and encodes versioned report acknowledg
   }
 })
 
-it('publishes shared guideline-topics queries and surgery-optional inpatient guideline-advice v2', () => {
+it('publishes shared deterministic guideline-topics queries', () => {
   const outpatientTopics = getHisOperation('doctor.case.guideline-topics.read')
   expect(outpatientTopics.roles).toEqual(['outpatient-doctor'])
   expect(outpatientTopics.risk).toBe('read')
@@ -883,39 +882,6 @@ it('publishes shared guideline-topics queries and surgery-optional inpatient gui
   expect(inpatientTopics.roles).toEqual(['inpatient-doctor', 'ward-nurse', 'medical-records'])
   expect(inpatientTopics.risk).toBe('read')
   expect(inpatientTopics.input.safeParse({ admissionId: 'admission-1', topicId: 'contrast-kidney-hydration' }).success).toBe(true)
-
-  const adviceRead = getHisOperation('inpatient.guideline-advice.read')
-  expect(adviceRead.version).toBe(2)
-  expect(adviceRead.input.safeParse({ admissionId: 'admission-1', topicId: 'coronary-revascularization-indication' }).success).toBe(true)
-
-  const adviceRequest = getHisOperation('inpatient.guideline-advice.request')
-  expect(adviceRequest.version).toBe(2)
-  expect(adviceRequest.http.encodeBody?.({
-    admissionId: 'admission-1',
-    requestId: 'surgery-1',
-    expectedVersion: 1,
-    expectedFingerprint: 'a'.repeat(64),
-  })).toEqual({
-    input: {
-      requestId: 'surgery-1',
-      expectedVersion: 1,
-      expectedFingerprint: 'a'.repeat(64),
-    },
-  })
-  expect(adviceRequest.http.encodeBody?.({
-    admissionId: 'admission-1',
-    topicId: 'contrast-kidney-hydration',
-    requestId: null,
-    expectedVersion: 0,
-    expectedFingerprint: 'b'.repeat(64),
-  })).toEqual({
-    input: {
-      topicId: 'contrast-kidney-hydration',
-      requestId: null,
-      expectedVersion: 0,
-      expectedFingerprint: 'b'.repeat(64),
-    },
-  })
 })
 
 it('publishes read-only clinical quality preflight queries and clinicalOverride inputs across the seven gated commands', () => {

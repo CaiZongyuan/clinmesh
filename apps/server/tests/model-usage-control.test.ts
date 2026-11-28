@@ -9,10 +9,6 @@ import { persona, startConsultationCase, StubSyntheaProvider } from './fixtures/
 import { modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { patientPersonaJobSchema } from '@clinmesh/contracts/scenario'
 import { beginChatCompletionUsage, settleChatCompletionUsage, OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
-import { createServer } from 'node:http'
-import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
-import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
-import { createModelBridgeHandler } from '../../dsh-web/src/model-bridge.ts'
 
 const dispose: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of dispose.splice(0).reverse()) await close() })
@@ -76,19 +72,27 @@ it.each([
   })
   await control(fixture, scope === 'workspace' ? limit : { requests: 3, tokens: 300, cny: 3 })
   const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
-  const headers = { cookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const adminActor = {
+    actorId: 'actor-administrator', epoch: 'epoch-1', locationId: 'location-administrator',
+    organizationId: 'organization-clinmesh', practitionerId: 'practitioner-administrator',
+    practitionerRoleId: 'practitioner-role-administrator', roleCode: 'administrator' as const,
+    scenarioRunId: 'scenario-run-1', workspaceId: 'workspace-demo',
+  }
   const jobIds: string[] = []
   for (let i = 0; i < 2; i++) {
-    const generated = await fixture.runtime.app.request('/api/sim/v1/scenario-generation-jobs', { method: 'POST',
-      headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({ name: '有界并发合成患者',
+    await fixture.runtime.scenarioData.enqueueGeneration({
+      context: adminActor,
+      idempotencyKey: randomUUID(),
+      request: {
+        moduleMode: 'all', modules: [],
+        name: '有界并发合成患者',
         population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' }, providerId: 'synthea',
-        seeds: { clinical: 7331, population: 4242 }, timeRange: { end: '2026-08-01', start: '2020-01-01' }, timeZone: 'Asia/Shanghai' }) })
-    expect(generated.status).toBe(200)
+        seeds: { clinical: 7331, population: 4242 }, timeRange: { end: '2026-08-01', start: '2020-01-01' }, timeZone: 'Asia/Shanghai',
+      },
+    })
     const generation = await fixture.runtime.scenarioData.processNextGenerationJob()
-    const response = await fixture.runtime.app.request(`/api/sim/v1/synthetic-cases/${generation!.caseIds[0]}/patient-persona-jobs`, {
-      method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: '{}' })
-    expect(response.status).toBe(200)
-    jobIds.push(patientPersonaJobSchema.parse((await response.json()).data).jobId)
+    const queued = await fixture.runtime.patientPersona.enqueue({ caseId: generation!.caseIds[0]!, context: adminActor, idempotencyKey: randomUUID() })
+    jobIds.push(queued.data.jobId)
   }
   const first = fixture.runtime.patientPersona.processNext()
   try {
@@ -105,8 +109,7 @@ it.each([
     expect(attempts.total).toBe(1)
     expect(attempts.items[0]).toMatchObject({ status: 'in-flight', reservationBoundary: { inputTokens: 40, outputTokens: 20 } })
   } finally { release(); await first }
-  const completed = await fixture.runtime.app.request(`/api/sim/v1/patient-persona-jobs/${jobIds[0]}`, { headers: { cookie } })
-  expect(await completed.json()).toMatchObject({ status: 'succeeded' })
+  expect(fixture.runtime.patientPersona.getJob(adminActor, jobIds[0]!)).toMatchObject({ status: 'succeeded' })
   const settled = await control(fixture)
   for (const policy of scope === 'deployment' ? [settled.workspace, settled.deployment] : [settled.workspace]) {
     expect(policy).toMatchObject({ used: 1, reserved: 0, tokensUsed: 30, tokensReserved: 0, cnyUsed: 0.3, cnyReserved: 0 })
@@ -114,30 +117,12 @@ it.each([
   expect(dispatched).toBe(1)
 })
 
-it.each(['direct', 'bridge'] as const)('requires a trustworthy boundary before finite Token or amount dispatches through %s', async transport => {
+it('requires a trustworthy boundary before finite Token or amount dispatches through direct transport', async () => {
   let dispatched = 0
-  const route = { provider: 'synthetic-provider', model: 'synthetic-model' }
-  const bridge = createModelBridgeHandler({ llm: {
-    listModels: async () => [{ id: route.model }],
-    prepareCall: async (config: unknown) => ({ config, stream: async function* () {
-      dispatched++
-      yield { type: 'text-delta', index: 0, text: JSON.stringify(persona) }
-      yield { type: 'finish', reason: { kind: 'stop' } }
-    } }),
-  }, agentDefaultModel: { currentSelection: () => route } } as unknown as Parameters<typeof createModelBridgeHandler>[0],
-  'synthetic-model-bridge-secret-at-least-32-characters', () => 'default')
-  const server = createServer(bridge.handler)
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
-  dispose.push(async () => { bridge.dispose(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) })
-  const address = server.address()
-  if (address === null || typeof address === 'string') throw new Error('Synthetic bridge unavailable')
   const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(),
-    patientPersonaModel: transport === 'direct' ? route.model : encodeModelRoute(route),
-    chatCompletionsProvider: transport === 'direct'
-      ? new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid',
-        fetch: async () => { dispatched++; return Response.json({ choices: [{ message: { content: JSON.stringify(persona) } }] }) } })
-      : new DshModelProvider({ origin: `http://127.0.0.1:${address.port}`, secret: 'synthetic-model-bridge-secret-at-least-32-characters',
-        timeoutMs: 2000, maxResponseBytes: 4096 }),
+    patientPersonaModel: 'synthetic-model',
+    chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => { dispatched++; return Response.json({ choices: [{ message: { content: JSON.stringify(persona) } }] }) } }),
   })
   const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
   const requests = async () => modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
@@ -149,24 +134,26 @@ it.each(['direct', 'bridge'] as const)('requires a trustworthy boundary before f
   const { jobId } = patientPersonaJobSchema.pick({ jobId: true }).parse(fixture.runtime.database.driver.prepare(
     "SELECT job_id AS jobId FROM patient_persona_job WHERE workspace_id = 'workspace-demo' AND status = 'queued'",
   ).get())
-  const readJob = async () => {
-    const response = await fixture.runtime.app.request(`/api/sim/v1/patient-persona-jobs/${jobId}`, { headers: { cookie } })
-    expect(response.status).toBe(200)
-    return patientPersonaJobSchema.parse(await response.json())
+  const adminActor = {
+    actorId: 'actor-administrator', epoch: 'epoch-1', locationId: 'location-administrator',
+    organizationId: 'organization-clinmesh', practitionerId: 'practitioner-administrator',
+    practitionerRoleId: 'practitioner-role-administrator', roleCode: 'administrator' as const,
+    scenarioRunId: 'scenario-run-1', workspaceId: 'workspace-demo',
   }
+  const readJob = () => fixture.runtime.patientPersona.getJob(adminActor, jobId)
   await control(fixture, { tokens: null, cny: 1 })
-  await expect.poll(async () => ({ job: await readJob(), lastRejection: (await control(fixture)).lastRejection })).toMatchObject({
+  await expect.poll(async () => ({ job: readJob(), lastRejection: (await control(fixture)).lastRejection })).toMatchObject({
     job: { jobId, status: 'queued' },
     lastRejection: { code: 'MODEL_METERING_UNAVAILABLE', scope: 'workspace', dimension: 'cny' },
   })
   expect(dispatched).toBe(0)
   expect((await requests()).total).toBe(0)
   await control(fixture, { tokens: null, cny: null })
-  await expect.poll(readJob).toMatchObject({ jobId, status: 'succeeded' })
+  await expect.poll(() => readJob()).toMatchObject({ jobId, status: 'succeeded' })
   expect(dispatched).toBe(1)
   expect((await requests()).items[0]).toMatchObject({ reservationBoundary: {
-    adapter: transport === 'direct' ? 'openai-chat' : 'dsh-bridge', inputTokens: null, outputTokens: null,
-    reason: transport === 'direct' ? 'output-limit-unbounded' : 'adapter-metering-unavailable',
+    adapter: 'openai-chat', inputTokens: null, outputTokens: null,
+    reason: 'output-limit-unbounded',
   } })
 })
 
