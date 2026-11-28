@@ -127,6 +127,7 @@ const ingestionRecordSubjectRowSchema = z.object({
 
 const ingestionRecordProjectRowSchema = z.object({
   ingestion_record_id: z.string(),
+  patient_id: z.string().min(1),
   source_system_id: z.string(),
   fhir_observation_json: z.string(),
   provenance_json: z.string(),
@@ -482,8 +483,8 @@ export class LocalSourceIngestionService {
         ingestedAt,
       })
 
-      const projectedEffects = complete && assignedPatientId !== null
-        ? this.#projectBatchRecordsToFhir(input.context, parsedBody.batchId, assignedPatientId)
+      const projectedEffects = complete
+        ? this.#projectBatchRecordsToFhir(input.context, parsedBody.batchId)
         : []
 
       return {
@@ -726,7 +727,7 @@ export class LocalSourceIngestionService {
           `).all(input.context.workspaceId, input.context.epoch, input.candidateId),
         )
         const projectedEffects = completeBatchRows.flatMap(batchRow => (
-          this.#projectBatchRecordsToFhir(input.context, batchRow.batch_id, targetPatientId)
+          this.#projectBatchRecordsToFhir(input.context, batchRow.batch_id, { candidateId: input.candidateId })
         ))
 
         const updatedRow = quarantineRowSchema.parse(
@@ -880,15 +881,28 @@ export class LocalSourceIngestionService {
   #projectBatchRecordsToFhir(
     context: RepositoryContext,
     batchId: string,
-    targetPatientId: string,
+    options?: { candidateId?: string },
   ): Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> {
+    const candidateFilter = options?.candidateId === undefined ? '' : ' AND r.candidate_id = ?'
+    const params: unknown[] = [context.workspaceId, context.epoch, batchId]
+    if (options?.candidateId !== undefined) {
+      params.push(options.candidateId)
+    }
     const rows = z.array(ingestionRecordProjectRowSchema).parse(
       this.#database.driver.prepare(`
-        SELECT ingestion_record_id, source_system_id, fhir_observation_json, provenance_json
-        FROM local_ingestion_record
-        WHERE workspace_id = ? AND epoch = ? AND batch_id = ?
-        ORDER BY rowid ASC
-      `).all(context.workspaceId, context.epoch, batchId),
+        SELECT r.ingestion_record_id, r.source_system_id, r.patient_id, r.fhir_observation_json, r.provenance_json
+        FROM local_ingestion_record AS r
+        JOIN local_ingestion_quarantine AS q
+          ON q.workspace_id = r.workspace_id
+         AND q.epoch = r.epoch
+         AND q.candidate_id = r.candidate_id
+        WHERE r.workspace_id = ?
+          AND r.epoch = ?
+          AND r.batch_id = ?
+          AND r.patient_id IS NOT NULL
+          AND q.resolution_status IN ('auto-matched', 'confirmed-merged')${candidateFilter}
+        ORDER BY r.rowid ASC
+      `).all(...params),
     )
 
     const effects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> = []
@@ -920,7 +934,7 @@ export class LocalSourceIngestionService {
 
       const obsForFhir = fhirResourceSchema.parse({
         ...parsedObs,
-        subject: { reference: `Patient/${targetPatientId}` },
+        subject: { reference: `Patient/${row.patient_id}` },
         ...(sanitizedBasedOn !== undefined ? { basedOn: sanitizedBasedOn } : {}),
       })
 

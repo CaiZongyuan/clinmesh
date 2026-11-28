@@ -966,5 +966,111 @@ describe('Intra-Hospital Second Source System, Patient Quarantine & Batch Comple
       clinicalFactLedgerSchema,
     )
     expect(ledgerAfterReject.facts.some(f => Number((f.value.normalizedValue as { value?: number })?.value) === 8.8)).toBe(false)
+
+    // Shared batchId reused across multiple patients + a quarantined chunk must project each record strictly to its own matched patient
+    const sharedBatchId = 'batch-shared-multi-patient'
+    const multiChunk1Res = await postRawJson(fixture, 'admin', '/api/sim/v1/local-ingestion/batches', {
+      sourceSystemId: SIM_LIS_V2_SOURCE_SYSTEM_ID,
+      batchId: sharedBatchId,
+      expectedItemCount: 3,
+      ingestedAt: '2026-08-24T09:30:00+08:00',
+      specimen_barcode: 'SB-MULTI-A',
+      patient_ref: {
+        externalPatientId: visitPrimary.patientId,
+        localPatientId: visitPrimary.patientId,
+        fullName: '刘建国',
+        birthDate: '1964-06-18',
+        nationalId: '110101196406180019',
+      },
+      records: [{
+        externalReportId: 'lis2-multi-a-cr',
+        orderId: 'ord-multi-a',
+        analyte_local_code: 'CREA',
+        analyte_label: '肌酐',
+        result_num: 1.11,
+        uom_text: 'mg/dL',
+        collected_ts: '2026-08-24T08:40:00+08:00',
+        released_ts: '2026-08-24T09:28:00+08:00',
+        report_status: 'final',
+        version: 1,
+      }],
+    })
+    expect(multiChunk1Res.status).toBe(200)
+
+    const multiChunk2Res = await postRawJson(fixture, 'admin', '/api/sim/v1/local-ingestion/batches', {
+      sourceSystemId: SIM_LIS_V2_SOURCE_SYSTEM_ID,
+      batchId: sharedBatchId,
+      expectedItemCount: 3,
+      ingestedAt: '2026-08-24T09:31:00+08:00',
+      specimen_barcode: 'SB-MULTI-Q',
+      patient_ref: {
+        externalPatientId: 'lis2-ext-multi-quarantined',
+        fullName: patientADemographics.name,
+        birthDate: patientADemographics.birthDate,
+        nationalId: patientADemographics.nationalId,
+        phone: '13799999999',
+      },
+      records: [{
+        externalReportId: 'lis2-multi-q-cr',
+        orderId: 'ord-multi-q',
+        analyte_local_code: 'CREA',
+        analyte_label: '肌酐',
+        result_num: 9.99,
+        uom_text: 'mg/dL',
+        collected_ts: '2026-08-24T08:41:00+08:00',
+        released_ts: '2026-08-24T09:29:00+08:00',
+        report_status: 'final',
+        version: 1,
+      }],
+    })
+    expect(multiChunk2Res.status, await multiChunk2Res.clone().text()).toBe(200)
+
+    const multiChunk3Res = await postRawJson(fixture, 'admin', '/api/sim/v1/local-ingestion/batches', {
+      sourceSystemId: SIM_LIS_V2_SOURCE_SYSTEM_ID,
+      batchId: sharedBatchId,
+      expectedItemCount: 3,
+      ingestedAt: '2026-08-24T09:32:00+08:00',
+      specimen_barcode: 'SB-MULTI-B',
+      patient_ref: {
+        externalPatientId: visitSimV2.patientId,
+        localPatientId: visitSimV2.patientId,
+        fullName: '赵志明',
+        birthDate: '1964-06-18',
+        nationalId: '110101196406180035',
+      },
+      records: [{
+        externalReportId: 'lis2-multi-b-cr',
+        orderId: 'ord-multi-b',
+        analyte_local_code: 'CREA',
+        analyte_label: '肌酐',
+        result_num: 2.22,
+        uom_text: 'mg/dL',
+        collected_ts: '2026-08-24T08:42:00+08:00',
+        released_ts: '2026-08-24T09:30:00+08:00',
+        report_status: 'final',
+        version: 1,
+      }],
+    })
+    expect(multiChunk3Res.status).toBe(200)
+
+    const primaryAfterMulti = await fixture.read(
+      'doctor',
+      `/api/his/v1/outpatient/cases/${visitPrimary.caseId}/clinical-fact-ledger?itemCodes=2160-0`,
+      clinicalFactLedgerSchema,
+    )
+    const primaryCrValues = primaryAfterMulti.facts.map(f => Number((f.value.normalizedValue as { value?: number })?.value))
+    expect(primaryCrValues).toContain(1.11)
+    expect(primaryCrValues).not.toContain(2.22)
+    expect(primaryCrValues).not.toContain(9.99)
+
+    const simV2AfterMulti = await fixture.read(
+      'doctor',
+      `/api/his/v1/outpatient/cases/${visitSimV2.caseId}/clinical-fact-ledger?itemCodes=2160-0`,
+      clinicalFactLedgerSchema,
+    )
+    const simV2CrValues = simV2AfterMulti.facts.map(f => Number((f.value.normalizedValue as { value?: number })?.value))
+    expect(simV2CrValues).toContain(2.22)
+    expect(simV2CrValues).not.toContain(1.11)
+    expect(simV2CrValues).not.toContain(9.99)
   })
 })
