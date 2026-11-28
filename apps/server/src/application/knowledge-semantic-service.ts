@@ -287,7 +287,6 @@ export class KnowledgeSemanticService {
     const birthDate = patient.resourceType === 'Patient' && typeof patient.birthDate === 'string'
       ? patient.birthDate
       : undefined
-    const population = resolvePatientGuidelinePopulation(birthDate, input.virtualNow)
 
     const ledgerAsOf = input.query.asOf ?? input.virtualNow
     const ledger = this.#factLedger.buildInternalLedger(input.context, input.subject, {
@@ -304,33 +303,36 @@ export class KnowledgeSemanticService {
         : { packLayer: effective.pack.conceptVocabulary }),
     })
 
-    const verifySourcePassage: KnowledgePassageVerifier = (anchor: KnowledgeAnchorCitation) => {
-      if (this.#guidelines === undefined) {
-        return { reason: 'guideline-corpus-unavailable', valid: false }
-      }
-      const read = this.#guidelines.readReferences(
-        [{ page: anchor.page, sha256: anchor.sha256, sourceId: anchor.sourceId, version: anchor.version }],
-        { population },
-      )
-      if (read.missing.length > 0) {
-        return { reason: read.missing[0]!.reason, valid: false }
-      }
-      const matched = read.guidelines.filter(item => (
-        item.sourceHash === anchor.sha256
-        && item.version === anchor.version
-        && (
-          anchor.locator === undefined
-          || item.locator === anchor.locator
-          || item.locator.startsWith(`${anchor.locator}；`)
-          || item.locator.startsWith(`${anchor.locator};`)
+    const createSourceVerifier = (referenceIso: string): KnowledgePassageVerifier => {
+      const population = resolvePatientGuidelinePopulation(birthDate, referenceIso)
+      return (anchor: KnowledgeAnchorCitation) => {
+        if (this.#guidelines === undefined) {
+          return { reason: 'guideline-corpus-unavailable', valid: false }
+        }
+        const read = this.#guidelines.readReferences(
+          [{ page: anchor.page, sha256: anchor.sha256, sourceId: anchor.sourceId, version: anchor.version }],
+          { population },
         )
-      ))
-      if (matched.length === 0) {
-        return { reason: 'passage-locator-mismatch', valid: false }
-      }
-      return {
-        passageText: matched.map(item => item.text).join('\n'),
-        valid: true,
+        if (read.missing.length > 0) {
+          return { reason: read.missing[0]!.reason, valid: false }
+        }
+        const matched = read.guidelines.filter(item => (
+          item.sourceHash === anchor.sha256
+          && item.version === anchor.version
+          && (
+            anchor.locator === undefined
+            || item.locator === anchor.locator
+            || item.locator.startsWith(`${anchor.locator}；`)
+            || item.locator.startsWith(`${anchor.locator};`)
+          )
+        ))
+        if (matched.length === 0) {
+          return { reason: 'passage-locator-mismatch', valid: false }
+        }
+        return {
+          passageText: matched.map(item => item.text).join('\n'),
+          valid: true,
+        }
       }
     }
 
@@ -343,7 +345,7 @@ export class KnowledgeSemanticService {
       packId: effective.pack.manifest.id,
       packVersion: effective.pack.manifest.version,
       snapshots,
-      verifySourcePassage,
+      verifySourcePassage: createSourceVerifier(ledgerAsOf),
       vocabulary,
     })
 
@@ -364,7 +366,7 @@ export class KnowledgeSemanticService {
       packId: effective.pack.manifest.id,
       packVersion: effective.pack.manifest.version,
       snapshots,
-      verifySourcePassage,
+      verifySourcePassage: createSourceVerifier(input.virtualNow),
       vocabulary,
     })
     const latestComparison = compareKnowledgeEvaluations(baselineEval, latestEval)

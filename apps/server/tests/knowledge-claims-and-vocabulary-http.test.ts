@@ -759,4 +759,38 @@ describe('Concept Vocabulary & Knowledge Claims HTTP Contracts (AC8, AC9, AC15)'
     `).all() as Array<{ operation: string; outcome: string }>
     expect(audits.some(a => a.outcome === 'success')).toBe(true)
   })
+
+  it('resolves guideline population at query.asOf for historical knowledge reads and virtualNow for latest recheck', async () => {
+    const { fixture } = await setupRuntime({ withGuidelineCorpus: true })
+    const stay = await fixture.preparePciAdmission([])
+    const scenario = await fixture.read('admin', '/api/sim/v1/scenario-runs/current', scenarioStateSchema)
+    const scope = { epoch: scenario.epoch, workspaceId: scenario.workspaceId } as const
+
+    // Set patient birthDate so patient turns 18 on 2026-07-01: pediatric at 2026-06-15, adult at current virtualNow (Aug 2026)
+    const patient = fixture.runtime.fhir.read(scope, 'Patient', stay.patientId)
+    fixture.runtime.fhir.update(scope, {
+      ...patient,
+      birthDate: '2008-07-01',
+    }, patient.meta!.versionId!)
+
+    const historical = await fixture.read(
+      'inpatient-doctor',
+      `${stay.path}/disease-packs/synthetic-test-syndrome/knowledge?asOf=${encodeURIComponent('2026-06-15T00:00:00Z')}&recheckLatest=true`,
+      diseasePackKnowledgeEvaluationSchema,
+    )
+    // At 2026-06-15 the patient is still 17 (pediatric): adult-only guideline sources must be rejected
+    expect(historical.claims.length).toBeGreaterThan(0)
+    expect(historical.claims.every(c => c.anchorValid === false && c.active === false)).toBe(true)
+    // Latest recheck at virtualNow (18 years old -> adult) accepts the adult guideline sources
+    expect(historical.latestComparison).toBeDefined()
+    expect(historical.latestComparison!.addedClaimIds.length).toBeGreaterThan(0)
+
+    // Current-time read without asOf resolves as adult and activates claims cleanly
+    const current = await fixture.read(
+      'inpatient-doctor',
+      `${stay.path}/disease-packs/synthetic-test-syndrome/knowledge`,
+      diseasePackKnowledgeEvaluationSchema,
+    )
+    expect(current.claims.some(c => c.anchorValid && c.active)).toBe(true)
+  })
 })
