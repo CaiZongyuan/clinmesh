@@ -655,8 +655,8 @@ export class ClinicalScoreService {
   }
 
   /** 已由首份已签 12 导联心电图回答、床旁不再算缺项的项目代码。 */
-  satisfiedBedsideCodes(context: RepositoryContext, subjectId: string): string[] {
-    return this.latestRiskAssessment(context, subjectId).effectiveStSegmentDeviation?.source === 'ecg-report'
+  satisfiedBedsideCodes(context: RepositoryContext, subjectId: string, cutoffIso?: string): string[] {
+    return this.latestRiskAssessment(context, subjectId, cutoffIso).effectiveStSegmentDeviation?.source === 'ecg-report'
       ? ['st-segment-deviation']
       : []
   }
@@ -664,16 +664,31 @@ export class ClinicalScoreService {
   latestRiskAssessment(
     context: RepositoryContext,
     caseId: string,
+    cutoffIso?: string,
   ): ClinicalRiskAssessmentRecord {
-    const row = riskAssessmentRowSchema.optional().parse(
-      this.#database.driver.prepare(`
-        SELECT revision, assessment_json, observation_id, observation_version, provenance_id, recorded_at, recorded_by
-        FROM clinical_risk_assessment
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        ORDER BY revision DESC
-        LIMIT 1
-      `).get(context.workspaceId, context.epoch, caseId),
-    )
+    const cutoffMs = cutoffIso !== undefined ? Date.parse(cutoffIso) : Number.NaN
+    const hasCutoff = Number.isFinite(cutoffMs)
+    const row = hasCutoff
+      ? z.array(riskAssessmentRowSchema).parse(
+          this.#database.driver.prepare(`
+            SELECT revision, assessment_json, observation_id, observation_version, provenance_id, recorded_at, recorded_by
+            FROM clinical_risk_assessment
+            WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+            ORDER BY revision DESC
+          `).all(context.workspaceId, context.epoch, caseId),
+        ).find(item => {
+          const ts = Date.parse(item.recorded_at)
+          return !Number.isFinite(ts) || ts <= cutoffMs
+        })
+      : riskAssessmentRowSchema.optional().parse(
+          this.#database.driver.prepare(`
+            SELECT revision, assessment_json, observation_id, observation_version, provenance_id, recorded_at, recorded_by
+            FROM clinical_risk_assessment
+            WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+            ORDER BY revision DESC
+            LIMIT 1
+          `).get(context.workspaceId, context.epoch, caseId),
+        )
     const values = row === undefined
       ? { ...EMPTY_RISK_VALUES }
       : clinicalRiskAssessmentValuesSchema.parse(JSON.parse(row.assessment_json))
@@ -682,6 +697,7 @@ export class ClinicalScoreService {
       caseId,
       values,
       row === undefined ? null : { observationId: row.observation_id, observationVersion: row.observation_version },
+      hasCutoff ? cutoffMs : undefined,
     )
     return {
       effectiveStSegmentDeviation,
@@ -1970,6 +1986,7 @@ export class ClinicalScoreService {
     caseId: string,
     values: ClinicalRiskAssessmentValues,
     bedsideObservation: { observationId: string; observationVersion: string } | null,
+    cutoffMs?: number,
   ): EffectiveStSegmentDeviation | null {
     const revisionIndex = this.#buildReportRevisionIndex(context)
     const ecgRows = z.array(z.object({
@@ -2014,6 +2031,7 @@ export class ClinicalScoreService {
           timestampMs: Number.isFinite(tsMs) ? tsMs : undefined,
         }
       })
+      .filter(candidate => cutoffMs === undefined || candidate.timestampMs === undefined || candidate.timestampMs <= cutoffMs)
       .sort((a, b) => {
         if (a.timestampMs !== undefined && b.timestampMs !== undefined && a.timestampMs !== b.timestampMs) {
           return a.timestampMs - b.timestampMs

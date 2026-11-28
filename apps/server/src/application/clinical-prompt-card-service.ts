@@ -386,7 +386,7 @@ export class ClinicalPromptCardService {
       ? this.#activeMedications(input.context, input.subject, effectiveInpatient, asOf, historicalAsOf)
       : []
     const allergyCodes: ReadonlySet<string> = needsMedicationContext
-      ? this.#outpatient.patientAllergyCodes(input.context, input.subject.patientId)
+      ? this.#allergyCodesAt(input.context, input.subject.patientId, asOf, historicalAsOf)
       : new Set<string>()
     const medicationCatalog = needsMedicationContext
       ? this.#buildMedicationCatalog(input.context)
@@ -784,6 +784,113 @@ export class ClinicalPromptCardService {
     return []
   }
 
+  #allergyCodesAt(
+    context: ActorContext,
+    patientId: string,
+    asOf: string,
+    historicalAsOf?: boolean,
+  ): Set<string> {
+    if (!historicalAsOf) {
+      return this.#outpatient.patientAllergyCodes(context, patientId)
+    }
+    const cutoffMs = Date.parse(asOf)
+    if (!Number.isFinite(cutoffMs)) {
+      return this.#outpatient.patientAllergyCodes(context, patientId)
+    }
+    const patientRef = `Patient/${patientId}`
+    const historyRows = z.array(z.object({
+      content_json: z.string(),
+      deleted: z.number().int(),
+      last_updated: z.string(),
+      resource_id: z.string(),
+      version_id: z.number().int().positive(),
+    }).strict()).parse(
+      this.#database.driver.prepare(`
+        SELECT resource_id, version_id, last_updated, deleted, content_json
+        FROM fhir_history
+        WHERE workspace_id = ? AND epoch = ?
+          AND resource_type = 'AllergyIntolerance'
+          AND json_extract(content_json, '$.patient.reference') = ?
+        ORDER BY resource_id ASC, version_id ASC
+      `).all(context.workspaceId, context.epoch, patientRef),
+    )
+
+    const latestByResourceId = new Map<string, { content: Record<string, unknown>; deleted: boolean }>()
+    const firstRecordedByResourceId = new Map<string, string | undefined>()
+    const seenResourceIds = new Set<string>()
+    for (const row of historyRows) {
+      seenResourceIds.add(row.resource_id)
+      const parsed = JSON.parse(row.content_json) as Record<string, unknown>
+      const recordedDate = typeof parsed['recordedDate'] === 'string' ? parsed['recordedDate'] : undefined
+      if (!firstRecordedByResourceId.has(row.resource_id)) {
+        firstRecordedByResourceId.set(row.resource_id, recordedDate)
+      }
+      const recordedChanged = row.version_id > 1
+        && recordedDate !== undefined
+        && recordedDate !== firstRecordedByResourceId.get(row.resource_id)
+      const effectiveTimestamp = (row.version_id === 1 || recordedChanged) && recordedDate !== undefined
+        ? recordedDate
+        : row.last_updated
+      const effectiveMs = Date.parse(effectiveTimestamp)
+      if (Number.isFinite(effectiveMs) && effectiveMs > cutoffMs) {
+        continue
+      }
+      latestByResourceId.set(row.resource_id, {
+        content: parsed,
+        deleted: row.deleted === 1,
+      })
+    }
+
+    const fallbackResources = this.#fhir.search(
+      context,
+      'AllergyIntolerance',
+      new URLSearchParams({ _count: '100', patient: patientRef }),
+    ).resources
+    for (const resource of fallbackResources) {
+      if (seenResourceIds.has(resource.id)) continue
+      const record = resource as Record<string, unknown>
+      const effectiveTimestamp = typeof record['recordedDate'] === 'string'
+        ? record['recordedDate']
+        : resource.meta?.lastUpdated
+      const effectiveMs = effectiveTimestamp !== undefined ? Date.parse(effectiveTimestamp) : Number.NaN
+      if (Number.isFinite(effectiveMs) && effectiveMs > cutoffMs) {
+        continue
+      }
+      latestByResourceId.set(resource.id, { content: record, deleted: false })
+    }
+
+    const extractStatusCode = (value: unknown): string | undefined => {
+      if (typeof value !== 'object' || value === null) return undefined
+      const coding = (value as Record<string, unknown>)['coding']
+      if (!Array.isArray(coding)) return undefined
+      for (const candidate of coding) {
+        if (typeof candidate !== 'object' || candidate === null) continue
+        const code = (candidate as Record<string, unknown>)['code']
+        if (typeof code === 'string') return code
+      }
+      return undefined
+    }
+
+    const codes = new Set<string>()
+    for (const entry of latestByResourceId.values()) {
+      if (entry.deleted) continue
+      const category = Array.isArray(entry.content['category']) ? entry.content['category'] : []
+      if (!category.includes('medication')) continue
+      if (extractStatusCode(entry.content['clinicalStatus']) !== 'active') continue
+      if (extractStatusCode(entry.content['verificationStatus']) !== 'confirmed') continue
+      const codeObj = typeof entry.content['code'] === 'object' && entry.content['code'] !== null
+        ? entry.content['code'] as Record<string, unknown>
+        : undefined
+      const coding = Array.isArray(codeObj?.['coding']) ? codeObj['coding'] : []
+      for (const candidate of coding) {
+        if (typeof candidate !== 'object' || candidate === null) continue
+        const code = (candidate as Record<string, unknown>)['code']
+        if (typeof code === 'string') codes.add(code)
+      }
+    }
+    return codes
+  }
+
   #evaluatePacksForSubject(
     context: ActorContext,
     subject: { id: string; kind: 'outpatient' | 'inpatient'; patientId: string },
@@ -813,7 +920,7 @@ export class ClinicalPromptCardService {
       const entry = entriesByPackId.get(packId)
       if (!entry) continue
       const vocabulary: ConceptVocabulary = this.#diseasePacks.registry.resolvePackVocabulary(effective)
-      const exitMeta = this.#diseasePacks.readExitMetadata(context, subject.kind, subject.id, packId)
+      const exitMeta = this.#diseasePacks.readExitMetadata(context, subject.kind, subject.id, packId, asOf)
       evaluatedPacks.push({
         effective,
         entry,
@@ -1207,7 +1314,11 @@ export class ClinicalPromptCardService {
       subjectKind: input.subject.kind,
       ...(qualityCheck === undefined ? {} : { qualityCheck }),
       satisfiedBedsideCodes: input.subject.kind === 'inpatient'
-        ? this.#clinicalScores.satisfiedBedsideCodes(input.context, input.subject.id)
+        ? this.#clinicalScores.satisfiedBedsideCodes(
+            input.context,
+            input.subject.id,
+            input.historicalAsOf ? input.asOf : undefined,
+          )
         : [],
       ...(input.query.selectedTemplateId === undefined ? {} : { selectedTemplateId: input.query.selectedTemplateId }),
       templateClassesByTemplateId,
@@ -1227,7 +1338,12 @@ export class ClinicalPromptCardService {
       timing: input.timing,
     })
 
-    const allergyCodes = this.#outpatient.patientAllergyCodes(input.context, input.subject.patientId)
+    const allergyCodes = this.#allergyCodesAt(
+      input.context,
+      input.subject.patientId,
+      input.asOf,
+      input.historicalAsOf,
+    )
     let scores: ClinicalScoreBundle | undefined
     try {
       const archivedCutoffOverride = input.historicalAsOf ? true : undefined

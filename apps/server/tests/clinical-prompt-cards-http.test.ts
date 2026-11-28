@@ -1336,4 +1336,98 @@ describe('DSAP Slice S8: Timing Hooks, Unified ClinicalPromptCard, Historical Re
     expect(afterStopFilter.visibleCards).toHaveLength(1)
     expect(afterStopFilter.blockedRecords).toEqual([])
   })
+
+  it('cuts off medication allergies at the requested historical asOf timestamp', async () => {
+    const { fixture } = await setupFixture({ withGuidelineCorpus: true })
+    const visit = await createOutpatientVisit(fixture, '稳定性冠心病复诊', 'male')
+    const { epoch, virtualTime, workspaceId } = currentScope(fixture)
+    const scope = { epoch, workspaceId } as const
+    const beforeAllergyIso = new Date(Date.parse(virtualTime) - 3_600_000).toISOString()
+
+    // Record an inactive aspirin allergy at T1 (current virtualTime), then advance time to T2 and activate it
+    const allergyId = `alg-asof-${randomUUID()}`
+    const inactiveAllergy = fixture.runtime.fhir.create(scope, {
+      category: ['medication'],
+      clinicalStatus: { coding: [{ code: 'inactive', system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical' }] },
+      code: { coding: [{ code: 'aspirin', display: '阿司匹林' }], text: '阿司匹林过敏' },
+      id: allergyId,
+      patient: { reference: `Patient/${visit.patientId}` },
+      recordedDate: virtualTime,
+      resourceType: 'AllergyIntolerance',
+      verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-verification' }] },
+    })
+
+    const scenario = await fixture.read(
+      'admin',
+      '/api/sim/v1/scenario-runs/current',
+      z.object({ scenarioRunId: z.string(), virtualTime: z.string() }).loose(),
+    )
+    const betweenIso = new Date(Date.parse(virtualTime) + 1_800_000).toISOString()
+    const activatedTime = new Date(Date.parse(virtualTime) + 7_200_000).toISOString()
+    const advRes = await fixture.request('admin', `/api/sim/v1/scenario-runs/${scenario.scenarioRunId}/actions/advance-time`, {
+      expectedVirtualTime: scenario.virtualTime,
+      targetVirtualTime: activatedTime,
+    })
+    expect(advRes.status, await advRes.clone().text()).toBe(200)
+
+    fixture.runtime.fhir.update(scope, {
+      ...inactiveAllergy,
+      clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical' }] },
+      recordedDate: activatedTime,
+    }, inactiveAllergy.meta!.versionId!)
+
+    const doctorCookie = await fixture.login('doctor')
+    const doctorActor = (await fixture.runtime.identity.resolveSessionContext(new Headers({ cookie: doctorCookie }))).actor
+    const aspirinCard = clinicalPromptCardSchema.parse({
+      basedOnFactVersions: [],
+      blockingTier: 'none',
+      cardId: 'card-suggest-aspirin',
+      category: 'guideline-advice',
+      deliveryMode: 'display',
+      detail: '稳定性冠心病二级预防阿司匹林建议',
+      indicator: 'info',
+      knowledgeSnapshotVersion: '2026.08.v1',
+      knowledgeStatus: 'published',
+      overrideReasons: [],
+      packId: 'coronary-cad',
+      packVersion: '1.0.0',
+      riskTags: [],
+      sideBySideGroupKey: null,
+      source: { label: '抗血小板建议', topicId: 'cad-dapt' },
+      suggestions: [{
+        actionKind: 'draft-medication',
+        catalogItemId: 'medication-aspirin',
+        id: 'sug-aspirin',
+        isDraftOnly: true,
+        labelZh: '开立阿司匹林',
+      }],
+      summary: '阿司匹林建议',
+      timing: 'encounter-open',
+      trialBadgeZh: null,
+      trialDisclaimerZh: null,
+    })
+    const evalAspirinAt = (asOf?: string) => fixture.runtime.workflow.promptCards.filterCandidateCardsForSubject({
+      ...(asOf === undefined ? {} : { asOf }),
+      cards: [aspirinCard],
+      context: doctorActor,
+      recordAudit: false,
+      subject: { id: visit.caseId, kind: 'outpatient', patientId: visit.patientId },
+      timing: 'encounter-open',
+    })
+
+    // Before allergy was recorded: NOT blocked
+    const beforeRecorded = evalAspirinAt(beforeAllergyIso)
+    expect(beforeRecorded.visibleCards).toHaveLength(1)
+    expect(beforeRecorded.blockedRecords).toEqual([])
+
+    // While allergy was inactive (between T1 and T2): NOT blocked
+    const whileInactive = evalAspirinAt(betweenIso)
+    expect(whileInactive.visibleCards).toHaveLength(1)
+    expect(whileInactive.blockedRecords).toEqual([])
+
+    // At current time T2 (allergy active): BLOCKED with allergy-conflict
+    const afterActivated = evalAspirinAt()
+    expect(afterActivated.visibleCards).toEqual([])
+    expect(afterActivated.blockedRecords.some(b => b.blockedReason === 'allergy-conflict')).toBe(true)
+  })
 })

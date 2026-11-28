@@ -1360,10 +1360,18 @@ export class DiseasePackRuntimeService {
     subjectKind: 'outpatient' | 'inpatient',
     subjectId: string,
     packId: string,
+    asOf?: string,
   ): { exited: boolean; exitSummaryDelivered: boolean; matchedFactIds: string[] } {
     const row = this.#loadExitState(context, subjectKind, subjectId, packId)
     if (row === undefined || row.status !== 'exited') {
       return { exited: false, exitSummaryDelivered: false, matchedFactIds: [] }
+    }
+    if (asOf !== undefined) {
+      const asOfMs = Date.parse(asOf)
+      const exitedMs = Date.parse(row.exited_at)
+      if (Number.isFinite(asOfMs) && Number.isFinite(exitedMs) && exitedMs > asOfMs) {
+        return { exited: false, exitSummaryDelivered: false, matchedFactIds: [] }
+      }
     }
     const matchedFactIds = z.array(z.string()).catch([]).parse(JSON.parse(row.matched_fact_ids_json))
     return {
@@ -1408,7 +1416,11 @@ export class DiseasePackRuntimeService {
       return { ...activation, exitReasonZh: null, exited: false }
     }
     const existingExit = this.#loadExitState(context, subject.kind, subject.id, packId)
-    if (existingExit?.status === 'exited') {
+    const asOfMs = Date.parse(asOf)
+    const existingExitedAtMs = existingExit !== undefined ? Date.parse(existingExit.exited_at) : Number.NaN
+    const existingExitAppliesAtAsOf = existingExit?.status === 'exited'
+      && (!Number.isFinite(asOfMs) || !Number.isFinite(existingExitedAtMs) || existingExitedAtMs <= asOfMs)
+    if (existingExitAppliesAtAsOf && existingExit !== undefined) {
       return {
         ...activation,
         activationReason: 'pack-exited' as const,
@@ -1421,7 +1433,7 @@ export class DiseasePackRuntimeService {
     if (activation.active && existingExit?.status !== 're-enabled') {
       const exitEval = evaluatePackExit(effective, ledger, evalOptions)
       if (exitEval.exited) {
-        if (!this.#database.driver.inTransaction) {
+        if (!this.#database.driver.inTransaction && existingExit?.status !== 'exited') {
           this.#persistExitedState(context, subject, packId, exitEval, asOf)
         }
         return {

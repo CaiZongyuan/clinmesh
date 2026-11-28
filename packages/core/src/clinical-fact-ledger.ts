@@ -1327,12 +1327,28 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     })
   }
 
+  const firstAllergyRecordedById = new Map<string, string | undefined>()
   for (const allergy of input.allergyIntolerances ?? []) {
+    if (!firstAllergyRecordedById.has(allergy.id)) {
+      firstAllergyRecordedById.set(allergy.id, allergy.recordedDate)
+    }
     const recordVersion = allergy.meta?.versionId ?? '1'
-    const { verificationStatus, presence, recordStatus } = mapVerificationStatus(allergy.verificationStatus)
+    const { verificationStatus, presence: basePresence, recordStatus } = mapVerificationStatus(allergy.verificationStatus)
+    const clinicalStatusCode = allergy.clinicalStatus?.coding?.[0]?.code?.trim().toLowerCase()
+    const presence = clinicalStatusCode === 'inactive' || clinicalStatusCode === 'resolved'
+      ? 'absent'
+      : basePresence
     const { itemCode } = pickCodingConcept(allergy.code, allergy.id, allergy.code?.text ?? allergy.id)
     const reportedAt = pickTimestamp(allergy.recordedDate)
-    const ingestedAt = pickTimestamp(allergy.recordedDate, allergy.meta?.lastUpdated) ?? new Date(0).toISOString()
+    const firstRecorded = firstAllergyRecordedById.get(allergy.id)
+    const recordedChanged = recordVersion !== '1'
+      && allergy.recordedDate !== undefined
+      && allergy.recordedDate !== firstRecorded
+    const ingestedAt = (
+      recordVersion === '1' || recordedChanged
+        ? pickTimestamp(allergy.recordedDate, allergy.meta?.lastUpdated)
+        : pickTimestamp(allergy.meta?.lastUpdated, allergy.recordedDate)
+    ) ?? new Date(0).toISOString()
     const reactions = allergy.reaction
       ?.flatMap(r => (r.manifestation ?? []).map(m => m.text ?? m.coding?.[0]?.display))
       .filter((t): t is string => Boolean(t)) ?? []
