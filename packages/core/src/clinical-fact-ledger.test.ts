@@ -506,7 +506,86 @@ describe('clinical-fact-ledger core transcription and evaluation', () => {
       evaluatedAsOf: '2026-08-24T12:00:00+08:00',
       candidates,
     })
-    expect(atLatest.facts.find(f => f.provenance.recordVersion === '2')?.ingestedAt).toBe('2026-08-24T11:05:00+08:00')
+    expect(atLatest.facts).toHaveLength(1)
+    expect(atLatest.facts[0]?.provenance.recordVersion).toBe('2')
+    expect(atLatest.facts[0]?.ingestedAt).toBe('2026-08-24T11:05:00+08:00')
+    expect(atLatest.facts[0]?.relation.supersedesFactId).toBe(`fact:clinmesh-sim-lis-v2:Observation:${sharedObsId}:1`)
+    expect(atLatest.facts[0]?.eligibleForScoringAndRedLine).toBe(true)
+
+    const atLatestWithSuperseded = evaluateClinicalFactLedger({
+      patientId: 'pat-1',
+      patientSex: 'male',
+      subjectKind: 'outpatient',
+      subjectId: 'case-1',
+      evaluatedAsOf: '2026-08-24T12:00:00+08:00',
+      includeSuperseded: true,
+      candidates,
+    })
+    expect(atLatestWithSuperseded.facts).toHaveLength(2)
+    const v1Superseded = atLatestWithSuperseded.facts.find(f => f.provenance.recordVersion === '1')!
+    expect(v1Superseded.relation.supersededByFactId).toBe(`fact:clinmesh-sim-lis-v2:Observation:${sharedObsId}:2`)
+    expect(v1Superseded.eligibleForScoringAndRedLine).toBe(false)
+    expect(v1Superseded.ineligibleReasons).toContain('superseded')
+  })
+
+  it('invalidates prior Observation version when retracted as entered-in-error under the same Observation ID while preserving pre-retraction asOf', () => {
+    const sharedObsId = 'l0-sim-lis-retract-001'
+    const candidates = transcribeLocalFhirFacts({
+      ingestedAtByObservationId: {
+        [`${sharedObsId}::1`]: '2026-08-24T09:05:00+08:00',
+        [`${sharedObsId}::2`]: '2026-08-24T11:05:00+08:00',
+      },
+      observations: [
+        {
+          id: sharedObsId,
+          status: 'final',
+          code: { coding: [{ code: '2160-0', display: '肌酐' }] },
+          valueQuantity: { value: 4.2, unit: 'mg/dL' },
+          issued: '2026-08-24T09:00:00+08:00',
+          meta: { versionId: '1', lastUpdated: '2026-08-24T09:00:00+08:00' },
+        },
+        {
+          id: sharedObsId,
+          status: 'entered-in-error',
+          code: { coding: [{ code: '2160-0', display: '肌酐' }] },
+          valueQuantity: { value: 4.2, unit: 'mg/dL' },
+          issued: '2026-08-24T11:00:00+08:00',
+          meta: { versionId: '2', lastUpdated: '2026-08-24T11:00:00+08:00' },
+        },
+      ],
+      sourceSystemIdByObservationId: {
+        [`${sharedObsId}::1`]: 'clinmesh-sim-lis-v2',
+      },
+    })
+
+    // Before retraction: v1 remains visible and eligible
+    const beforeRetract = evaluateClinicalFactLedger({
+      patientId: 'pat-1',
+      patientSex: 'male',
+      subjectKind: 'outpatient',
+      subjectId: 'case-1',
+      evaluatedAsOf: '2026-08-24T10:00:00+08:00',
+      candidates,
+    })
+    expect(beforeRetract.facts).toHaveLength(1)
+    expect(beforeRetract.facts[0]?.provenance.recordVersion).toBe('1')
+    expect(beforeRetract.facts[0]?.eligibleForScoringAndRedLine).toBe(true)
+
+    // After retraction: v1 is superseded by v2 (entered-in-error), leaving ZERO eligible facts
+    const afterRetract = evaluateClinicalFactLedger({
+      patientId: 'pat-1',
+      patientSex: 'male',
+      subjectKind: 'outpatient',
+      subjectId: 'case-1',
+      evaluatedAsOf: '2026-08-24T12:00:00+08:00',
+      candidates,
+    })
+    expect(afterRetract.facts).toHaveLength(1)
+    expect(afterRetract.facts[0]?.provenance.recordVersion).toBe('2')
+    expect(afterRetract.facts[0]?.recordStatus).toBe('entered-in-error')
+    expect(afterRetract.facts[0]?.eligibleForScoringAndRedLine).toBe(false)
+    expect(afterRetract.facts[0]?.ineligibleReasons).toContain('entered-in-error')
+    expect(afterRetract.facts.filter(f => f.eligibleForScoringAndRedLine)).toEqual([])
   })
 
   it('enforces public validity defaults and tightenValidityDays monotonicity', () => {

@@ -981,6 +981,15 @@ function buildFactId(sourceSystemId: string, recordType: string, recordId: strin
     : `fact:${sourceSystemId}:${recordType}:${recordId}:${recordVersion}`
 }
 
+function compareVersionIds(left: string, right: string): number {
+  const leftNum = Number(left)
+  const rightNum = Number(right)
+  if (Number.isFinite(leftNum) && Number.isFinite(rightNum) && leftNum !== rightNum) {
+    return leftNum - rightNum
+  }
+  return left.localeCompare(right)
+}
+
 function inferSexRestrictionFromCodeOrText(code: string, display: string): 'female' | 'male' | null {
   const spec = CONCEPT_BY_ALIAS.get(code)
   if (spec?.sexRestriction) return spec.sexRestriction
@@ -998,8 +1007,17 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
   const candidates: TranscribedClinicalFactCandidate[] = []
 
   const obsById = new Map<string, FhirObservationLike>()
+  const obsVersionsById = new Map<string, FhirObservationLike[]>()
   for (const obs of input.observations ?? []) {
     obsById.set(obs.id, obs)
+    const list = obsVersionsById.get(obs.id)
+    if (list) list.push(obs)
+    else obsVersionsById.set(obs.id, [obs])
+  }
+  for (const list of obsVersionsById.values()) {
+    if (list.length > 1) {
+      list.sort((a, b) => compareVersionIds(a.meta?.versionId ?? '1', b.meta?.versionId ?? '1'))
+    }
   }
 
   const reportByResultObsId = new Map<string, FhirDiagnosticReportLike>()
@@ -1040,6 +1058,18 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
       const prevVersion = prevObs?.meta?.versionId ?? '1'
       const prevSourceSystemId = readObservationMapValue(input.sourceSystemIdByObservationId, prevObsId, prevVersion) ?? defaultSourceSystemId
       return buildFactId(prevSourceSystemId, 'Observation', prevObsId, prevVersion, componentCode)
+    }
+    const versions = obsVersionsById.get(obs.id)
+    if (versions && versions.length > 1) {
+      const currentVersion = obs.meta?.versionId ?? '1'
+      const currentIdx = versions.findIndex(v => (v.meta?.versionId ?? '1') === currentVersion)
+      for (let i = currentIdx - 1; i >= 0; i -= 1) {
+        const prevObs = versions[i]!
+        if (!mapFhirReportOrObsStatus(prevObs.status)) continue
+        const prevVersion = prevObs.meta?.versionId ?? '1'
+        const prevSourceSystemId = readObservationMapValue(input.sourceSystemIdByObservationId, prevObs.id, prevVersion) ?? defaultSourceSystemId
+        return buildFactId(prevSourceSystemId, 'Observation', prevObs.id, prevVersion, componentCode)
+      }
     }
     if (!report) return null
     const prevReportId = readOwnRecordValue(input.supersedesReportId, report.id)
@@ -1433,17 +1463,24 @@ export function transcribeLocalFhirFacts(input: LocalFhirTranscriptionInput): Tr
     })
   }
 
-  // Link sequential versions of the same FHIR resource/itemCode as superseding earlier revisions
+  // Link sequential versions of the same FHIR resource as superseding earlier revisions
+  // (independent of sourceSystemId or analyte code corrections on amended/retracted versions).
   const byResourceItem = new Map<string, TranscribedClinicalFactCandidate[]>()
   for (const candidate of candidates) {
-    const key = `${candidate.provenance.sourceSystemId}::${candidate.provenance.recordType}::${candidate.provenance.recordId}::${candidate.itemCode.code}`
+    const componentPrefix = `fact:${candidate.provenance.sourceSystemId}:${candidate.provenance.recordType}:${candidate.provenance.recordId}:${candidate.provenance.recordVersion}:`
+    const subKey = candidate.factId.startsWith(componentPrefix)
+      ? `component::${candidate.factId.slice(componentPrefix.length)}`
+      : candidate.provenance.recordType === 'Observation'
+        ? 'primary'
+        : `item::${candidate.itemCode.code}`
+    const key = `${candidate.provenance.recordType}::${candidate.provenance.recordId}::${subKey}`
     const group = byResourceItem.get(key)
     if (group) group.push(candidate)
     else byResourceItem.set(key, [candidate])
   }
   for (const group of byResourceItem.values()) {
     if (group.length < 2) continue
-    group.sort((a, b) => Number(a.provenance.recordVersion) - Number(b.provenance.recordVersion))
+    group.sort((a, b) => compareVersionIds(a.provenance.recordVersion, b.provenance.recordVersion))
     for (let i = 1; i < group.length; i++) {
       if (group[i]!.supersedesFactId === null) {
         group[i]!.supersedesFactId = group[i - 1]!.factId

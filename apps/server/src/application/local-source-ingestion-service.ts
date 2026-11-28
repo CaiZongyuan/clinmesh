@@ -934,10 +934,30 @@ export class LocalSourceIngestionService {
       const committedObs = existingObsVersion === undefined
         ? this.#fhir.create(context, obsForFhir)
         : this.#fhir.update(context, obsForFhir, existingObsVersion)
+      const committedVersionId = committedObs.meta?.versionId ?? '1'
+      if (parsedObs.meta?.versionId !== committedVersionId) {
+        const alignedObs = {
+          ...obsForFhir,
+          meta: {
+            ...obsForFhir.meta,
+            versionId: committedVersionId,
+          },
+        }
+        this.#database.driver.prepare(`
+          UPDATE local_ingestion_record
+          SET fhir_observation_json = ?
+          WHERE workspace_id = ? AND epoch = ? AND ingestion_record_id = ?
+        `).run(
+          JSON.stringify(alignedObs),
+          context.workspaceId,
+          context.epoch,
+          row.ingestion_record_id,
+        )
+      }
       effects.push({
         kind: existingObsVersion === undefined ? 'created' : 'updated',
         reference: `Observation/${committedObs.id}`,
-        versionId: committedObs.meta?.versionId ?? '1',
+        versionId: committedVersionId,
       })
 
       const committedProv = this.#fhir.createImmutable(context, parsedProv)
