@@ -659,9 +659,18 @@ export class ClinicalFactLedgerService {
         observations.push(entry.observation)
         existingObsVersionKeys.add(versionKey)
       }
-      sourceSystemIdByObservationId[versionKey] = entry.sourceSystemId
-      ingestedAtByObservationId[versionKey] = entry.ingestedAt
-      if (entry.orderedAt) {
+      const existingIngestedAt = ingestedAtByObservationId[versionKey]
+      const existingMs = existingIngestedAt !== undefined ? Date.parse(existingIngestedAt) : Number.NaN
+      const candidateMs = Date.parse(entry.ingestedAt)
+      const isEarlier = existingIngestedAt === undefined
+        || (!Number.isNaN(candidateMs) && (Number.isNaN(existingMs) || candidateMs < existingMs))
+      if (isEarlier) {
+        ingestedAtByObservationId[versionKey] = entry.ingestedAt
+        sourceSystemIdByObservationId[versionKey] = entry.sourceSystemId
+      } else if (sourceSystemIdByObservationId[versionKey] === undefined) {
+        sourceSystemIdByObservationId[versionKey] = entry.sourceSystemId
+      }
+      if (entry.orderedAt && (isEarlier || orderedAtByObservationId[versionKey] === undefined)) {
         orderedAtByObservationId[versionKey] = entry.orderedAt
       }
     }
@@ -826,25 +835,63 @@ export class ClinicalFactLedgerService {
           AND r.patient_id = ?
           AND b.status = 'complete'
           AND q.resolution_status IN ('auto-matched', 'confirmed-merged')
-        ORDER BY r.ingested_at ASC, r.ingestion_record_id ASC
+        ORDER BY r.rowid ASC
       `).all(context.workspaceId, context.epoch, patientId),
     )
 
-    return rows.map(row => {
-      const obs = ingestedFhirObservationSchema.parse(
-        JSON.parse(row.fhir_observation_json),
-      ) as unknown as FhirObservationLike & {
+    type EligibleEntry = {
+      observation: FhirObservationLike & {
         referenceRange?: ReadonlyArray<{ low?: { value?: number }; high?: { value?: number } }>
         interpretation?: ReadonlyArray<{ coding?: ReadonlyArray<{ code?: string; display?: string }> }>
       }
+      sourceSystemId: string
+      ingestedAt: string
+      orderedAt: string | null
+    }
+    const dedupedByProvenanceId = new Map<string, { entry: EligibleEntry; ingestedMs: number; recordId: string }>()
+    for (const row of rows) {
+      const obs = ingestedFhirObservationSchema.parse(
+        JSON.parse(row.fhir_observation_json),
+      ) as unknown as EligibleEntry['observation']
       const prov = ingestedProvenancePayloadSchema.parse(JSON.parse(row.provenance_json))
-      return {
-        observation: obs,
-        sourceSystemId: row.source_system_id,
-        ingestedAt: prov.ingestedAt ?? row.ingested_at,
-        orderedAt: prov.orderedAt ?? null,
+      const ingestedAt = prov.ingestedAt ?? row.ingested_at
+      const ingestedMs = Date.parse(ingestedAt)
+      const orderedAt = prov.orderedAt ?? null
+      const existing = dedupedByProvenanceId.get(prov.id)
+      if (existing === undefined) {
+        dedupedByProvenanceId.set(prov.id, {
+          entry: {
+            observation: obs,
+            sourceSystemId: row.source_system_id,
+            ingestedAt,
+            orderedAt,
+          },
+          ingestedMs,
+          recordId: row.ingestion_record_id,
+        })
+      } else {
+        const isEarlier = !Number.isNaN(ingestedMs)
+          && (Number.isNaN(existing.ingestedMs) || ingestedMs < existing.ingestedMs)
+        if (isEarlier) {
+          existing.entry.ingestedAt = ingestedAt
+          existing.ingestedMs = ingestedMs
+          if (orderedAt !== null) {
+            existing.entry.orderedAt = orderedAt
+          }
+        } else if (existing.entry.orderedAt === null && orderedAt !== null) {
+          existing.entry.orderedAt = orderedAt
+        }
       }
-    })
+    }
+
+    return [...dedupedByProvenanceId.values()]
+      .sort((a, b) => {
+        if (!Number.isNaN(a.ingestedMs) && !Number.isNaN(b.ingestedMs) && a.ingestedMs !== b.ingestedMs) {
+          return a.ingestedMs - b.ingestedMs
+        }
+        return a.recordId.localeCompare(b.recordId)
+      })
+      .map(item => item.entry)
   }
 
   #loadVisibleHistoryCandidates(

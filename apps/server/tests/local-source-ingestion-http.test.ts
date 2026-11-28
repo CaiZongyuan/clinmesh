@@ -1072,5 +1072,88 @@ describe('Intra-Hospital Second Source System, Patient Quarantine & Batch Comple
     expect(simV2CrValues).toContain(2.22)
     expect(simV2CrValues).not.toContain(1.11)
     expect(simV2CrValues).not.toContain(9.99)
+
+    // Retransmitting the same LIS report/version under a new batchId must preserve the earliest ingestedAt for historical asOf replay
+    const origIngestRes = await postRawJson(fixture, 'admin', '/api/sim/v1/local-ingestion/batches', {
+      sourceSystemId: SIM_LIS_V2_SOURCE_SYSTEM_ID,
+      batchId: 'batch-retransmit-orig',
+      expectedItemCount: 1,
+      ingestedAt: '2026-08-24T09:40:00+08:00',
+      specimen_barcode: 'SB-RETX-1',
+      patient_ref: {
+        externalPatientId: visitSimV2.patientId,
+        localPatientId: visitSimV2.patientId,
+        fullName: '赵志明',
+        birthDate: '1964-06-18',
+        nationalId: '110101196406180035',
+      },
+      records: [{
+        externalReportId: 'lis2-retx-k-1',
+        orderId: 'ord-retx-k-1',
+        analyte_local_code: 'K',
+        analyte_label: '血清钾',
+        result_num: 4.2,
+        uom_text: 'mmol/L',
+        collected_ts: '2026-08-24T09:00:00+08:00',
+        released_ts: '2026-08-24T09:35:00+08:00',
+        report_status: 'final',
+        version: 1,
+      }],
+    })
+    expect(origIngestRes.status).toBe(200)
+
+    const retryIngestRes = await postRawJson(fixture, 'admin', '/api/sim/v1/local-ingestion/batches', {
+      sourceSystemId: SIM_LIS_V2_SOURCE_SYSTEM_ID,
+      batchId: 'batch-retransmit-retry',
+      expectedItemCount: 1,
+      ingestedAt: '2026-08-24T11:40:00+08:00',
+      specimen_barcode: 'SB-RETX-1',
+      patient_ref: {
+        externalPatientId: visitSimV2.patientId,
+        localPatientId: visitSimV2.patientId,
+        fullName: '赵志明',
+        birthDate: '1964-06-18',
+        nationalId: '110101196406180035',
+      },
+      records: [{
+        externalReportId: 'lis2-retx-k-1',
+        orderId: 'ord-retx-k-1',
+        analyte_local_code: 'K',
+        analyte_label: '血清钾',
+        result_num: 4.2,
+        uom_text: 'mmol/L',
+        collected_ts: '2026-08-24T09:00:00+08:00',
+        released_ts: '2026-08-24T09:35:00+08:00',
+        report_status: 'final',
+        version: 1,
+      }],
+    })
+    expect(retryIngestRes.status).toBe(200)
+
+    // Historical asOf between original import (09:40) and retry import (11:40) MUST still see the fact with its original ingestedAt
+    const ledgerBetweenImports = await fixture.read(
+      'doctor',
+      `/api/his/v1/outpatient/cases/${visitSimV2.caseId}/clinical-fact-ledger?asOf=${encodeURIComponent('2026-08-24T10:00:00+08:00')}&itemCodes=2823-3`,
+      clinicalFactLedgerSchema,
+    )
+    expect(ledgerBetweenImports.facts).toHaveLength(1)
+    expect(ledgerBetweenImports.facts[0]?.ingestedAt).toBe('2026-08-24T09:40:00+08:00')
+
+    // Historical asOf before original import (09:38) must still exclude it
+    const ledgerBeforeOrig = await fixture.read(
+      'doctor',
+      `/api/his/v1/outpatient/cases/${visitSimV2.caseId}/clinical-fact-ledger?asOf=${encodeURIComponent('2026-08-24T09:38:00+08:00')}&itemCodes=2823-3`,
+      clinicalFactLedgerSchema,
+    )
+    expect(ledgerBeforeOrig.facts).toHaveLength(0)
+
+    // Historical asOf after retry import (12:00) must still keep a single fact with the original ingestedAt
+    const ledgerAfterRetry = await fixture.read(
+      'doctor',
+      `/api/his/v1/outpatient/cases/${visitSimV2.caseId}/clinical-fact-ledger?asOf=${encodeURIComponent('2026-08-24T12:00:00+08:00')}&itemCodes=2823-3`,
+      clinicalFactLedgerSchema,
+    )
+    expect(ledgerAfterRetry.facts).toHaveLength(1)
+    expect(ledgerAfterRetry.facts[0]?.ingestedAt).toBe('2026-08-24T09:40:00+08:00')
   })
 })
