@@ -91,13 +91,13 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
         {registered.map(admission => {
           const ident = identityLabel(admission)
           return <li key={admission.id}>
-            <button type="button" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row" aria-current={selectedId === admission.id ? 'true' : undefined}>
+            <Button type="button" variant="ghost" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row h-auto flex-col items-stretch justify-start border-0 font-normal whitespace-normal" aria-current={selectedId === admission.id ? 'true' : undefined}>
               <span className="flex items-center justify-between gap-2">
                 <span className="text-sm font-semibold">{admission.patientName}</span>
                 <Badge variant="warning">{t('接诊分床', 'Receive & assign')}</Badge>
               </span>
               <span className="text-xs text-muted-foreground">{ident ? `${ident} · ` : ''}{formatShanghaiMinute(admission.registeredAt).slice(5)} {t('登记', 'registered')}<span className="sr-only"> · <InpatientNumberTail locale={locale} number={admission.inpatientNumber} /></span></span>
-            </button>
+            </Button>
           </li>
         })}
       </ul>}
@@ -123,7 +123,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
             const isClearBed = admission?.status === 'departed' && admission.financialStatus === 'settled'
             return <li key={bed.id}>
               {admission !== undefined
-                ? <button type="button" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row" aria-description={ready && pending > 0 ? t(`待办 ${pending} 项`, `${pending} pending tasks`) : undefined} aria-current={selectedId === admission.id ? 'true' : undefined} aria-label={`${bed.name} ${admission.patientName}`}>
+                ? <Button type="button" variant="ghost" onClick={() => onSelect(admission.id)} className="clinmesh-inpatient-bed-row h-auto flex-col items-stretch justify-start border-0 font-normal whitespace-normal" aria-description={ready && pending > 0 ? t(`待办 ${pending} 项`, `${pending} pending tasks`) : undefined} aria-current={selectedId === admission.id ? 'true' : undefined} aria-label={`${bed.name} ${admission.patientName}`}>
                   <span className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium">{bed.name} {admission.patientName}</span>
                     {!ready ? <span className="text-xs text-muted-foreground">{t('正在读取待办', 'Loading tasks')}</span>
@@ -131,7 +131,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
                         : <span className="text-xs text-muted-foreground">{inpatientStatus(admission, locale)}</span>}
                   </span>
                   {ident || day !== undefined ? <span className="text-xs text-muted-foreground">{ident}{ident && day !== undefined ? ' · ' : ''}{day !== undefined ? t(`住院第 ${day} 天`, `Day ${day}`) : ''}</span> : null}
-                </button>
+                </Button>
                 : <div className="clinmesh-inpatient-bed-empty"><span>{bed.name} <span>{t('空床', 'Empty bed')}</span></span><span className="tabular-nums">{formatFen(bed.dailyPriceFen, locale)}/{t('日', 'day')}</span></div>}
             </li>
           })}

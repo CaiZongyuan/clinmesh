@@ -1,5 +1,13 @@
-import { Progress as ProgressPrimitive } from "@base-ui/react/progress"
+import * as React from "react"
+import {
+  Progress as ProgressPrimitive,
+  ProgressIndicator as ProgressIndicatorPrimitive,
+  ProgressLabel as ProgressLabelPrimitive,
+  ProgressTrack as ProgressTrackPrimitive,
+  ProgressValue as ProgressValuePrimitive,
+} from "@ui-sdk/react/progress"
 
+import { omitUndefined, type RelaxOptional } from "#lib/ui-props"
 import { cn } from "#lib/utils"
 
 function Progress({
@@ -7,31 +15,45 @@ function Progress({
   children,
   value,
   ...props
-}: ProgressPrimitive.Root.Props) {
+}: RelaxOptional<
+  Omit<React.ComponentProps<typeof ProgressPrimitive>, "className" | "children">
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+}) {
   return (
-    <ProgressPrimitive.Root
-      value={value}
-      data-slot="progress"
+    <ProgressPrimitive
+      {...(value !== undefined ? { value } : {})}
       className={cn("flex flex-wrap gap-3", className)}
-      {...props}
+      {...omitUndefined(props)}
     >
       {children}
       <ProgressTrack>
         <ProgressIndicator />
       </ProgressTrack>
-    </ProgressPrimitive.Root>
+    </ProgressPrimitive>
   )
 }
 
-function ProgressTrack({ className, ...props }: ProgressPrimitive.Track.Props) {
+function ProgressTrack({
+  className,
+  ...props
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof ProgressTrackPrimitive>,
+    "className" | "children"
+  >
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+}) {
   return (
-    <ProgressPrimitive.Track
+    <ProgressTrackPrimitive
       className={cn(
         "relative flex h-1 w-full items-center overflow-x-hidden rounded-full bg-muted",
         className
       )}
-      data-slot="progress-track"
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }
@@ -39,35 +61,57 @@ function ProgressTrack({ className, ...props }: ProgressPrimitive.Track.Props) {
 function ProgressIndicator({
   className,
   ...props
-}: ProgressPrimitive.Indicator.Props) {
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof ProgressIndicatorPrimitive>,
+    "className" | "children"
+  >
+> & {
+  className?: string | undefined
+}) {
   return (
-    <ProgressPrimitive.Indicator
-      data-slot="progress-indicator"
+    <ProgressIndicatorPrimitive
       className={cn("h-full bg-primary transition-all", className)}
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }
 
-function ProgressLabel({ className, ...props }: ProgressPrimitive.Label.Props) {
+function ProgressLabel({
+  className,
+  ...props
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof ProgressLabelPrimitive>,
+    "className" | "children"
+  >
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+}) {
   return (
-    <ProgressPrimitive.Label
+    <ProgressLabelPrimitive
       className={cn("text-sm font-medium", className)}
-      data-slot="progress-label"
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }
 
-function ProgressValue({ className, ...props }: ProgressPrimitive.Value.Props) {
+function ProgressValue({
+  className,
+  ...props
+}: RelaxOptional<
+  Omit<React.ComponentProps<typeof ProgressValuePrimitive>, "className">
+> & {
+  className?: string | undefined
+}) {
   return (
-    <ProgressPrimitive.Value
+    <ProgressValuePrimitive
       className={cn(
         "ml-auto text-sm text-muted-foreground tabular-nums",
         className
       )}
-      data-slot="progress-value"
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }

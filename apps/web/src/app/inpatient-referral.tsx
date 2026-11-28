@@ -62,7 +62,7 @@ export function InpatientReferral({ diagnosisConfirmation, encounterId, encounte
       </FieldGroup></FieldSet></div>
       <OrderComposerFooter hint={hint}>
         <DialogClose disabled={write.mutation.isPending} render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-        <Button aria-busy={write.mutation.isPending || undefined} data-busy={write.mutation.isPending || undefined} data-unavailable={receivingWardId === null || !reason.trim() || write.blocked || issued ? '' : undefined} disabled={receivingWardId === null || !reason.trim() || write.blocked || issued} type="submit">{write.mutation.isPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{write.mutation.isPending ? (zh ? '正在开具住院证' : 'Issuing referral') : (zh ? '确认开具住院证' : 'Issue referral')}</Button>
+        <Button aria-busy={write.mutation.isPending || undefined} data-agent-confirm={zh ? '确认开具住院证' : 'Issue inpatient referral'} data-busy={write.mutation.isPending || undefined} data-unavailable={receivingWardId === null || !reason.trim() || write.blocked || issued ? '' : undefined} disabled={receivingWardId === null || !reason.trim() || write.blocked || issued} type="submit">{write.mutation.isPending ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{write.mutation.isPending ? (zh ? '正在开具住院证' : 'Issuing referral') : (zh ? '确认开具住院证' : 'Issue referral')}</Button>
       </OrderComposerFooter></form>
     </DialogContent>
   </Dialog></>

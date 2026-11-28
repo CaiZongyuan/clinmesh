@@ -46,7 +46,7 @@ export function PatientCaseTruth({ caseId, locale }: { caseId: string; locale: W
   const related = truth.data?.items.filter(item => !diagnosisReferences.has(item.sourceReference)
     && item.sourceReference !== truth.data?.indexEncounterReference) ?? []
   return (
-    <details className="border-t p-4" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
+    <details className="border-t p-4" data-agent-hidden="" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
       <summary className="cursor-pointer text-sm font-semibold">{zh ? '本次病例真值' : 'Current case ground truth'}</summary>
       {open ? (
         <div className="mt-3">

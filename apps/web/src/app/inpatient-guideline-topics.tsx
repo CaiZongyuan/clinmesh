@@ -15,6 +15,7 @@ import { apiGet } from './api-client.ts'
 import { inpatientScopeKey } from './inpatient-scope.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { WorkspaceSelect } from './workspace-select.tsx'
 
 export const guidelineTopicOptionLabels: Record<GuidelineTopicId, readonly [string, string]> = {
   'contrast-kidney-hydration': ['对比剂肾损伤预防与围术期水化', 'Contrast kidney protection & hydration'],
@@ -86,24 +87,22 @@ export function InpatientGuidelineTopicsPanel({
         <label className="font-medium" htmlFor={`${pickerId}-topic-select`}>
           {t('指南专题', 'Guideline topic')}
         </label>
-        <select
-          id={`${pickerId}-topic-select`}
-          aria-label={t('指南专题', 'Guideline topic')}
-          className="h-8 max-w-full rounded-md border border-input bg-background px-2 text-xs"
-          value={selectedTopic}
-          onChange={event => {
-            const value = event.currentTarget.value
-            if ((guidelineTopicIds as readonly string[]).includes(value)) {
-              setSelectedTopic(value as GuidelineTopicId)
-            }
-          }}
-        >
-          {orderedPickerTopics.map(topicId => (
-            <option key={topicId} value={topicId}>
-              {guidelineTopicOptionLabels[topicId][locale === 'zh-CN' ? 0 : 1]}
-            </option>
-          ))}
-        </select>
+        <div className="w-72 max-w-full">
+          <WorkspaceSelect
+            id={`${pickerId}-topic-select`}
+            ariaLabel={t('指南专题', 'Guideline topic')}
+            value={selectedTopic}
+            items={orderedPickerTopics.map(topicId => ({
+              value: topicId,
+              label: guidelineTopicOptionLabels[topicId][locale === 'zh-CN' ? 0 : 1],
+            }))}
+            onValueChange={value => {
+              if (value && (guidelineTopicIds as readonly string[]).includes(value)) {
+                setSelectedTopic(value as GuidelineTopicId)
+              }
+            }}
+          />
+        </div>
       </div>
       <SynchronousGuidelineTopicCard
         error={topicReadQuery.error}

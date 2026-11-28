@@ -1556,7 +1556,7 @@ describe('处方页签布局整理', () => {
     expect(insertDialog.getByText(/心率 < 50 次\/分/)).toBeTruthy()
 
     // 遮罩关闭：仅关闭说明书抽屉，保持底层选药弹窗与未加入草稿不丢
-    const overlay = document.querySelector('[data-slot="sheet-overlay"]') as HTMLElement | null
+    const overlay = document.querySelector('[data-sheet-overlay]') as HTMLElement | null
     expect(overlay).not.toBeNull()
     await user.click(overlay!)
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())

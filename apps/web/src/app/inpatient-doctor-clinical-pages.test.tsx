@@ -872,7 +872,7 @@ it('住院开立医嘱器仅对药品提供说明书抽屉（含旧浏览器草�
   // 遮罩关闭：仅收起说明书抽屉，保持底层开医嘱弹窗与草稿完好
   await user.click(within(draftRow).getByRole('button', { name: '说明书' }))
   await screen.findByRole('dialog', { name: '药品说明书摘要' })
-  const overlay = document.querySelector('[data-slot="sheet-overlay"]') as HTMLElement | null
+  const overlay = document.querySelector('[data-sheet-overlay]') as HTMLElement | null
   expect(overlay).not.toBeNull()
   await user.click(overlay!)
   await waitFor(() => expect(screen.queryByRole('dialog', { name: '药品说明书摘要' })).toBeNull())

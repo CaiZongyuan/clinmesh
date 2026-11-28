@@ -223,7 +223,7 @@ export function InpatientSurgery({ admission, session, locale, write, active = t
   const formId = `${admission.id}-surgery-form`
   const requestAction = <>
     <DialogClose render={<Button type="button" variant="ghost" />}>{t('取消', 'Cancel')}</DialogClose>
-    <Button disabled={blocked || !requestReady} type="submit" form={formId}>{t('提交手术申请', 'Submit surgery request')}</Button>
+    <Button data-agent-confirm={t('提交手术申请', 'Submit surgery request')} disabled={blocked || !requestReady} type="submit" form={formId}>{t('提交手术申请', 'Submit surgery request')}</Button>
   </>
   const running = surgery.data?.inProgress ?? []
   const reservationRows = reservations.data?.reservations ?? []

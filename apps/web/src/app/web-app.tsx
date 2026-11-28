@@ -255,6 +255,7 @@ function SignInScreen({ locale }: { locale: 'en-US' | 'zh-CN' }): React.JSX.Elem
                 <FieldLabel htmlFor="clinmesh-password">{messages.passwordLabel}</FieldLabel>
                 <Input
                   autoComplete="current-password"
+                  data-agent-secret=""
                   id="clinmesh-password"
                   onChange={event => setPassword(event.currentTarget.value)}
                   required

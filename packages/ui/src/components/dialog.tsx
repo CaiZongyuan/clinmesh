@@ -1,68 +1,139 @@
 "use client"
 
 import * as React from "react"
-import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
+import {
+  Dialog as DialogPrimitive,
+  DialogBackdrop as DialogBackdropPrimitive,
+  DialogClose as DialogClosePrimitive,
+  DialogContent as DialogContentPrimitive,
+  DialogDescription as DialogDescriptionPrimitive,
+  DialogTitle as DialogTitlePrimitive,
+  DialogTrigger as DialogTriggerPrimitive,
+  type DialogFinalFocus,
+  type DialogInitialFocus,
+} from "@ui-sdk/react/dialog"
 import { XIcon } from "lucide-react"
 
 import { Button } from "#components/button"
+import {
+  resolvePortalContainer,
+  usePortalContainer,
+} from "#components/portal-context"
+import { omitUndefined, type RelaxOptional } from "#lib/ui-props"
 import { cn } from "#lib/utils"
-import { usePortalContainer } from "#components/portal-context"
 import { DialogPendingContext, useDialogPending } from "../dialog-pending.tsx"
+
+type LegacyFocusTarget<T> =
+  | T
+  | boolean
+  | React.RefObject<HTMLElement | null>
+  | undefined
+
+function resolveFocusTarget<T extends DialogInitialFocus | DialogFinalFocus>(
+  target: LegacyFocusTarget<T>
+): T | undefined {
+  if (target === undefined || target === true) return undefined
+  if (target === false) return "none" as T
+  if (typeof target === "object" && target !== null && "current" in target) {
+    return (() => target.current) as T
+  }
+  return target
+}
 
 function Dialog({
   pending,
   onOpenChange,
   disablePointerDismissal,
+  dismissible,
+  closeOnOutsidePress,
+  container,
   ...props
-}: DialogPrimitive.Root.Props & { pending?: boolean | undefined }) {
+}: RelaxOptional<React.ComponentProps<typeof DialogPrimitive>> & {
+  pending?: boolean | undefined
+  disablePointerDismissal?: boolean | undefined
+}) {
+  const portalContainer = usePortalContainer()
+  const containerElement =
+    resolvePortalContainer(container ?? portalContainer) ??
+    (typeof document !== "undefined" ? document.body : undefined)
+  const resolvedDismissible = pending ? false : dismissible
+  const resolvedCloseOnOutsidePress = pending
+    ? false
+    : disablePointerDismissal
+      ? false
+      : closeOnOutsidePress
+
   return (
     <DialogPendingContext.Provider value={Boolean(pending)}>
-      <DialogPrimitive.Root
-        data-slot="dialog"
-        {...props}
-        disablePointerDismissal={pending || disablePointerDismissal}
+      <DialogPrimitive
+        {...(containerElement !== undefined
+          ? { container: containerElement }
+          : {})}
+        {...(resolvedDismissible !== undefined
+          ? { dismissible: resolvedDismissible }
+          : {})}
+        {...(resolvedCloseOnOutsidePress !== undefined
+          ? { closeOnOutsidePress: resolvedCloseOnOutsidePress }
+          : {})}
         onOpenChange={(open, eventDetails) => {
-          if (!open && pending && eventDetails.reason !== "imperative-action") {
+          if (!open && pending && eventDetails.reason !== "imperative") {
             eventDetails.cancel()
             return
           }
           onOpenChange?.(open, eventDetails)
         }}
+        {...omitUndefined(props)}
       />
     </DialogPendingContext.Provider>
   )
 }
 
-function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
+function DialogTrigger({
+  ...props
+}: RelaxOptional<
+  Omit<React.ComponentProps<typeof DialogTriggerPrimitive>, "children">
+> & {
+  children?: React.ReactNode | undefined
+}) {
+  return <DialogTriggerPrimitive {...omitUndefined(props)} />
 }
 
-function DialogClose({ disabled, ...props }: DialogPrimitive.Close.Props) {
+function DialogClose({
+  disabled,
+  ...props
+}: RelaxOptional<
+  Omit<React.ComponentProps<typeof DialogClosePrimitive>, "children">
+> & {
+  children?: React.ReactNode | undefined
+}) {
   const pending = useDialogPending()
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} disabled={pending || disabled} />
-}
-
-function DialogPortal({ container, ...props }: DialogPrimitive.Portal.Props) {
-  const runtimeContainer = usePortalContainer()
-  const resolvedContainer = container ?? runtimeContainer
   return (
-    <DialogPrimitive.Portal
-      data-slot="dialog-portal"
-      {...(resolvedContainer === null ? {} : { container: resolvedContainer })}
-      {...props}
+    <DialogClosePrimitive
+      {...omitUndefined(props)}
+      disabled={Boolean(pending || disabled)}
     />
   )
 }
 
-function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) {
+function DialogPortal({ children }: { children?: React.ReactNode }) {
+  return <>{children}</>
+}
+
+function DialogOverlay({
+  className,
+  ...props
+}: RelaxOptional<
+  Omit<React.ComponentProps<typeof DialogBackdropPrimitive>, "className">
+> & {
+  className?: string | undefined
+}) {
   return (
-    <DialogPrimitive.Backdrop
+    <DialogBackdropPrimitive
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/15 duration-150 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-50 bg-black/15 supports-backdrop-filter:backdrop-blur-xs data-closed:pointer-events-none",
         className
       )}
-      data-slot="dialog-overlay"
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }
@@ -72,25 +143,55 @@ function DialogContent({
   className,
   keepMounted,
   showCloseButton = true,
+  initialFocus,
+  finalFocus,
+  container,
   ...props
-}: DialogPrimitive.Popup.Props & Pick<DialogPrimitive.Portal.Props, "keepMounted"> & { showCloseButton?: boolean }) {
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof DialogContentPrimitive>,
+    "className" | "children" | "initialFocus" | "finalFocus"
+  >
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+  showCloseButton?: boolean | undefined
+  initialFocus?: LegacyFocusTarget<DialogInitialFocus>
+  finalFocus?: LegacyFocusTarget<DialogFinalFocus>
+}) {
   const pending = useDialogPending()
+  const portalContainer = usePortalContainer()
+  const containerElement =
+    resolvePortalContainer(container ?? portalContainer) ??
+    (typeof document !== "undefined" ? document.body : undefined)
+  const resolvedInitialFocus = resolveFocusTarget(initialFocus)
+  const resolvedFinalFocus = resolveFocusTarget(finalFocus)
+
   return (
-    <DialogPortal keepMounted={keepMounted}>
+    <>
       <DialogOverlay />
-      <DialogPrimitive.Popup
+      <DialogContentPrimitive
+        {...(containerElement !== undefined
+          ? { container: containerElement }
+          : {})}
+        {...(keepMounted !== undefined ? { keepMounted } : {})}
+        {...(resolvedInitialFocus !== undefined
+          ? { initialFocus: resolvedInitialFocus }
+          : {})}
+        {...(resolvedFinalFocus !== undefined
+          ? { finalFocus: resolvedFinalFocus }
+          : {})}
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-xl ring-1 ring-foreground/10 duration-150 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-xl ring-1 ring-foreground/10 outline-none data-closed:pointer-events-none",
           className
         )}
-        data-slot="dialog-content"
-        {...props}
+        {...omitUndefined(props)}
         aria-busy={pending || props["aria-busy"]}
       >
         {children}
         {showCloseButton ? (
           <DialogClose
-            render={(
+            render={
               <Button
                 aria-label="Close"
                 className="absolute top-3 right-3"
@@ -99,20 +200,23 @@ function DialogContent({
                 type="button"
                 variant="ghost"
               />
-            )}
+            }
           >
             <XIcon />
           </DialogClose>
         ) : null}
-      </DialogPrimitive.Popup>
-    </DialogPortal>
+      </DialogContentPrimitive>
+    </>
   )
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("flex shrink-0 flex-col gap-1 border-b px-4 py-3 pr-12", className)}
+      className={cn(
+        "flex shrink-0 flex-col gap-1 border-b px-4 py-3 pr-12",
+        className
+      )}
       data-slot="dialog-header"
       {...props}
     />
@@ -132,22 +236,39 @@ function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
+function DialogTitle({
+  className,
+  ...props
+}: RelaxOptional<
+  Omit<React.ComponentProps<typeof DialogTitlePrimitive>, "className" | "children">
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+}) {
   return (
-    <DialogPrimitive.Title
+    <DialogTitlePrimitive
       className={cn("text-base font-semibold", className)}
-      data-slot="dialog-title"
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }
 
-function DialogDescription({ className, ...props }: DialogPrimitive.Description.Props) {
+function DialogDescription({
+  className,
+  ...props
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof DialogDescriptionPrimitive>,
+    "className" | "children"
+  >
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+}) {
   return (
-    <DialogPrimitive.Description
+    <DialogDescriptionPrimitive
       className={cn("text-sm text-muted-foreground", className)}
-      data-slot="dialog-description"
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }

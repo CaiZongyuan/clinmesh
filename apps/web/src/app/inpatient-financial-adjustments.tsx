@@ -51,7 +51,7 @@ export function InpatientFinancialAdjustments({ admission, session, locale, writ
           const totalRefunded = bill.data.sources.reduce((sum, s) => sum + s.refundedFen, 0)
           return <div><div className="text-xs text-muted-foreground">{totalRefunded > 0 || bill.data.firstSettlement.balanceFen < 0 ? t('已退余款', 'Refunded balance') : t('补退差额', 'Balance')}</div><div className="font-semibold tabular-nums">{totalRefunded > 0 ? formatFen(totalRefunded, locale) : bill.data.firstSettlement.balanceFen < 0 ? formatFen(-bill.data.firstSettlement.balanceFen, locale) : formatFen(0, locale)}</div></div>
         })()}
-        <div><div className="text-xs text-muted-foreground">{t('结算状态', 'Settlement status')}</div><div className="font-semibold text-emerald-700 dark:text-emerald-300">{t('已结清封账', 'Settled')}</div></div>
+        <div><div className="text-xs text-muted-foreground">{t('结算状态', 'Settlement status')}</div><div className="font-semibold text-success">{t('已结清封账', 'Settled')}</div></div>
       </section>
       <section aria-label={t('财务更正状态', 'Financial correction status')} className="clinmesh-inpatient-summary">
       <p data-testid="financial-current">{t('当前费用', 'Current charges')} <span className="font-mono">{formatFen(bill.data.currentChargesFen, locale)}</span> · {t('当前已交', 'Current amount paid')} <span className="font-mono">{formatFen(bill.data.currentFundsFen, locale)}</span></p>

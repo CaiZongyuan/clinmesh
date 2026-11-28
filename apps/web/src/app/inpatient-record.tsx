@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
+import { RadioGroup, RadioGroupItem } from '@clinmesh/ui/components/radio-group'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { useQuery } from '@tanstack/react-query'
@@ -238,11 +239,22 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
       ...data.archive ? [{ at: data.archive.recordedAt, text: t('病案人员归档', 'Archived by medical records') }] : [],
     ].sort((a, b) => a.at.localeCompare(b.at)) : []
     const mainPicker = showInStayPrimary || (operations.length > 0 && canSubmitRecord) ? <>
-      <div role="radiogroup" aria-label={t('本次主操作', 'Primary procedure')} className="flex flex-col gap-1.5">{operations.map(item => <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-muted">
-        <input type="radio" name={`inpatient-record-main-${admission.id}`} aria-label={`${item.actualProcedure.coding.code} ${item.actualProcedure.coding.display}`} value={item.id} checked={selectedMain === item.id} disabled={blocked || staleDraft}
-          onChange={() => setDraft(current => ({ main: item.id, revision: current?.revision ?? expected!.expectedRevision, hash: current?.hash ?? expected!.expectedSourcesHash }))} />
-        <span className="font-medium">{item.actualProcedure.coding.code} {item.actualProcedure.coding.display}</span>
-        <span className="ml-auto text-xs tabular-nums text-muted-foreground">{timestamp(item.performedAt)}{item.performedBy ? ` · ${item.performedBy}` : ''}</span></label>)}</div>
+      <RadioGroup
+        aria-label={t('本次主操作', 'Primary procedure')}
+        className="flex flex-col gap-1.5"
+        disabled={blocked || staleDraft}
+        name={`inpatient-record-main-${admission.id}`}
+        value={selectedMain ?? ''}
+        onValueChange={value => setDraft(current => ({ main: value, revision: current?.revision ?? expected!.expectedRevision, hash: current?.hash ?? expected!.expectedSourcesHash }))}
+      >
+        {operations.map(item => (
+          <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm has-data-checked:border-primary has-data-checked:bg-muted">
+            <RadioGroupItem aria-label={`${item.actualProcedure.coding.code} ${item.actualProcedure.coding.display}`} value={item.id} />
+            <span className="font-medium">{item.actualProcedure.coding.code} {item.actualProcedure.coding.display}</span>
+            <span className="ml-auto text-xs tabular-nums text-muted-foreground">{timestamp(item.performedAt)}{item.performedBy ? ` · ${item.performedBy}` : ''}</span>
+          </label>
+        ))}
+      </RadioGroup>
       <p className="text-xs text-muted-foreground">{t('选一项作为本次主操作。DRG 分组按这里的主操作计算。', 'Choose one primary procedure. DRG grouping uses it.')}</p>
     </> : <div className="grid gap-2 text-sm">{operations.length === 0 ? <span className="text-muted-foreground">{t('本次无已实施操作', 'No performed procedure in this admission')}</span>
       : operations.map(item => <Kv key={item.id} label={item.id === previousMain || item.primary ? t('主操作', 'Primary procedure') : t('其他操作', 'Other procedure')}>{item.actualProcedure.coding.code} {item.actualProcedure.coding.display} · {timestamp(item.performedAt)}{item.performedBy ? ` · ${item.performedBy}` : ''}</Kv>)}</div>
@@ -328,7 +340,7 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
           ? <WorkspaceActionBar tone="complete" reason={t('病案已归档，只读可查', 'Archived record is read only')} />
           : canSubmitRecord || !settled ? <WorkspaceActionBar tone={submitBlocked ? 'blocked' : 'normal'} reason={submitReason}
             busy={submittingRecord && !settled ? t('正在保存主操作', 'Saving primary procedure') : undefined}
-            action={<>{!showInStayPrimary ? discardDraftButton : null}<Button disabled={submitBlocked} onClick={() => submitAction()}>{submitLabel}</Button></>} />
+            action={<>{!showInStayPrimary ? discardDraftButton : null}<Button data-agent-confirm={submitLabel} disabled={submitBlocked} onClick={() => submitAction()}>{submitLabel}</Button></>} />
             : <WorkspaceActionBar showWithoutAction reason={phase === 'approved' ? t('编码审核通过，等病案人员归档', 'Coding approved; waiting for medical records to archive')
               : t('等病案人员编码审核；诊断、操作或费用变化后需要重新提交', 'Waiting for coding review; resubmit if diagnoses, procedures or charges change')} />}</InpatientPrimaryAction>
       </> : null}
@@ -393,10 +405,10 @@ export function InpatientRecord({ admission, session, locale, write, catalog, on
        ? <WorkspaceActionBar showWithoutAction tone="blocked" reason={!settled ? t('患者尚未出院结算，等结算并提交病案首页后再审核。', 'Wait for discharge settlement and record submission before coding review.') : t('等住院医生核对并提交病案首页后再审核。', 'Wait for the inpatient doctor to review and submit the record before coding review.')} />
        : !data.reviewCurrent
          ? <WorkspaceActionBar tone={blocked || staleSources ? 'blocked' : 'normal'} reason={staleSources ? t('等住院医生重新核对并提交首页。', 'Wait for the inpatient doctor to review and resubmit the record.') : t('核对诊断与操作编码后通过或退回', 'Review diagnosis and procedure coding, then approve or return')}
-           action={<><Button variant="outline" disabled={blocked || !reason.trim() || staleSources} onClick={() => reviewRecord('returned')}>{t('退回医生修订', 'Return to physician')}</Button><Button disabled={blocked || staleSources} onClick={() => reviewRecord('approved')}>{t('编码审核通过', 'Approve coding')}</Button></>} />
+           action={<><Button variant="outline" data-agent-confirm={t('退回医生修订病案', 'Return medical record to physician')} disabled={blocked || !reason.trim() || staleSources} onClick={() => reviewRecord('returned')}>{t('退回医生修订', 'Return to physician')}</Button><Button data-agent-confirm={t('确认编码审核通过', 'Approve medical record coding')} disabled={blocked || staleSources} onClick={() => reviewRecord('approved')}>{t('编码审核通过', 'Approve coding')}</Button></>} />
          : <WorkspaceActionBar tone={blocked || admission.status !== 'cleared' || !settled ? 'blocked' : 'normal'}
            reason={!settled ? t('等收费员结算后归档。', 'Wait for cashier settlement before archiving.') : admission.status !== 'cleared' ? t('等病区护士清床后归档。', 'Wait for the ward nurse to clear the bed before archiving.') : t('编码审核已通过，可归档病案', 'Coding review passed; ready to archive')}
-           action={<Button disabled={blocked || admission.status !== 'cleared' || !settled} onClick={archiveRecord}>{t('归档病案', 'Archive record')}</Button>} />}</InpatientPrimaryAction> : null}
+           action={<Button data-agent-confirm={t('确认归档病案', 'Confirm archiving medical record')} disabled={blocked || admission.status !== 'cleared' || !settled} onClick={archiveRecord}>{t('归档病案', 'Archive record')}</Button>} />}</InpatientPrimaryAction> : null}
     </> : null}
    </div>
  </section>

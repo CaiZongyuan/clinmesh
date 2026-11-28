@@ -240,7 +240,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           reason={queue.isError ? (locale === 'zh-CN' ? '请先重试分诊队列' : 'Retry the triage queue first') : missingFields.length === 0
             ? (locale === 'zh-CN' ? `已选 ${selectedAcuityLabel ?? ''}（血压 ${systolicMmHg}/${diastolicMmHg} mmHg · 体温 ${temperatureC} ℃） · 确认后送入${selectedCase.department.nameZh}候诊` : `Ready: ${selectedAcuityLabel ?? ''} (BP ${systolicMmHg}/${diastolicMmHg} mmHg · Temp ${temperatureC} °C) · Send to ${selectedCase.department.nameEn}`)
             : `${locale === 'zh-CN' ? '还差：' : 'Still needed: '}${missingFields.join(locale === 'zh-CN' ? '、' : ', ')}`}
-          action={<Button aria-disabled={!canRecord || undefined} className={cn(!canRecord && 'border border-dashed border-input bg-muted text-muted-foreground opacity-100')} disabled={mutation.isPending || !canRecord} type="submit" form="triage-assessment-form">{messages.completeTriage}</Button>} />
+          action={<Button aria-disabled={!canRecord || undefined} className={cn(!canRecord && 'border border-dashed border-input bg-muted text-muted-foreground opacity-100')} data-agent-confirm={messages.completeTriage} disabled={mutation.isPending || !canRecord} type="submit" form="triage-assessment-form">{messages.completeTriage}</Button>} />
       : status === 'completed' && selectedCase !== undefined
         ? <WorkspaceActionBar summary={selectedCase.patient.name}
             reason={locale === 'zh-CN' ? '已分诊病例仅供回查 · 如需继续分诊请切回「待分诊」' : 'Read-only triaged record · Switch back to Pending triage to continue'}
@@ -269,7 +269,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           setPage(1)
           setSelectedCaseId(undefined)
         }} value={status}>
-          <TabsList className="w-full">
+          <TabsList aria-label={messages.triageQueue} className="w-full">
             {statuses.map(value => (
               <TabsTrigger className="min-w-0 flex-1" key={value} value={value}>
                 {value === 'pending' ? messages.pendingTriage : messages.completedTriage}

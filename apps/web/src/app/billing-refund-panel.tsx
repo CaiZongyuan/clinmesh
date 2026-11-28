@@ -147,7 +147,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
           <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${frozen !== undefined ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}>
             <span>② {text('确认原路退回金额', 'Confirm original-route refund')}</span>
           </li>
-          <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${ledger.data.refundedFen > 0 && frozen === undefined ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground'}`}>
+          <li className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium ${ledger.data.refundedFen > 0 && frozen === undefined ? 'bg-success/10 text-success' : 'text-muted-foreground'}`}>
             <span>③ {text('完成冲正与退费', 'Complete reversal & refund')}</span>
           </li>
         </ol>
@@ -175,7 +175,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled,
           <p className="break-all tabular-nums">{frozenSourceName} · {chargeName(frozen.preview.chargeItemId)} · {formatFen(frozen.preview.amountFen, locale)}</p>
           {feedback}
           <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={requestPending} onClick={() => setFrozen(undefined)}>{messages.cancel}</Button>
-            <Button ref={refundFocus.confirmRef} disabled={busy} onClick={() => write.mutation.mutate({ operation: 'refund.confirm', caseId: bill.caseId, input: { previewId: frozen.preview.previewId, commitToken: frozen.preview.commitToken, chargeItemId: frozen.preview.chargeItemId, chargeVersion: frozen.chargeVersion } })}>{text('确认退款', 'Confirm refund')}</Button></div>
+            <Button data-agent-confirm={text('确认退款', 'Confirm refund')} ref={refundFocus.confirmRef} disabled={busy} onClick={() => write.mutation.mutate({ operation: 'refund.confirm', caseId: bill.caseId, input: { previewId: frozen.preview.previewId, commitToken: frozen.preview.commitToken, chargeItemId: frozen.preview.chargeItemId, chargeVersion: frozen.chargeVersion } })}>{text('确认退款', 'Confirm refund')}</Button></div>
         </section>}
         {ledger.data.refunds.map(item => <div className="flex min-w-0 flex-col gap-2 rounded-md border p-3" key={item.refundId}>
           <Badge variant={item.outcome === 'success' ? 'secondary' : 'outline'}>{outcome(item.outcome)}</Badge>

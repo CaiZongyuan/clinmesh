@@ -14,12 +14,13 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Input } from '@clinmesh/ui/components/input'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { apiGet, getOutpatientClinicalScores, newIdempotencyKey, recordOutpatientRiskAssessment } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { formatShanghaiMinute } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { WorkspaceSelect } from './workspace-select.tsx'
 
 type Write = ReturnType<typeof useInpatientWriteIntent>
 
@@ -62,8 +63,6 @@ function parseRiskFields(form: RiskFormState): ClinicalRiskAssessmentFieldsInput
   return out as ClinicalRiskAssessmentFieldsInput
 }
 
-const selectCls = 'h-8 rounded-md border border-input bg-background px-2 text-xs'
-
 function RemoteAdvanceAlert({ current, base, isVitals, zh, onSync }: { current: number; base: number | undefined; isVitals?: boolean; zh: boolean; onSync: () => void }) {
   return <Alert><AlertDescription className="flex flex-wrap items-center justify-between gap-2">
     <span>{zh
@@ -98,6 +97,7 @@ function ClinicalScoresBody({
   riskRecord: ClinicalRiskAssessmentRecord | undefined
   savingRisk: boolean
 }) {
+  const formId = useId()
   const zh = locale === 'zh-CN'
   const t = (cn: string, en: string) => (zh ? cn : en)
   const messages = getWorkspaceMessages(locale)
@@ -227,13 +227,23 @@ function ClinicalScoresBody({
               <Input className="h-8 text-xs" disabled={!canEditEffective || savingRisk} max={100} min={0} onChange={e => { const v = e.currentTarget.value; updateForm(s => ({ ...s, anginaEpisodes24h: v })) }} placeholder={t('未记录', 'Not recorded')} step={1} type="number" value={form.anginaEpisodes24h} />
             </label>
           ) : (
-            <label className="flex flex-col gap-1" key={entry[0]}>
-              <span>{entry[1]}</span>
-              <select className={selectCls} disabled={!canEditEffective || savingRisk} onChange={e => { const v = e.currentTarget.value; updateForm(s => ({ ...s, [entry[0]]: v } as RiskFormState)) }} value={form[entry[0]]}>
-                <option value="">{t('未记录', 'Not recorded')}</option>
-                {entry[2].map(([val, text]) => <option key={val} value={val}>{text}</option>)}
-              </select>
-            </label>
+            <div className="flex flex-col gap-1" key={entry[0]}>
+              <label htmlFor={`${formId}-${entry[0]}`}>{entry[1]}</label>
+              <WorkspaceSelect
+                ariaLabel={entry[1]}
+                disabled={!canEditEffective || savingRisk}
+                id={`${formId}-${entry[0]}`}
+                items={[
+                  { value: '__empty__', label: t('未记录', 'Not recorded') },
+                  ...entry[2].map(([val, text]) => ({ value: val, label: text })),
+                ]}
+                onValueChange={val => {
+                  const next = val === null || val === '__empty__' ? '' : val
+                  updateForm(s => ({ ...s, [entry[0]]: next } as RiskFormState))
+                }}
+                value={form[entry[0]] === '' ? '__empty__' : form[entry[0]]}
+              />
+            </div>
           ))}
           {canEditRisk ? (
             <div className="flex items-end">

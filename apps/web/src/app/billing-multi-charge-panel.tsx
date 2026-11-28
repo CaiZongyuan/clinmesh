@@ -246,7 +246,7 @@ function BillingMultiChargeDraftPanel({ bill, session, locale, blocked, onRefres
       </div>
       <DialogFooter>
         <Button variant="outline" disabled={draftLocked} onClick={() => setDiscarding(true)}>{zh ? '丢弃草稿' : 'Discard draft'}</Button>
-        {validPreview === undefined ? null : <Button disabled={blocked || inputLocked || state.failure !== null} onClick={() => {
+        {validPreview === undefined ? null : <Button data-agent-confirm={zh ? '确认合并收款' : 'Confirm combined payment'} disabled={blocked || inputLocked || state.failure !== null} onClick={() => {
           if (blocked || inputLocked || state.failure !== null) return
           const reviewed = validPreview
           const submittedSignature = current.current

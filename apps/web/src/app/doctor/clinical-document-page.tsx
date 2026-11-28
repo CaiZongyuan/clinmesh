@@ -295,6 +295,7 @@ export function ClinicalDocumentPage({
                   <AlertDialogFooter>
                     <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
                     <AlertDialogAction
+                      data-agent-confirm={messages.confirmClinicalDocumentRevisionAction}
                       disabled={actions.revise.pending}
                       onClick={() => {
                         if (revisionPreview === undefined) return
@@ -426,6 +427,7 @@ export function ClinicalDocumentPage({
                   {messages.cancel}
                 </AlertDialogCancel>
                 <Button
+                  data-agent-confirm={messages.confirmClinicalRecordSign}
                   disabled={currentPreview === undefined || actions.sign.pending || cancelPending}
                   onClick={() => {
                     if (currentPreview !== undefined) actions.sign.onSubmit(currentPreview)
@@ -544,7 +546,7 @@ function ReproductiveHistoryGroup({
       )}
     >
       {!isOpen ? (
-        <button
+        <Button
           aria-expanded={false}
           disabled={disabled}
           onClick={() => {
@@ -553,14 +555,15 @@ function ReproductiveHistoryGroup({
           }}
           ref={expandButton}
           type="button"
-          className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left outline-none transition-colors hover:bg-muted/45 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+          variant="ghost"
+          className="h-auto w-full justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left font-normal hover:bg-muted/45"
         >
           <span className="min-w-0 text-sm font-medium text-muted-foreground">{messages.reproductiveHistoryGroup}</span>
           <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
             {messages.expandReproductiveHistory}
             <ChevronDownIcon aria-hidden="true" className="size-3.5" />
           </span>
-        </button>
+        </Button>
       ) : null}
       <div ref={fieldsContainer} hidden={!isOpen} className={isOpen ? gridClassName : 'hidden'}>
         {children(collapseAction)}

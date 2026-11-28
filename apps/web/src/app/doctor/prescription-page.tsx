@@ -576,7 +576,7 @@ export function PrescriptionPage({
             )}
             <AlertDialogFooter>
               <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-              <AlertDialogCancel disabled={effectiveOrderGate.blocked || dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending} onClick={() => {
+              <AlertDialogCancel data-agent-confirm={messages.confirmNoMedication} disabled={effectiveOrderGate.blocked || dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending} onClick={() => {
                 setNoMedicationOpen(false)
                 queueMicrotask(actions.confirmNoMedication.onSubmit)
               }} variant="default">
@@ -824,6 +824,7 @@ export function PrescriptionPage({
               <AlertDialogFooter>
                 <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
                 <AlertDialogAction
+                  data-agent-confirm={messages.confirmWithdrawal}
                   disabled={actions.withdraw.pending}
                   onClick={actions.withdraw.onSubmit}
                 >

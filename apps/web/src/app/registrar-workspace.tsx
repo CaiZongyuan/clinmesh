@@ -313,7 +313,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     <WorkspaceQueueCard className="flex-1" title={<div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-base font-semibold" id="patient-heading">{messages.patientSelection}</h2><Badge variant="secondary" className="tabular-nums">{waitingCases.isError ? '—' : (waitingCases.data?.total ?? 0)}</Badge></div>}>
       <div className="flex flex-col gap-3"><WorkspaceModeSwitch />
       <Tabs value={queueTab} onValueChange={value => { if (typeof value === 'string') queueView.setTab(value) }}>
-        <TabsList className="h-auto! w-full flex-wrap">
+        <TabsList aria-label={messages.patientSelection} className="h-auto! w-full flex-wrap">
           <TabsTrigger aria-label={text('待挂号', 'Awaiting registration')} className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="cases">{text('待挂号', 'Awaiting registration')}</TabsTrigger>
           <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="search">{text('检索', 'Search')}</TabsTrigger>
           <TabsTrigger className="min-w-0 flex-auto wrap-anywhere whitespace-normal" value="create">{text('建档', 'Create record')}</TabsTrigger>
@@ -553,7 +553,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       </>
         : creatingPatient
         ? <Button type="submit" form="registration-patient-create" aria-disabled={createDisabled || undefined} className={cn(createDisabled && 'border border-dashed border-input bg-muted text-muted-foreground opacity-100')} disabled={createDisabled}><UserPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.createTemporaryPatient}</Button>
-        : <Button type="button" aria-disabled={confirmDisabled || undefined} className={cn(confirmDisabled && 'border border-dashed border-input bg-muted text-muted-foreground opacity-100')} disabled={confirmDisabled} onClick={() => { if (registrationSubmission) submitRegistration.mutate(registrationSubmission) }}><ClipboardPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.confirmRegistration}</Button>} />}>
+        : <Button type="button" aria-disabled={confirmDisabled || undefined} className={cn(confirmDisabled && 'border border-dashed border-input bg-muted text-muted-foreground opacity-100')} data-agent-confirm={messages.confirmRegistration} disabled={confirmDisabled} onClick={() => { if (registrationSubmission) submitRegistration.mutate(registrationSubmission) }}><ClipboardPlusIcon aria-hidden="true" data-icon="inline-start" />{messages.confirmRegistration}</Button>} />}>
     {registrationPanel}
     {recordsPanel}
   </WorkspaceCardLayout>

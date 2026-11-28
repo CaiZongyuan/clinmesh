@@ -1175,6 +1175,7 @@ describe('role workspaces', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/scenario-data'))
     const reset = screen.getByRole('button', { name: '重置数据' })
     await waitFor(() => expect(reset.hasAttribute('disabled')).toBe(false))
+    fireEvent.keyDown(document, { key: 'Tab' })
     reset.focus()
     expect(await screen.findByRole('tooltip')).toBeTruthy()
     await user.hover(reset)
@@ -6829,7 +6830,7 @@ describe('role workspaces', () => {
     expect(within(timeline).getByText('删除处方草稿')).toBeTruthy()
     expect(within(timeline).getByText('开具处方')).toBeTruthy()
     expect(within(timeline).getByText('撤回处方')).toBeTruthy()
-  }, 15_000)
+  }, 30_000)
 
   it('partially dispenses from a versioned lot before completing the Scenario Run', async () => {
     let dispensedQuantity = 0

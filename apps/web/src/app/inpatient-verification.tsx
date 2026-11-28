@@ -110,7 +110,7 @@ export function InpatientVerification({ admission, session, locale, orders, load
         {selected.map(row => <InpatientItemRow key={row.id} title={row.order.display} metadata={details(row.order)} badge={<Badge variant="outline">{changed(row.order) ? t('须重新核对', 'Review required') : t('待校对', 'Awaiting verification')}</Badge>} />)}
         <p className="text-xs text-muted-foreground">{t('逐项核对后确认。各条按原医嘱独立办理；已成功项保留，失败项保留输入。', 'Confirm after reviewing every item. Each order is processed independently; successes and failed input are retained.')}</p>
       </div>
-      <DialogFooter><DialogClose render={<Button variant="outline" />}>{t('返回修改', 'Back')}</DialogClose><Button disabled={disabled || !selected.length || problems.length > 0} onClick={() => { void check(true) }}>{t(`确认校对 ${selected.length} 条新医嘱`, `Confirm verification of ${selected.length} orders`)}</Button></DialogFooter>
+      <DialogFooter><DialogClose render={<Button variant="outline" />}>{t('返回修改', 'Back')}</DialogClose><Button data-agent-confirm={t('确认校对所选新医嘱', 'Confirm verification of selected new orders')} disabled={disabled || !selected.length || problems.length > 0} onClick={() => { void check(true) }}>{t(`确认校对 ${selected.length} 条新医嘱`, `Confirm verification of ${selected.length} orders`)}</Button></DialogFooter>
     </DialogContent></Dialog>
     <Dialog open={discard} onOpenChange={setDiscard}><DialogContent>
       <DialogHeader><DialogTitle>{t('丢弃待校对清单？', 'Discard verification drafts?')}</DialogTitle><DialogDescription>{t('将移除本次住院尚未提交的校对选择。已保存的医嘱及校对记录保留。', 'Remove unsubmitted verification selections for this admission. Saved orders and verifications remain.')}</DialogDescription></DialogHeader>

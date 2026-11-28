@@ -1,7 +1,16 @@
-import { Button as ButtonPrimitive } from "@base-ui/react/button"
-import { forwardRef } from "react"
+import {
+  Button as ButtonPrimitive,
+  type ButtonActionDetails,
+} from "@ui-sdk/react/button"
+import {
+  forwardRef,
+  type ComponentProps,
+  type MouseEvent,
+  type ReactNode,
+} from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 
+import { omitUndefined, type RelaxOptional } from "#lib/ui-props"
 import { cn } from "#lib/utils"
 
 const buttonVariants = cva(
@@ -41,19 +50,39 @@ const buttonVariants = cva(
   }
 )
 
-const Button = forwardRef<HTMLButtonElement, ButtonPrimitive.Props & VariantProps<typeof buttonVariants>>(function Button({
-  className,
-  variant = "default",
-  size = "default",
-  ...props
-}, ref) {
+type ButtonProps = RelaxOptional<
+  Omit<
+    ComponentProps<typeof ButtonPrimitive>,
+    "className" | "onClick" | "children"
+  >
+> &
+  RelaxOptional<VariantProps<typeof buttonVariants>> & {
+    className?: string | undefined
+    children?: ReactNode | undefined
+    onClick?:
+      | ((
+          event: MouseEvent<HTMLButtonElement>,
+          details?: ButtonActionDetails
+        ) => unknown)
+      | undefined
+  }
+
+const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { className, variant = "default", size = "default", onClick, ...props },
+  ref
+) {
   return (
     <ButtonPrimitive
       ref={ref}
-      data-slot="button"
       data-variant={variant}
       className={cn(buttonVariants({ variant, size, className }))}
-      {...props}
+      {...(onClick
+        ? {
+            onClick: (event, details) =>
+              onClick(event as MouseEvent<HTMLButtonElement>, details),
+          }
+        : {})}
+      {...omitUndefined(props)}
     />
   )
 })

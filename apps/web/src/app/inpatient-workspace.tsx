@@ -305,11 +305,11 @@ function InpatientWorkspaceContent({ session, locale }: { session: SessionContex
       reason={zh ? '下一步：病区护士接诊并分床。' : 'Next: the ward nurse receives the patient and assigns a bed.'}
       action={<Button onClick={() => { setSelectedId(undefined); write.mutation.reset(); if (nextReferral) { setRoute('outpatient'); setReferralId(nextReferral.id); setWardId(null) } }}>{nextReferral ? (zh ? `继续登记下一位：${nextReferral.patientName} →` : `Register next: ${nextReferral.patientName} →`) : (zh ? '继续登记下一位 →' : 'Register another patient →')}</Button>} /> : registrar ? <WorkspaceActionBar tone={registrationBlocked ? 'blocked' : 'normal'}
       reason={registrationBlocked ? (zh ? (route !== 'outpatient' && !fromCase && !patient ? '还差：选择患者' : '还差：请选定患者或住院证，核对病区和预交金后办理。') : 'Select a patient or referral and check the ward and deposit.') : (zh ? '核对病区和预交金后办理' : 'Check the ward and deposit before registering')}
-      action={<Button disabled={registrationBlocked} form={registrationFormId} type="submit">{zh ? '办理住院' : 'Register admission'}</Button>} /> : undefined}>
+      action={<Button data-agent-confirm={zh ? '办理住院登记' : 'Register inpatient admission'} disabled={registrationBlocked} form={registrationFormId} type="submit">{zh ? '办理住院' : 'Register admission'}</Button>} /> : undefined}>
     {notices}
     {registrar ? <div className="flex flex-col gap-3">
       {registrationComplete && selected ? <>
-        <div role="status" className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
+        <div role="status" className="flex items-center gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm font-medium text-success">
           ✓ {zh ? '已完成住院登记，等病区护士接诊并分床' : 'Admission registered; awaiting ward nurse reception and bed assignment'}
         </div>
         <section aria-label={zh ? '登记摘要' : 'Registration summary'} className="grid gap-3 rounded-md border bg-muted/20 p-3 text-sm sm:grid-cols-3">

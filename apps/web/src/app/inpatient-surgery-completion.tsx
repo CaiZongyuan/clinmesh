@@ -188,7 +188,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
   }, [previewKey, valid, blocked, estimates.isPending, reviewed])
   const actions = <>
     <Button type="button" variant="outline" disabled={write.mutation.isPending} onClick={onClose}>{t('取消', 'Cancel')}</Button>
-    <Button type="button" disabled={blocked || !valid || !reviewed} onClick={confirm}>{t('确认完成手术', 'Complete surgery')}</Button>
+    <Button type="button" data-agent-confirm={t('确认完成手术', 'Confirm surgery completion')} disabled={blocked || !valid || !reviewed} onClick={confirm}>{t('确认完成手术', 'Complete surgery')}</Button>
   </>
   return <form className="flex min-h-0 flex-1 flex-col p-0" onSubmit={event => event.preventDefault()}>
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
@@ -265,7 +265,7 @@ function CompletionEditor(props: Props & { onClose: () => void }): React.JSX.Ele
       <Button type="button" variant="destructive" disabled={write.blocked} onClick={() => { if (!isCurrent()) return; if (draft.clear()) { attemptedPreview.current = ''; preview.reset(); setLatchedServerNoteRequired(false); setClearOpen(false) } else setClearFailed(true) }}>{t('确认丢弃并重新带入', 'Discard and reload')}</Button>
     </AlertDialogFooter></AlertDialogContent></AlertDialog>
     {preview.error ? <Button type="button" variant="outline" disabled={blocked || !valid} onClick={() => preview.mutate({ input, basis })}>{t('重试核对差额', 'Retry difference review')}</Button> : null}
-    {preview.data && !reviewed ? <Alert><AlertDescription>{t('正在按当前输入与依据重新核对差额。', 'Rechecking differences against current inputs and sources.')}</AlertDescription></Alert> : null}
+    {preview.data && !reviewed ? <Alert role="status"><AlertDescription>{t('正在按当前输入与依据重新核对差额。', 'Rechecking differences against current inputs and sources.')}</AlertDescription></Alert> : null}
 
     </div>
     <OrderComposerFooter hint={hint}>{actions}</OrderComposerFooter>

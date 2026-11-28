@@ -12,6 +12,7 @@ import {
   type PixelArray,
 } from '@clinmesh/core/imaging-display'
 import { Button } from '@clinmesh/ui/components/button'
+import { Input } from '@clinmesh/ui/components/input'
 import { useEffect, useRef, useState } from 'react'
 import type { ImagingEngine, ImagingEngineProps } from './imaging-engines.ts'
 
@@ -275,9 +276,9 @@ function GrayscaleStackEngine({ loadBlock, locale, onFrameShown, series }: Imagi
         {frameCount === 1 ? null : (
           <label className="flex min-w-48 flex-1 items-center gap-2">
             <span className="whitespace-nowrap">Im {frameIndex + 1} / {frameCount}</span>
-            <input
+            <Input
               aria-label={zh ? '图像序号' : 'Image number'}
-              className="min-w-0 flex-1"
+              className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
               max={frameCount}
               min={1}
               onChange={event => setFrameIndex(clampFrameIndex(Number(event.target.value) - 1, frameCount))}

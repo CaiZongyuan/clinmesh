@@ -1,6 +1,7 @@
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { inpatientCatalogSchema } from '@clinmesh/contracts/inpatient'
 import { Badge } from '@clinmesh/ui/components/badge'
+import { Button } from '@clinmesh/ui/components/button'
 import { cn } from '@clinmesh/ui/lib/utils'
 import type { z } from 'zod'
 import { inpatientCareDay } from './inpatient-scope.ts'
@@ -43,8 +44,8 @@ export function InpatientDoctorPatientList({ admissions, viewedId, catalog, virt
           : item.financialStatus === 'settled' ? t('已结算', 'Settled')
           : inpatientStatus(item, locale)
         return <li key={item.id}>
-          <button type="button" aria-current={current ? 'true' : undefined} aria-label={`${t('查看', 'View ')}${item.patientName}`} onClick={() => onSelect(item.id)}
-            className={cn('flex w-full flex-col gap-1 rounded-lg border px-2.5 py-2 text-start outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring', current ? 'border-info/55 bg-accent' : 'border-border/80 bg-card hover:bg-accent/60')}>
+          <Button type="button" variant="ghost" aria-current={current ? 'true' : undefined} aria-label={`${t('查看', 'View ')}${item.patientName}`} onClick={() => onSelect(item.id)}
+            className={cn('h-auto w-full flex-col items-stretch justify-start gap-1 rounded-lg border px-2.5 py-2 text-start font-normal whitespace-normal focus-visible:ring-2 focus-visible:ring-ring', current ? 'border-info/55 bg-accent' : 'border-border/80 bg-card hover:bg-accent/60')}>
             <span className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
               <span className="font-semibold">{item.patientName}</span>
               <span className="inline-flex flex-wrap items-center gap-1">
@@ -61,7 +62,7 @@ export function InpatientDoctorPatientList({ admissions, viewedId, catalog, virt
                     {hint ? ` · ${hint}` : ''}
                   </>}
             </span>
-          </button>
+          </Button>
         </li>
       })}
     </ul>

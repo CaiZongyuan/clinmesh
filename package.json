@@ -37,6 +37,7 @@
     "typecheck": "turbo run typecheck && tsc --noEmit -p tsconfig.browser.json && tsc --noEmit -p tsconfig.ci.json",
     "clinmesh": "pnpm --filter @clinmesh/cli clinmesh",
     "lint": "oxlint apps packages scripts --deny-warnings",
+    "lint:ui-consistency": "tsx scripts/lint-ui-consistency.ts",
     "test": "pnpm test:unit && pnpm test:browser && pnpm test:e2e",
     "test:unit": "pnpm test:packages && pnpm test:scripts",
     "test:packages": "turbo run test",
@@ -47,7 +48,7 @@
     "verify:agent-notes": "tsx scripts/verify-agent-note-format.ts",
     "verify:boundaries": "tsx scripts/verify-package-boundaries.ts",
     "doc-sync": "pnpm verify:docs && pnpm verify:agent-notes",
-    "check": "pnpm verify:boundaries && pnpm typecheck && pnpm lint && pnpm test && pnpm perf:ci && pnpm doc-sync && pnpm build",
+    "check": "pnpm verify:boundaries && pnpm typecheck && pnpm lint && pnpm lint:ui-consistency && pnpm test && pnpm perf:ci && pnpm doc-sync && pnpm build",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {

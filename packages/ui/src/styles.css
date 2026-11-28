@@ -1,8 +1,126 @@
+@layer ui-sdk;
+
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
+@custom-variant data-open {
+  &:where([data-state="open"]),
+  &:where([data-open]:not([data-open="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-closed {
+  &:where([data-state="closed"]),
+  &:where([data-closed]:not([data-closed="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-checked {
+  &:where([data-state="checked"]),
+  &:where([data-checked]:not([data-checked="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-unchecked {
+  &:where([data-state="unchecked"]),
+  &:where([data-unchecked]:not([data-unchecked="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-selected {
+  &:where([data-selected]:not([data-selected="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-disabled {
+  &:where([data-disabled]:not([data-disabled="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-invalid {
+  &:where([data-invalid]:not([data-invalid="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-active {
+  &:where([data-state="active"]),
+  &:where([data-active]:not([data-active="false"])),
+  &:where([data-slot="tabs-tab"][data-selected]) {
+    @slot;
+  }
+}
+@custom-variant data-horizontal {
+  &:where([data-orientation="horizontal"]) {
+    @slot;
+  }
+}
+@custom-variant data-vertical {
+  &:where([data-orientation="vertical"]) {
+    @slot;
+  }
+}
+
+@utility no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@property --scroll-fade-b {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --scroll-fade-mask {
+  syntax: "*";
+  inherits: false;
+}
+
+@theme inline {
+  @keyframes scroll-fade-reveal-b {
+    from {
+      --scroll-fade-b: var(--_scroll-fade-size-b, var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10))));
+    }
+    to {
+      --scroll-fade-b: 0px;
+    }
+  }
+}
+
+@utility scroll-fade-b {
+  --_scroll-fade-size-b: var(
+    --scroll-fade-b-size,
+    var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
+  );
+  --scroll-fade-mask: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - var(--scroll-fade-b, 0px)),
+    transparent 100%
+  );
+  -webkit-mask-image: var(--scroll-fade-mask);
+  mask-image: var(--scroll-fade-mask);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+
+  @supports (animation-timeline: scroll()) {
+    animation: scroll-fade-reveal-b 1ms ease-in-out;
+    animation-timeline: scroll(self y);
+    animation-range: calc(100% - var(--scroll-fade-reveal, calc(var(--spacing) * 24))) 100%;
+    animation-fill-mode: both;
+  }
+
+  @supports not (animation-timeline: scroll()) {
+    --scroll-fade-b: var(--_scroll-fade-size-b);
+  }
+}
+
 @source "../../../apps/web/src/**/*.{ts,tsx}";
 @source "../**/*.{ts,tsx}";
 
@@ -108,6 +226,20 @@
   --specimen-cap-amber: #d97706;
   --specimen-cap-neutral: var(--muted-foreground);
   --clinmesh-glow: 0 0 0 1.5px color-mix(in srgb, var(--info) 35%, transparent), 0 0 16px color-mix(in srgb, var(--info) 16%, transparent);
+  --ui-background: var(--background);
+  --ui-foreground: var(--foreground);
+  --ui-muted: var(--muted);
+  --ui-muted-foreground: var(--muted-foreground);
+  --ui-border: var(--border);
+  --ui-input: var(--input);
+  --ui-primary: var(--primary);
+  --ui-primary-foreground: var(--primary-foreground);
+  --ui-destructive: var(--destructive);
+  --ui-ring: var(--ring);
+  --ui-ring-border: var(--ring);
+  --ui-radius: var(--radius);
+  --ui-font-sans: var(--font-ui);
+  --ui-font-mono: var(--font-code);
 }
 
 .dark {
@@ -143,6 +275,17 @@
   --specimen-cap-black: #e4e4e7;
   --specimen-cap-amber: #fb923c;
   --specimen-cap-neutral: var(--muted-foreground);
+  --ui-background: var(--background);
+  --ui-foreground: var(--foreground);
+  --ui-muted: var(--muted);
+  --ui-muted-foreground: var(--muted-foreground);
+  --ui-border: var(--border);
+  --ui-input: var(--input);
+  --ui-primary: var(--primary);
+  --ui-primary-foreground: var(--primary-foreground);
+  --ui-destructive: var(--destructive);
+  --ui-ring: var(--ring);
+  --ui-ring-border: var(--ring);
 }
 
 [data-clinmesh-app="web"] {
@@ -194,8 +337,33 @@
 }
 
 @layer base {
+  [data-ui-sdk-announcer]:empty {
+    display: none;
+  }
+
+  /* Cancel descendant control focus/hover transitions when an overlay closes so @ui-sdk unmounts immediately instead of waiting on child transitions. */
+  :where(
+    [data-slot="dialog-content"],
+    [data-slot="dialog-backdrop"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="alert-dialog-backdrop"],
+    [data-slot="menu-content"],
+    [data-slot="select-content"],
+    [data-slot="tooltip-content"]
+  ):is([data-ending-style], [data-closed]),
+  :where(
+    [data-slot="dialog-content"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="menu-content"],
+    [data-slot="select-content"],
+    [data-slot="tooltip-content"]
+  ):is([data-ending-style], [data-closed]) * {
+    transition: none !important;
+    animation: none !important;
+  }
+
   /* 未声明布局的弹窗正文默认留白；现有 p/px/py utility 覆盖对应方向，不叠加。 */
-  :where([data-slot="dialog-content"] > :not([data-slot="dialog-header"], [data-slot="dialog-footer"], [data-slot="dialog-close"])) {
+  :where([data-slot="dialog-content"]:not([data-sheet]) > :not([data-slot="dialog-header"], [data-slot="dialog-footer"], [data-slot="dialog-close"])) {
     padding: 1rem;
   }
 

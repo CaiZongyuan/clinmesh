@@ -100,7 +100,7 @@ export function PatientImagingPreparation({ caseId, locale }: { caseId: string; 
     },
   })
   return (
-    <details className="border-t p-4" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
+    <details className="border-t p-4" data-agent-hidden="" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
       <summary className="cursor-pointer text-sm font-semibold">{zh ? '影像准备' : 'Imaging preparation'}</summary>
       {open ? (
         <div className="mt-3">
@@ -221,7 +221,7 @@ export function ImagingCoveragePanel({ locale }: { locale: WorkspaceLocale }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: imagingKey }),
   })
   return (
-    <details className="min-w-0" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
+    <details className="min-w-0" data-agent-hidden="" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
       <summary className="cursor-pointer text-sm font-semibold">{zh ? '影像覆盖清单' : 'Imaging coverage'}</summary>
       {open ? (
         <div className="mt-3">

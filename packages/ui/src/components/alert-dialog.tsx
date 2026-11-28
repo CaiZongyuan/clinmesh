@@ -1,63 +1,89 @@
 import * as React from "react"
-import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog"
+import {
+  AlertDialog as AlertDialogPrimitive,
+  AlertDialogBackdrop as AlertDialogBackdropPrimitive,
+  AlertDialogClose as AlertDialogClosePrimitive,
+  AlertDialogContent as AlertDialogContentPrimitive,
+  AlertDialogDescription as AlertDialogDescriptionPrimitive,
+  AlertDialogTitle as AlertDialogTitlePrimitive,
+  AlertDialogTrigger as AlertDialogTriggerPrimitive,
+} from "@ui-sdk/react/alert-dialog"
 
-import { cn } from "#lib/utils"
 import { Button } from "#components/button"
-import { usePortalContainer } from "#components/portal-context"
+import {
+  resolvePortalContainer,
+  usePortalContainer,
+} from "#components/portal-context"
+import { omitUndefined, type RelaxOptional } from "#lib/ui-props"
+import { cn } from "#lib/utils"
 import { DialogPendingContext, useDialogPending } from "../dialog-pending.tsx"
 
 function AlertDialog({
   pending,
   onOpenChange,
+  dismissible,
+  container,
   ...props
-}: AlertDialogPrimitive.Root.Props & { pending: boolean | undefined }) {
+}: RelaxOptional<React.ComponentProps<typeof AlertDialogPrimitive>> & {
+  pending?: boolean | undefined
+}) {
+  const portalContainer = usePortalContainer()
+  const containerElement =
+    resolvePortalContainer(container ?? portalContainer) ??
+    (typeof document !== "undefined" ? document.body : undefined)
+  const resolvedDismissible = pending ? false : dismissible
+
   return (
     <DialogPendingContext.Provider value={Boolean(pending)}>
-      <AlertDialogPrimitive.Root
-        data-slot="alert-dialog"
-        {...props}
+      <AlertDialogPrimitive
+        {...(containerElement !== undefined
+          ? { container: containerElement }
+          : {})}
+        {...(resolvedDismissible !== undefined
+          ? { dismissible: resolvedDismissible }
+          : {})}
         onOpenChange={(open, eventDetails) => {
-          if (!open && pending && eventDetails.reason !== "imperative-action") {
+          if (!open && pending && eventDetails.reason !== "imperative") {
             eventDetails.cancel()
             return
           }
           onOpenChange?.(open, eventDetails)
         }}
+        {...omitUndefined(props)}
       />
     </DialogPendingContext.Provider>
   )
 }
 
-function AlertDialogTrigger({ ...props }: AlertDialogPrimitive.Trigger.Props) {
-  return (
-    <AlertDialogPrimitive.Trigger data-slot="alert-dialog-trigger" {...props} />
-  )
+function AlertDialogTrigger({
+  ...props
+}: RelaxOptional<
+  Omit<React.ComponentProps<typeof AlertDialogTriggerPrimitive>, "children">
+> & {
+  children?: React.ReactNode | undefined
+}) {
+  return <AlertDialogTriggerPrimitive {...omitUndefined(props)} />
 }
 
-function AlertDialogPortal({ container, ...props }: AlertDialogPrimitive.Portal.Props) {
-  const runtimeContainer = usePortalContainer()
-  const resolvedContainer = container ?? runtimeContainer
-  return (
-    <AlertDialogPrimitive.Portal
-      data-slot="alert-dialog-portal"
-      {...(resolvedContainer === null ? {} : { container: resolvedContainer })}
-      {...props}
-    />
-  )
+function AlertDialogPortal({ children }: { children?: React.ReactNode }) {
+  return <>{children}</>
 }
 
 function AlertDialogOverlay({
   className,
   ...props
-}: AlertDialogPrimitive.Backdrop.Props) {
+}: RelaxOptional<
+  Omit<React.ComponentProps<typeof AlertDialogBackdropPrimitive>, "className">
+> & {
+  className?: string | undefined
+}) {
   return (
-    <AlertDialogPrimitive.Backdrop
-      data-slot="alert-dialog-overlay"
+    <AlertDialogBackdropPrimitive
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-50 bg-black/10 supports-backdrop-filter:backdrop-blur-xs data-closed:pointer-events-none",
         className
       )}
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }
@@ -65,25 +91,40 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = "default",
+  container,
   ...props
-}: AlertDialogPrimitive.Popup.Props & {
-  size?: "default" | "sm"
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof AlertDialogContentPrimitive>,
+    "className" | "children"
+  >
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+  size?: "default" | "sm" | undefined
 }) {
   const pending = useDialogPending()
+  const portalContainer = usePortalContainer()
+  const containerElement =
+    resolvePortalContainer(container ?? portalContainer) ??
+    (typeof document !== "undefined" ? document.body : undefined)
+
   return (
-    <AlertDialogPortal>
+    <>
       <AlertDialogOverlay />
-      <AlertDialogPrimitive.Popup
-        data-slot="alert-dialog-content"
+      <AlertDialogContentPrimitive
+        {...(containerElement !== undefined
+          ? { container: containerElement }
+          : {})}
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-popover-foreground ring-1 ring-foreground/10 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-closed:pointer-events-none",
           className
         )}
-        {...props}
+        {...omitUndefined(props)}
         aria-busy={pending || props["aria-busy"]}
       />
-    </AlertDialogPortal>
+    </>
   )
 }
 
@@ -138,15 +179,22 @@ function AlertDialogMedia({
 function AlertDialogTitle({
   className,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Title>) {
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof AlertDialogTitlePrimitive>,
+    "className" | "children"
+  >
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+}) {
   return (
-    <AlertDialogPrimitive.Title
-      data-slot="alert-dialog-title"
+    <AlertDialogTitlePrimitive
       className={cn(
         "text-base font-medium sm:group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2",
         className
       )}
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }
@@ -154,15 +202,22 @@ function AlertDialogTitle({
 function AlertDialogDescription({
   className,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Description>) {
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof AlertDialogDescriptionPrimitive>,
+    "className" | "children"
+  >
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+}) {
   return (
-    <AlertDialogPrimitive.Description
-      data-slot="alert-dialog-description"
+    <AlertDialogDescriptionPrimitive
       className={cn(
         "text-sm text-balance text-muted-foreground md:text-pretty *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
         className
       )}
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }
@@ -186,16 +241,23 @@ function AlertDialogCancel({
   variant = "outline",
   size = "default",
   ...props
-}: AlertDialogPrimitive.Close.Props &
-  Pick<React.ComponentProps<typeof Button>, "variant" | "size">) {
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof AlertDialogClosePrimitive>,
+    "className" | "children"
+  >
+> &
+  Pick<React.ComponentProps<typeof Button>, "variant" | "size"> & {
+    className?: string | undefined
+    children?: React.ReactNode | undefined
+  }) {
   const pending = useDialogPending()
   return (
-    <AlertDialogPrimitive.Close
-      data-slot="alert-dialog-cancel"
+    <AlertDialogClosePrimitive
       className={cn(className)}
       render={<Button variant={variant} size={size} />}
-      {...props}
-      disabled={pending || disabled}
+      {...omitUndefined(props)}
+      disabled={Boolean(pending || disabled)}
     />
   )
 }

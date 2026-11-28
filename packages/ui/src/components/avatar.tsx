@@ -1,37 +1,54 @@
 import * as React from "react"
-import { Avatar as AvatarPrimitive } from "@base-ui/react/avatar"
+import {
+  Avatar as AvatarPrimitive,
+  AvatarFallback as AvatarFallbackPrimitive,
+  AvatarImage as AvatarImagePrimitive,
+} from "@ui-sdk/react/avatar"
 
+import { omitUndefined, type RelaxOptional } from "#lib/ui-props"
 import { cn } from "#lib/utils"
 
 function Avatar({
   className,
   size = "default",
   ...props
-}: AvatarPrimitive.Root.Props & {
-  size?: "default" | "sm" | "lg"
+}: RelaxOptional<
+  Omit<React.ComponentProps<typeof AvatarPrimitive>, "className" | "children">
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+  size?: "default" | "sm" | "lg" | undefined
 }) {
   return (
-    <AvatarPrimitive.Root
-      data-slot="avatar"
+    <AvatarPrimitive
       data-size={size}
       className={cn(
-        "group/avatar relative flex size-8 shrink-0 rounded-full select-none after:absolute after:inset-0 after:rounded-full after:border after:border-border after:mix-blend-darken data-[size=lg]:size-10 data-[size=sm]:size-6 dark:after:mix-blend-lighten",
+        "group/avatar relative isolate flex size-8 shrink-0 rounded-full select-none after:absolute after:inset-0 after:rounded-full after:border after:border-border after:mix-blend-darken data-[size=lg]:size-10 data-[size=sm]:size-6 dark:after:mix-blend-lighten",
         className
       )}
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }
 
-function AvatarImage({ className, ...props }: AvatarPrimitive.Image.Props) {
+function AvatarImage({
+  className,
+  ...props
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof AvatarImagePrimitive>,
+    "className" | "children"
+  >
+> & {
+  className?: string | undefined
+}) {
   return (
-    <AvatarPrimitive.Image
-      data-slot="avatar-image"
+    <AvatarImagePrimitive
       className={cn(
         "aspect-square size-full rounded-full object-cover",
         className
       )}
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }
@@ -39,15 +56,22 @@ function AvatarImage({ className, ...props }: AvatarPrimitive.Image.Props) {
 function AvatarFallback({
   className,
   ...props
-}: AvatarPrimitive.Fallback.Props) {
+}: RelaxOptional<
+  Omit<
+    React.ComponentProps<typeof AvatarFallbackPrimitive>,
+    "className" | "children"
+  >
+> & {
+  className?: string | undefined
+  children?: React.ReactNode | undefined
+}) {
   return (
-    <AvatarPrimitive.Fallback
-      data-slot="avatar-fallback"
+    <AvatarFallbackPrimitive
       className={cn(
         "flex size-full items-center justify-center rounded-full bg-muted text-sm text-muted-foreground group-data-[size=sm]/avatar:text-xs",
         className
       )}
-      {...props}
+      {...omitUndefined(props)}
     />
   )
 }

@@ -28,4 +28,12 @@ function usePortalContainer(): PortalContainer {
   return React.useContext(PortalContainerContext)
 }
 
-export { PortalContainerProvider, usePortalContainer }
+function resolvePortalContainer(
+  container: PortalContainer | Element | DocumentFragment | null | undefined
+): Element | DocumentFragment | undefined {
+  if (container === null || container === undefined) return undefined
+  if ("current" in container) return container.current ?? undefined
+  return container
+}
+
+export { PortalContainerProvider, resolvePortalContainer, usePortalContainer }

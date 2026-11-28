@@ -123,7 +123,7 @@ export function InpatientDiagnosisEditor({ data, session, locale, blocked, write
       </OrderComposerLayout>
       <OrderComposerFooter hint={missing ? `${t('还差：', 'Complete: ')}${missing}` : `${t('主诊断：', 'Primary: ')}${current.entries[0]!.display}`}>
         <DialogClose render={<Button type="button" variant="outline" />}>{t('取消', 'Cancel')}</DialogClose>
-        <Button type="button" disabled={blocked || missing !== undefined} onClick={submit}>{t('确认住院诊断', 'Confirm diagnoses')}</Button>
+        <Button type="button" data-agent-confirm={t('确认住院诊断', 'Confirm inpatient diagnoses')} disabled={blocked || missing !== undefined} onClick={submit}>{t('确认住院诊断', 'Confirm diagnoses')}</Button>
       </OrderComposerFooter>
     </DialogContent>
   </Dialog>

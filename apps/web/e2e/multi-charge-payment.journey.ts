@@ -174,7 +174,7 @@ export async function recoverMultiChargePreviewJourney(page: Page, server: Billi
     await expect(dialog.getByRole('button', { name: '确认丢弃草稿', exact: true })).toBeDisabled()
     await page.keyboard.press('Escape')
     await expect(dialog).toBeVisible()
-    await page.locator('[data-slot="dialog-overlay"]').last().click({ position: { x: 2, y: 2 }, force: true })
+    await page.locator('[data-slot="dialog-backdrop"]').last().click({ position: { x: 2, y: 2 }, force: true })
     await expect(dialog).toBeVisible()
     allowRequest()
     const recover = dialog.getByRole('button', { name: '查询原预览结果', exact: true })

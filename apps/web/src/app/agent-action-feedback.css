@@ -1,0 +1,48 @@
+/* Pure-CSS agent activity feedback. */
+@keyframes clinmesh-agent-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+[data-agent-active="true"] {
+  position: relative;
+  border-color: color-mix(in srgb, var(--info) 60%, transparent);
+  box-shadow: var(--clinmesh-glow);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-agent-active="true"]::after {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    box-shadow: var(--clinmesh-glow);
+    animation: clinmesh-agent-pulse 1.8s ease-in-out infinite;
+  }
+}
+
+[data-agent-draft="true"],
+[data-agent-draft="true"] :is(input, textarea, select, [role="combobox"]) {
+  border-style: dashed;
+  border-color: var(--info);
+}
+
+[data-agent-draft="true"] :is([data-slot="toggle-group"], [data-slot="radio-group"], [role="radiogroup"]) {
+  outline: 1px dashed var(--info);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-agent-active="true"] {
+    box-shadow: none;
+    outline: 2px solid var(--info);
+    outline-offset: -1px;
+  }
+}

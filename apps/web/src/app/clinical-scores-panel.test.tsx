@@ -2,6 +2,7 @@
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildInpatientClinicalScoreRevision,
@@ -17,6 +18,15 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
 })
+
+async function chooseSelectOption(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+  optionLabel: string,
+) {
+  await user.click(screen.getByRole('combobox', { name: label }))
+  await user.click(await screen.findByRole('option', { name: optionLabel }))
+}
 
 describe('ClinicalScoresPanel disclosures', () => {
   it('does not fetch clinical-scores while collapsed, then renders complete/incomplete badges and saves tri-state risk assessment on expand', async () => {
@@ -149,8 +159,9 @@ describe('ClinicalScoresPanel disclosures', () => {
     expect(screen.getAllByText('待补齐：体重 (kg)').length).toBe(5)
     expect(screen.getByText(/DiagnosticReport\/ecg-1#1/)).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText('Killip 分级'), { target: { value: 'II' } })
-    fireEvent.change(screen.getByLabelText('吸烟状态'), { target: { value: 'current' } })
+    const user = userEvent.setup()
+    await chooseSelectOption(user, 'Killip 分级', 'Killip II')
+    await chooseSelectOption(user, '吸烟状态', '当前吸烟')
     fireEvent.click(screen.getByRole('button', { name: '保存风险评估' }))
 
     await waitFor(() => {
@@ -196,8 +207,8 @@ describe('ClinicalScoresPanel disclosures', () => {
     })
 
     // Switching directly between two cached cases with identical revision (both 0) must reset unsaved/prior case form values
-    fireEvent.change(screen.getByLabelText('Killip 分级'), { target: { value: 'IV' } })
-    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('IV')
+    await chooseSelectOption(user, 'Killip 分级', 'Killip IV')
+    expect(screen.getByRole('combobox', { name: 'Killip 分级' }).textContent).toContain('Killip IV')
     rerender(
       <QueryClientProvider client={client}>
         <OutpatientClinicalScoresDisclosure
@@ -211,8 +222,8 @@ describe('ClinicalScoresPanel disclosures', () => {
         />
       </QueryClientProvider>,
     )
-    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('')
-    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).disabled).toBe(true)
+    expect(screen.getByRole('combobox', { name: 'Killip 分级' }).textContent).toContain('未记录')
+    expect((screen.getByRole('combobox', { name: 'Killip 分级' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('records inpatient nursing vital signs and risk assessment via InpatientVitalsAndScoresDisclosure and localizes PatientVitals weight/height', async () => {
@@ -339,8 +350,11 @@ describe('ClinicalScoresPanel disclosures', () => {
       expect(screen.getAllByText('待补齐：血清肌酐')).toHaveLength(6)
     })
 
-    expect(screen.getByRole('option', { name: '有自发性出血（需医疗救治/干预）' })).toBeTruthy()
-    fireEvent.change(screen.getByLabelText('既往自发性出血史'), { target: { value: 'spontaneous' } })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('combobox', { name: '既往自发性出血史' }))
+    const spontaneousOption = await screen.findByRole('option', { name: '有自发性出血（需医疗救治/干预）' })
+    expect(spontaneousOption).toBeTruthy()
+    await user.click(spontaneousOption)
     fireEvent.click(screen.getByRole('button', { name: '保存风险评估' }))
     await waitFor(() => {
       expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({
@@ -441,13 +455,14 @@ describe('ClinicalScoresPanel disclosures', () => {
     const details = screen.getByText('专病风险评估与临床评分').closest('details')!
     details.open = true
     fireEvent(details, new Event('toggle'))
+    const user = userEvent.setup()
     await waitFor(() => {
-      expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('I')
+      expect(screen.getByRole('combobox', { name: 'Killip 分级' }).textContent).toContain('Killip I')
     })
 
     // Clinician edits Killip I -> II locally (dirty = true, baseRevision = 1)
-    fireEvent.change(screen.getByLabelText('Killip 分级'), { target: { value: 'II' } })
-    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('II')
+    await chooseSelectOption(user, 'Killip 分级', 'Killip II')
+    expect(screen.getByRole('combobox', { name: 'Killip 分级' }).textContent).toContain('Killip II')
 
     // Another clinician saves revision 2 (Killip III) and triggers background refetch
     remoteRevision = 2
@@ -470,7 +485,7 @@ describe('ClinicalScoresPanel disclosures', () => {
       expect(screen.getByText(/远端已有更新记录 #2/)).toBeTruthy()
     })
     // Unsaved dirty draft Killip II is preserved rather than clobbered with III
-    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('II')
+    expect(screen.getByRole('combobox', { name: 'Killip 分级' }).textContent).toContain('Killip II')
 
     // Clicking Save submits base expectedRevision: 1 so backend CAS surfaces 409 conflict
     fireEvent.click(screen.getByRole('button', { name: '保存风险评估' }))
@@ -489,7 +504,7 @@ describe('ClinicalScoresPanel disclosures', () => {
 
     // Clinician can explicitly discard stale draft to sync remote #2 and clear the conflict alert
     fireEvent.click(screen.getByRole('button', { name: '放弃草稿并同步' }))
-    expect((screen.getByLabelText('Killip 分级') as HTMLSelectElement).value).toBe('III')
+    expect(screen.getByRole('combobox', { name: 'Killip 分级' }).textContent).toContain('Killip III')
     await waitFor(() => {
       expect(screen.queryByText(/当前业务状态或前置条件不满足/)).toBeNull()
     })

@@ -34,7 +34,7 @@ export function DoctorCompletionActionBar({ action, basisCurrent, locale, messag
               : <span className="truncate font-medium text-warning">{`⚠ ${zh ? `还差 ${incomplete.length} 项才能完诊：` : 'Required: '}${incomplete.map(item => encounterCompletionItemLabel(item.code, locale)).join(zh ? '、' : ', ')}`}</span>}
       action={canComplete ? <>
         <Button disabled={action.pending} onClick={onBack} size="sm" type="button" variant="outline">{zh ? '返回' : 'Back'}</Button>
-        <Button ref={confirm} disabled={action.pending} onClick={() => action.onSubmit()} size="sm" type="button">
+        <Button data-agent-confirm={messages.confirmEncounterCompletion} ref={confirm} disabled={action.pending} onClick={() => action.onSubmit()} size="sm" type="button">
           {messages.confirmEncounterCompletion}
         </Button>
       </> : first === undefined ? <Button onClick={onBack} size="sm" type="button" variant="outline">{zh ? '返回核对' : 'Review again'}</Button> : <>

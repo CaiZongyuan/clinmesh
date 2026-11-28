@@ -172,7 +172,10 @@ it('药师选中患者后保留窄住院上下文，显示发药后交接给护�
   expect(screen.getAllByText('合成氨氯地平').length).toBeGreaterThan(0)
   expect(screen.getByRole('combobox', { name: /^发药批次：合成氨氯地平/ }).textContent).toContain('库存批次 1')
   expect(screen.getByRole('combobox', { name: /^发药批次：合成氨氯地平/ }).textContent).toContain('10片')
-  expect(document.body.textContent).not.toContain('lot-internal-1')
+  expect(screen.queryByText(/lot-internal-1/, { selector: ':not([data-slot="select-form-input"])' })).toBeNull()
+  for (const input of document.querySelectorAll('[data-slot="select-form-input"]')) {
+    expect(input.getAttribute('aria-hidden')).toBe('true')
+  }
   expect(screen.getByText('药师发药', { selector: 'strong' }).parentElement?.textContent).toContain('护士校对 › 药师发药 › 护士给药')
   expect(screen.queryByRole('button', { name: '给药' })).toBeNull()
   const allergies = await screen.findByRole('region', { name: '药物过敏提示' })

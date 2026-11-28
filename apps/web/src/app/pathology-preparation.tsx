@@ -125,7 +125,7 @@ export function PatientPathologyPreparation({ caseId, locale }: { caseId: string
     },
   })
   return (
-    <details className="border-t p-4" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
+    <details className="border-t p-4" data-agent-hidden="" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
       <summary className="cursor-pointer text-sm font-semibold">{zh ? '病理准备' : 'Pathology preparation'}</summary>
       {open ? (
         <div className="mt-3">
@@ -267,7 +267,7 @@ export function PathologyCoveragePanel({ locale }: { locale: WorkspaceLocale }) 
     </div>
   )
   return (
-    <details className="min-w-0" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
+    <details className="min-w-0" data-agent-hidden="" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open) }} open={open}>
       <summary className="cursor-pointer text-sm font-semibold">{zh ? '病理覆盖清单' : 'Pathology coverage'}</summary>
       {open ? (
         <div className="mt-3">

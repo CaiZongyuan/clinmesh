@@ -34,15 +34,15 @@ export function InpatientTransfers({admission,session,locale,write}:Props&{admis
       <FieldSet disabled={blocked}><FieldLegend>{t('申请转科','Request transfer')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
         <Field><FieldLabel htmlFor="inpatient-transfer-ward">{t('转入病区','Target ward')}</FieldLabel><WorkspaceSelect id="inpatient-transfer-ward" value={targetWardId} onValueChange={setTargetWardId} items={(catalog.data?.wards??[]).filter(ward=>ward.id!==admission.wardId).map(ward=>({value:ward.id,label:ward.name}))}/></Field>
         <Field><FieldLabel htmlFor="inpatient-transfer-reason">{t('转科理由','Transfer reason')}</FieldLabel><Input id="inpatient-transfer-reason" value={reason} onChange={event=>setReason(event.currentTarget.value)} required maxLength={2000}/></Field>
-        <Button type="submit" disabled={blocked||!targetWardId||!reason.trim()||facts.data?.transfers.some(transfer=>['requested','handed-over'].includes(transfer.status))}>{t('申请转科','Request transfer')}</Button>
+        <Button type="submit" data-agent-confirm={t('确认申请转科', 'Confirm ward transfer request')} disabled={blocked||!targetWardId||!reason.trim()||facts.data?.transfers.some(transfer=>['requested','handed-over'].includes(transfer.status))}>{t('申请转科','Request transfer')}</Button>
       </FieldGroup></FieldSet>
     </form>:null}
     {facts.data?.transfers.map(transfer=>{
       const input={admissionId:admission.id,encounterVersion:admission.versionId,transferId:transfer.id,expectedTransferVersion:transfer.version}
       return <article key={transfer.id} className="flex flex-col gap-2 rounded-md border bg-card p-3">
         <p>{catalog.data?.wards.find(ward=>ward.id===transfer.sourceWardId)?.name} → {catalog.data?.wards.find(ward=>ward.id===transfer.targetWardId)?.name} · {{requested:t('待原科交接','Awaiting source handover'),'handed-over':t('待目标科接收','Awaiting target receipt'),completed:t('已接收','Received'),cancelled:t('已取消','Cancelled')}[transfer.status]}</p><p>{transfer.reason}</p>
-        {nurse&&transfer.status==='requested'?<Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.transfer.handover',input})}>{t('完成原科交接','Complete source handover')}</Button>:null}
-        {doctor&&['requested','handed-over'].includes(transfer.status)?<Button variant="outline" disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.transfer.cancel',input})}>{t('取消转科申请','Cancel transfer')}</Button>:null}
+        {nurse&&transfer.status==='requested'?<Button data-agent-confirm={t('确认完成原科交接', 'Confirm source ward handover')} disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.transfer.handover',input})}>{t('完成原科交接','Complete source handover')}</Button>:null}
+        {doctor&&['requested','handed-over'].includes(transfer.status)?<Button variant="outline" data-agent-confirm={t('确认取消转科申请', 'Confirm cancelling transfer request')} disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.transfer.cancel',input})}>{t('取消转科申请','Cancel transfer')}</Button>:null}
       </article>
     })}
     {facts.data?.transfers.length===0?<p>{t('暂无转科记录','No transfers')}</p>:null}
@@ -62,7 +62,7 @@ export function InpatientIncomingTransfers({session,locale,write}:Props) {
       {item.transfer.status==='requested'?<p>{zh?'等待原科护士完成交接':'Awaiting source nurse handover'}</p>:<FieldSet disabled={write.blocked}><FieldGroup>
         <Field><FieldLabel htmlFor={`inpatient-transfer-bed-${item.transfer.id}`}>{zh?'转科接收床位':'Transfer receiving bed'}</FieldLabel><WorkspaceSelect id={`inpatient-transfer-bed-${item.transfer.id}`} value={beds[item.transfer.id]??null}
           onValueChange={value=>setBeds(current=>({...current,[item.transfer.id]:value}))} items={(catalog.data?.beds??[]).filter(bed=>bed.wardId===item.transfer.targetWardId&&bed.available).map(bed=>({value:bed.id,label:bed.name}))}/></Field>
-        <Button disabled={write.blocked||!beds[item.transfer.id]} onClick={()=>{const bedId=beds[item.transfer.id];if(bedId)write.mutation.mutate({operation:'inpatient.transfer.receive',input:{admissionId:item.admissionId,encounterVersion:item.encounterVersion,transferId:item.transfer.id,expectedTransferVersion:item.transfer.version,bedId}})}}>{zh?'接收转科并分床':'Receive transfer and assign bed'}</Button>
+        <Button data-agent-confirm={zh ? '确认接收转科并分床' : 'Confirm receiving transfer and assigning bed'} disabled={write.blocked||!beds[item.transfer.id]} onClick={()=>{const bedId=beds[item.transfer.id];if(bedId)write.mutation.mutate({operation:'inpatient.transfer.receive',input:{admissionId:item.admissionId,encounterVersion:item.encounterVersion,transferId:item.transfer.id,expectedTransferVersion:item.transfer.version,bedId}})}}>{zh?'接收转科并分床':'Receive transfer and assign bed'}</Button>
       </FieldGroup></FieldSet>}
     </article>)}
     {incoming.data?.items.length===0?<p>{zh?'暂无待接收转科':'No incoming transfers'}</p>:null}

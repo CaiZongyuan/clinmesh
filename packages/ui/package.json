@@ -20,12 +20,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@base-ui/react": "catalog:",
-    "@shadcn/react": "catalog:",
+    "@ui-sdk/core": "catalog:",
+    "@ui-sdk/react": "catalog:",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
     "lucide-react": "catalog:",
-    "shadcn": "catalog:",
     "tailwind-merge": "catalog:",
     "tw-animate-css": "catalog:"
   },

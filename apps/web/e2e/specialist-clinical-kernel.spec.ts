@@ -120,8 +120,10 @@ test('专病临床内核最小前端入口回归：五例病例包准备、住�
   // Clinical risk assessment & score display
   await openInpatientDisclosure(page, '专病风险评估与临床评分')
   await expect(page.getByText('CKD-EPI 2021 估算肾小球滤过率 (eGFR)')).toBeVisible()
-  await page.getByLabel('Killip 分级').selectOption('I')
-  await page.getByLabel('吸烟状态').selectOption('former')
+  await page.getByRole('combobox', { name: 'Killip 分级', exact: true }).click()
+  await page.getByRole('option', { name: 'Killip I', exact: true }).click()
+  await page.getByRole('combobox', { name: '吸烟状态', exact: true }).click()
+  await page.getByRole('option', { name: '既往戒烟', exact: true }).click()
   await page.getByRole('button', { name: '保存风险评估', exact: true }).click()
   await expect.poll(async () => {
     const res = await page.request.get(`${origin}/api/his/v1/inpatient/admissions/${startedIp.admissionId}/clinical-scores`)
@@ -131,8 +133,9 @@ test('专病临床内核最小前端入口回归：五例病例包准备、住�
 
   // Guideline topic display (zero AI call)
   await openInpatientDisclosure(page, '循证指南专题与参考意见')
-  await expect(page.getByLabel('指南专题')).toBeVisible()
-  await page.getByLabel('指南专题').selectOption('acute-chest-pain-acs')
+  await expect(page.getByRole('combobox', { name: '指南专题', exact: true })).toBeVisible()
+  await page.getByRole('combobox', { name: '指南专题', exact: true }).click()
+  await page.getByRole('option', { name: '急性胸痛与 ACS 危险分层', exact: true }).click()
   const topicCard = page.getByLabel('同步原文与客观指标核对', { exact: true })
   await expect(topicCard).toContainText('急性胸痛与急性冠脉综合征急诊评估与介入时机')
   await expect(topicCard).toContainText('当前患者客观指标')

@@ -145,7 +145,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
       </DischargeChecklist>
       <FieldSet disabled={write.blocked}><FieldGroup>{noteField}
         <InpatientClinicalQualityBanner admissionId={admission.id} locale={locale} onSubmitOverride={override => action('inpatient.discharge.issue', override)} operation="inpatient.discharge.issue" pending={blocked || issueBlocked} write={write} />
-        <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={issueBlocked ? t('请先完成或取消未收口的手术、检查检验或转科申请。', 'Complete or cancel outstanding surgery, investigation or transfer requests first.') : noteMissing ?? t('开立后由病区护士办理出院', 'The ward nurse records departure next')} tone={blocked || issueBlocked ? 'blocked' : 'normal'} action={<Button disabled={blocked || issueBlocked} onClick={() => action('inpatient.discharge.issue')}>{t('开出院医嘱','Issue discharge order')}</Button>} /></InpatientPrimaryAction>
+        <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={issueBlocked ? t('请先完成或取消未收口的手术、检查检验或转科申请。', 'Complete or cancel outstanding surgery, investigation or transfer requests first.') : noteMissing ?? t('开立后由病区护士办理出院', 'The ward nurse records departure next')} tone={blocked || issueBlocked ? 'blocked' : 'normal'} action={<Button data-agent-confirm={t('开出院医嘱', 'Issue discharge order')} disabled={blocked || issueBlocked} onClick={() => action('inpatient.discharge.issue')}>{t('开出院医嘱','Issue discharge order')}</Button>} /></InpatientPrimaryAction>
       </FieldGroup></FieldSet>
     </> : null}
     {admission.status === 'discharge-pending' ? <>
@@ -197,7 +197,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
           : t('原床未保留，不能召回。', 'The original bed is no longer held, so recall is unavailable.')}</p>
         {canRecall && recallOpen ? <FieldSet disabled={write.blocked}>{requiredArea('inpatient-recall-reason', t('召回理由','Recall reason'), recallReason, setRecallReason, t('例如：离院后胸痛复发，返回病区观察', 'For example: chest pain recurred after departure'), t('召回后患者回到原床「在院」状态，出院医嘱需要重新开立。', 'The patient returns to the original bed as admitted; discharge must be ordered again.'))}
           <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar tone={recallReason.trim() ? 'normal' : 'blocked'} reason={recallReason.trim() ? t('召回后患者回到原床，出院医嘱需要重新开立', 'The patient returns to the original bed') : t('还差：召回理由', 'Enter a recall reason')}
-            action={<><Button variant="outline" onClick={() => setRecallOpen(false)}>{t('取消', 'Cancel')}</Button><Button variant="destructive" disabled={write.blocked || !recallReason.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.discharge.recall', input: { admissionId: admission.id, encounterVersion: admission.versionId, reason: recallReason } })}>{t('确认召回住院', 'Confirm recall')}</Button></>} /></InpatientPrimaryAction>
+            action={<><Button variant="outline" onClick={() => setRecallOpen(false)}>{t('取消', 'Cancel')}</Button><Button data-agent-confirm={t('确认召回住院', 'Confirm inpatient recall')} variant="destructive" disabled={write.blocked || !recallReason.trim()} onClick={() => write.mutation.mutate({ operation: 'inpatient.discharge.recall', input: { admissionId: admission.id, encounterVersion: admission.versionId, reason: recallReason } })}>{t('确认召回住院', 'Confirm recall')}</Button></>} /></InpatientPrimaryAction>
         </FieldSet> : <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar showWithoutAction reason={t('患者已离院，等收费员结算', 'Patient has departed; waiting for cashier settlement')} /></InpatientPrimaryAction>}
       </section> : <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={t('已结算，等病区护士清床；病案首页可以提前核对', 'Settled, waiting for ward nurse to clear bed; medical record can be reviewed')}
         action={onOpenStage ? <Button variant="outline" onClick={() => onOpenStage('record')}>{t('去病案首页', 'Open medical record')}</Button> : undefined} /></InpatientPrimaryAction>}
@@ -234,7 +234,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
     </> : null}
     {nurse && admission.status === 'departed' ? <p className="text-sm text-muted-foreground">{t('结算前且原床保留时，可由住院医生召回；结算后召回窗口关闭，清床后停止床位占用。', 'The inpatient doctor can recall an unsettled departure while the original bed is held. Settlement closes recall; bed clearance ends occupancy.')}</p> : null}
     {nurse && admission.status === 'cleared' ? <>
-      <div role="status" className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+      <div role="status" className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-medium text-success">
         <CheckCircle2Icon aria-hidden="true" className="size-4 shrink-0" />
         <span>{t('已完成清床，原床位已释放为空床', 'Bed cleared and released as empty')}</span>
       </div>
@@ -243,7 +243,7 @@ export function InpatientDischarge({ admission, session, locale, write, activity
     {nurse && admission.status !== 'cleared' ? <FieldSet disabled={write.blocked}><FieldGroup>
       {!(needsDischargeOrder || departureBlocked) ? <>
         {admission.status === 'departed' && admission.financialStatus === 'settled' ? <div role="group" aria-label={t('常用清床理由', 'Common bed clearance notes')} className="flex flex-wrap gap-1.5">
-          {clearPresets.map(preset => <button key={preset} type="button" aria-pressed={effectiveReason === preset} onClick={() => setReason(preset)} className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${effectiveReason === preset ? 'border-info/50 bg-accent font-medium text-accent-foreground' : 'border-border bg-background text-foreground hover:bg-muted'}`}>{preset}</button>)}
+          {clearPresets.map(preset => <Button key={preset} type="button" variant="outline" size="xs" aria-pressed={effectiveReason === preset} onClick={() => setReason(preset)} className={`h-auto rounded-full px-2.5 py-0.5 text-xs ${effectiveReason === preset ? 'border-info/50 bg-accent font-medium text-accent-foreground hover:bg-accent' : 'border-border bg-background font-normal text-foreground hover:bg-muted'}`}>{preset}</Button>)}
         </div> : null}
         <Field><FieldLabel htmlFor="inpatient-discharge-reason">{t('出院处理说明','Discharge note')}</FieldLabel><Input id="inpatient-discharge-reason" value={effectiveReason} onChange={event => setReason(event.currentTarget.value)} /></Field>
       </> : null}
@@ -252,9 +252,9 @@ export function InpatientDischarge({ admission, session, locale, write, activity
           onValueChange={value => { if (value && value in methods) setMethod(value as z.infer<typeof inpatientDepartureMethodSchema>) }} /></Field> : null}
       <div className="flex flex-wrap gap-2">
         {needsDischargeOrder ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={missing} tone="blocked" action={<Button disabled>{t('办理出院', 'Record departure')}</Button>} /></InpatientPrimaryAction> : null}
-        {admission.status === 'discharge-pending' ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={missing} tone={blocked || departureBlocked || method === null ? 'blocked' : 'normal'} action={<Button disabled={blocked || method === null || departureBlocked} onClick={() => { if (method) write.mutation.mutate({ operation: 'inpatient.discharge.depart',
+        {admission.status === 'discharge-pending' ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={missing} tone={blocked || departureBlocked || method === null ? 'blocked' : 'normal'} action={<Button data-agent-confirm={t('确认办理出院', 'Confirm patient departure')} disabled={blocked || method === null || departureBlocked} onClick={() => { if (method) write.mutation.mutate({ operation: 'inpatient.discharge.depart',
           input: { admissionId: admission.id, encounterVersion: admission.versionId, reason: effectiveReason, departureMethod: method } }) }}>{t('办理出院','Record departure')}</Button>} /></InpatientPrimaryAction> : null}
-        {admission.status === 'departed' ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={missing ?? t('确认患者已离开病区且床单元整理完毕', 'Confirm the patient has departed and the bed unit is ready')} tone={blocked || admission.financialStatus !== 'settled' ? 'blocked' : 'normal'} action={<Button disabled={blocked || admission.financialStatus !== 'settled'} onClick={() => action('inpatient.discharge.clear')}>{t('清床','Clear bed')}</Button>} /></InpatientPrimaryAction> : null}
+        {admission.status === 'departed' ? <InpatientPrimaryAction stage="discharge"><WorkspaceActionBar reason={missing ?? t('确认患者已离开病区且床单元整理完毕', 'Confirm the patient has departed and the bed unit is ready')} tone={blocked || admission.financialStatus !== 'settled' ? 'blocked' : 'normal'} action={<Button data-agent-confirm={t('确认清床', 'Confirm bed clearance')} disabled={blocked || admission.financialStatus !== 'settled'} onClick={() => action('inpatient.discharge.clear')}>{t('清床','Clear bed')}</Button>} /></InpatientPrimaryAction> : null}
       </div>
     </FieldGroup></FieldSet> : null}
     {events.error ? <p role="alert">{getWorkspaceErrorMessage(events.error,getWorkspaceMessages(locale))}</p> : null}
@@ -301,7 +301,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
   const previewAction = <Button ref={confirmation.triggerRef} variant="outline" disabled={preview.isFetching || admission.status !== 'departed'} onClick={() => { confirmation.captureTrigger(); void preview.refetch() }}>{data ? t('重新预览结算', 'Refresh settlement preview') : t('预览结算', 'Preview settlement')}</Button>
   if (admission.financialStatus === 'settled') return <div className="flex flex-col gap-3">
     {steps}
-    <div role="status" className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
+    <div role="status" className="flex items-center gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm font-medium text-success">
       <CheckCircle2Icon aria-hidden="true" className="size-4 shrink-0" />
       <span>{admission.status === 'cleared' ? t('已结算并清床','Settled and bed cleared') : t('已结算，等待病区清床','Settled; awaiting bed clearance')}</span>
       {(funds.data?.refundedFen ?? 0) > 0 ? <span>{t(`· 应退 ${formatFen(funds.data!.refundedFen, locale)}`, `· Refunded ${formatFen(funds.data!.refundedFen, locale)}`)}</span> : null}
@@ -311,7 +311,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
         [t('费用合计', 'Total charges'), formatFen(admission.chargesFen, locale), 'tabular-nums'],
         [t('已交预交金', 'Deposits'), formatFen(admission.depositFen, locale), 'tabular-nums'],
         [t('已收出院补交', 'Supplement collected'), formatFen(funds.data?.payments.filter(p => p.kind === 'supplement' && p.outcome === 'success').reduce((s, p) => s + p.amountFen, 0) ?? 0, locale), 'tabular-nums'],
-        [t('结算结果', 'Settlement result'), (funds.data?.refundedFen ?? 0) > 0 ? t(`已退还 ${formatFen(funds.data!.refundedFen, locale)}`, `Refunded ${formatFen(funds.data!.refundedFen, locale)}`) : t('无需补退', 'No balance due'), 'text-emerald-700 dark:text-emerald-400'],
+        [t('结算结果', 'Settlement result'), (funds.data?.refundedFen ?? 0) > 0 ? t(`已退还 ${formatFen(funds.data!.refundedFen, locale)}`, `Refunded ${formatFen(funds.data!.refundedFen, locale)}`) : t('无需补退', 'No balance due'), 'text-success'],
       ].map(([dt, dd, cls]) => <div key={dt}><dt className="text-xs text-muted-foreground">{dt}</dt><dd className={`mt-0.5 font-semibold ${cls}`}>{dd}</dd></div>)}
     </dl>
     <InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} write={write} />
@@ -345,7 +345,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
         : (funds.data?.pendingCount ?? 0) > 0 ? t('等收费员查明原支付结果。', 'Waiting for the cashier to resolve the original payment.')
           : reviewing ? t('确认后本次结算入账，随后由病区护士清床；账目变化须重新预览。', 'Confirmation records this settlement, then the ward nurse clears the bed. Ledger changes require a fresh preview.') : (funds.data?.remainingFen ?? 0) < 0 ? t('先核对结算和应退金额，再按原款办理退款。', 'Review settlement and the refundable amount, then refund the original collection.') : t('先预览结算，再核对并确认。', 'Preview settlement, then review and confirm.')}
       action={reviewing && data ? <><Button variant="outline" disabled={write.mutation.isPending || preview.isFetching} onClick={() => setDismissedAt(preview.dataUpdatedAt)}>{t('返回', 'Back')}</Button>
-        <Button ref={confirmation.confirmRef} disabled={write.blocked || preview.isFetching || admission.status !== 'departed' || data.status !== 'departed' || funds.isPending || !!funds.error || (funds.data?.pendingCount ?? 0) > 0}
+        <Button data-agent-confirm={t('确认住院结算', 'Confirm inpatient settlement')} ref={confirmation.confirmRef} disabled={write.blocked || preview.isFetching || admission.status !== 'departed' || data.status !== 'departed' || funds.isPending || !!funds.error || (funds.data?.pendingCount ?? 0) > 0}
           onClick={() => write.mutation.mutate({ operation: 'inpatient.discharge.settle', input: { admissionId: admission.id, encounterVersion: data.encounterVersion,
             fingerprint: data.fingerprint, expectedChargesFen: data.chargesFen, expectedBalanceFen: data.balanceFen } })}>{t('确认结算', 'Confirm settlement')}</Button></>
         : previewAction} />

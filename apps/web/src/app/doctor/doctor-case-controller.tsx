@@ -67,7 +67,7 @@ function DoctorWorkspaceScope({ locale, session }: DoctorWorkspaceProps): React.
   const waitingQueue = useQuery({ queryKey: ['doctor-queue', ...scope, 'waiting', 1], queryFn: ({ signal }) => getDoctorQueue(signal, 1, 'waiting') })
   const completedQueue = useQuery({ queryKey: ['doctor-completed-cases', ...scope, {}, 1], queryFn: ({ signal }) => getDoctorCompletedCases({}, signal) })
   const queueTabClassName = cn(
-    'min-w-0 gap-1 px-1 dark:data-active:bg-background dark:data-active:text-foreground dark:data-active:shadow-xs',
+    'min-w-0 gap-1 px-1 dark:data-selected:bg-background dark:data-selected:text-foreground dark:data-selected:shadow-xs',
     locale === 'en-US' && 'h-auto flex-col whitespace-normal',
   )
   const queueLabelClassName = locale === 'en-US' ? 'min-w-0 max-w-full wrap-anywhere whitespace-normal' : undefined

@@ -269,10 +269,10 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
           return (
             <section className="border-b" key={group.businessDate}>
               <h5>
-                <button
+                <Button
                   aria-controls={contentId}
                   aria-expanded={expanded}
-                  className="flex min-h-[44px] w-full items-center gap-2 bg-muted/30 px-3 py-[12px] text-left text-xs font-semibold text-muted-foreground hover:bg-muted/50"
+                  className="h-auto min-h-[44px] w-full justify-start gap-2 rounded-none border-0 bg-muted/30 px-3 py-[12px] text-left text-xs font-semibold whitespace-normal text-muted-foreground hover:bg-muted/50"
                   onClick={() => {
                     setSelection(undefined)
                     setExpandedDates((current) => {
@@ -283,8 +283,9 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
                     })
                   }}
                   type="button"
+                  variant="ghost"
                 >
-                  <ChevronRightIcon className={cn('size-4 transition-transform', expanded && 'rotate-90')} />
+                  <ChevronRightIcon aria-hidden="true" className={cn('size-4 transition-transform', expanded && 'rotate-90')} />
                   <span className="min-w-0 flex-1">
                     <span className="block">{group.businessDate}</span>
                     <span className="mt-1 block break-words text-sm font-medium text-foreground">{titles.slice(0, 3).join(' · ')}{titles.length > 3 ? ' …' : ''}</span>
@@ -292,14 +293,14 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
                   <span className="font-normal">
                     {translationCount(messages.historyEntries, group.items.length)}
                   </span>
-                </button>
+                </Button>
               </h5>
               {expanded ? (
                 <div className="divide-y" id={contentId}>
                   {group.items.map(item => (
-                    <button
+                    <Button
                       className={cn(
-                        'grid w-full grid-cols-[minmax(0,1fr)_24px] items-center gap-3 py-3 pl-9 pr-3 text-left',
+                        'grid h-auto w-full grid-cols-[minmax(0,1fr)_24px] items-center gap-3 rounded-none border-0 py-3 pl-9 pr-3 text-left font-normal whitespace-normal',
                         selectedReference === item.sourceReference && 'bg-muted/50',
                       )}
                       key={item.sourceReference}
@@ -313,6 +314,7 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
                         })
                       }}
                       type="button"
+                      variant="ghost"
                     >
                       <span className="min-w-0">
                         <strong className="block truncate text-sm">{sourceHistoryTitle(item, locale)}</strong>
@@ -320,8 +322,8 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
                           {item.resourceType}
                         </span>
                       </span>
-                      <ChevronRightIcon className="size-4 text-muted-foreground" />
-                    </button>
+                      <ChevronRightIcon aria-hidden="true" className="size-4 text-muted-foreground" />
+                    </Button>
                   ))}
                 </div>
               ) : null}

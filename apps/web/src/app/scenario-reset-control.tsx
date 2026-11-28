@@ -59,7 +59,7 @@ export function ScenarioResetControl({ disabled, error, locale, onReset, pending
           {error === null ? null : <Alert variant="destructive"><AlertTitle>{zh ? '重置失败' : 'Reset failed'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert>}
           <AlertDialogFooter>
             <AlertDialogCancel>{zh ? '取消' : 'Cancel'}</AlertDialogCancel>
-            <Button disabled={pending} onClick={() => void confirm()} variant="destructive">{pending ? (zh ? '正在重置…' : 'Resetting…') : (zh ? '确认重置' : 'Confirm reset')}</Button>
+            <Button data-agent-confirm={zh ? '确认重置场景数据' : 'Confirm scenario data reset'} disabled={pending} onClick={() => void confirm()} variant="destructive">{pending ? (zh ? '正在重置…' : 'Resetting…') : (zh ? '确认重置' : 'Confirm reset')}</Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

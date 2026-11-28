@@ -76,7 +76,7 @@ export function InpatientDrgPayer({ admission, session, locale, write, onBeforeR
   ]
   return <section aria-label={t('医保办 DRG 复核', 'DRG payer review')} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
     {!archived ? <Alert><AlertDescription>{t('病案尚未归档，归档后才能读取固定分组并模拟核定。', 'Archive the medical record before reviewing fixed grouping and simulating assessment.')}</AlertDescription></Alert> : null}
-    {(completedHere || (hasReviews && !reassessing)) && !review ? <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
+    {(completedHere || (hasReviews && !reassessing)) && !review ? <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm font-medium text-success">
       <span>✓ {t('已完成模拟核定，记录已进入历次模拟核定与差异', 'Simulated assessment completed and recorded in history')}</span>
       {insurer && (hasReviews || completedHere) && !reassessing ? <Button type="button" variant="outline" size="xs" onClick={() => setReassessing(true)}>{t('重新发起模拟核定', 'Start a new assessment')}</Button> : null}
     </div> : null}

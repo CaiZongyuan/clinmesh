@@ -1,5 +1,9 @@
-import { mergeProps } from "@base-ui/react/merge-props"
-import { useRender } from "@base-ui/react/use-render"
+import * as React from "react"
+import {
+  mergeProps,
+  renderElement,
+  type RenderProp,
+} from "@ui-sdk/react/primitive"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "#lib/utils"
@@ -18,8 +22,7 @@ const badgeVariants = cva(
           "bg-success/15 text-success focus-visible:ring-success/20 [a]:hover:bg-success/25",
         warning:
           "bg-warning/15 text-warning focus-visible:ring-warning/30 [a]:hover:bg-warning/25",
-        info:
-          "bg-info/15 text-info focus-visible:ring-info/20 [a]:hover:bg-info/25",
+        info: "bg-info/15 text-info focus-visible:ring-info/20 [a]:hover:bg-info/25",
         outline:
           "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost:
@@ -33,26 +36,34 @@ const badgeVariants = cva(
   }
 )
 
+type BadgeState = {
+  slot: "badge"
+  variant: NonNullable<VariantProps<typeof badgeVariants>["variant"]>
+}
+
 function Badge({
   className,
   variant = "default",
   render,
   ...props
-}: useRender.ComponentProps<"span"> & VariantProps<typeof badgeVariants>) {
-  return useRender({
-    defaultTagName: "span",
-    props: mergeProps<"span">(
+}: React.ComponentProps<"span"> &
+  VariantProps<typeof badgeVariants> & {
+    render?: RenderProp<BadgeState> | undefined
+  }) {
+  const resolvedVariant = variant ?? "default"
+  return renderElement(
+    "span",
+    mergeProps(
       {
-        className: cn(badgeVariants({ variant }), className),
+        "data-slot": "badge",
+        "data-variant": resolvedVariant,
+        className: cn(badgeVariants({ variant: resolvedVariant }), className),
       },
       props
     ),
     render,
-    state: {
-      slot: "badge",
-      variant,
-    },
-  })
+    { slot: "badge", variant: resolvedVariant }
+  )
 }
 
 export { Badge, badgeVariants }

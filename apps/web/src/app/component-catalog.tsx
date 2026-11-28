@@ -192,7 +192,7 @@ function FoundationShowcase({ messages }: { messages: ComponentCatalogMessages }
           </Toggle>
         </div>
         <Tabs className="w-full" defaultValue="summary">
-          <TabsList variant="line">
+          <TabsList aria-label={messages.patientSummaryHeading} variant="line">
             <TabsTrigger value="summary">{messages.patientSummaryHeading}</TabsTrigger>
             <TabsTrigger value="progress">{messages.workflowProgress}</TabsTrigger>
           </TabsList>

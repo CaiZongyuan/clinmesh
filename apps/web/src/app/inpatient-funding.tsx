@@ -61,7 +61,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
   const shortTime = (iso: string) => formatShanghaiMinute(iso).slice(5)
   return <section aria-label={t('住院收退款','Inpatient funding')} className="flex min-w-0 flex-col gap-3">
     <h3 className="font-bold">{t('住院收退款','Inpatient funding')}</h3>
-    {supplementCompleted && lastSupplement ? <div role="status" className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
+    {supplementCompleted && lastSupplement ? <div role="status" className="flex items-center gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm font-medium text-success">
       ✓ {t(`已收出院补交 ${formatFen(lastSupplement.amountFen, locale)}（${formatTenders(lastSupplement.tenders)} · ${shortTime(lastSupplement.createdAt)}），可继续预览并确认出院结算`, `Departure supplement ${formatFen(lastSupplement.amountFen, locale)} collected; ready to preview and confirm settlement`)}
     </div> : null}
     <div className="flex flex-col gap-2 rounded-md border bg-card px-3 py-2 text-sm">
@@ -178,7 +178,7 @@ export function InpatientFunding({ admission, locale, write, statement, collect 
           else if (refund) write.mutation.mutate({ operation: 'inpatient.refund.recover', input: { admissionId: admission.id, refundId: refund.refundId, expectedRefundVersion: refund.version } })
         }}>{t('查询原支付结果', 'Query original payment result')}</Button>
           : payPreview || refundPreview ? <><Button variant="outline" disabled={write.mutation.isPending} onClick={() => write.mutation.reset()}>{t('返回', 'Back')}</Button>
-            <Button ref={confirmation.confirmRef} disabled={blocked} onClick={() => {
+            <Button data-agent-confirm={payPreview ? t('确认住院收款', 'Confirm inpatient payment') : t('确认住院退款', 'Confirm inpatient refund')} ref={confirmation.confirmRef} disabled={blocked} onClick={() => {
               if (payPreview) write.mutation.mutate({ operation: 'inpatient.payment.confirm', input: { admissionId: admission.id, previewId: payPreview.previewId, commitToken: payPreview.commitToken } })
               else if (refundPreview) write.mutation.mutate({ operation: 'inpatient.refund.confirm', input: { admissionId: admission.id, previewId: refundPreview.previewId, commitToken: refundPreview.commitToken } })
             }}>{payPreview ? t('确认收款', 'Confirm collection') : t('确认退款', 'Confirm refund')}</Button></>

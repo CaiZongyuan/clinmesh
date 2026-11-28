@@ -5,6 +5,7 @@ import type { InpatientCosts, InpatientDrgSimulation } from '@clinmesh/contracts
 import { ChevronRightIcon } from 'lucide-react'
 import { useId, type ReactNode } from 'react'
 import { Badge } from '@clinmesh/ui/components/badge'
+import { Button } from '@clinmesh/ui/components/button'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { drgGroupingStatusLabel } from './inpatient-drg-summary.tsx'
@@ -40,10 +41,10 @@ export function DrgProgressBar({ data, costs, locale, onOpenDrg }: {
 /** 患者头部姓名行右侧的小条：常驻状态、病组、进度与余额；完整金额在悬停说明与无障碍描述里。 */
 function ProgressChip({ locale, onOpenDrg, detail, over, children }: { locale: WorkspaceLocale; onOpenDrg(): void; detail: string; over?: boolean; children: ReactNode }) {
   const id = useId()
-  return <button type="button" className="clinmesh-inpatient-drg-progress" data-over={over || undefined} title={detail} aria-describedby={id}
+  return <Button type="button" variant="ghost" className="clinmesh-inpatient-drg-progress h-auto rounded-md font-normal" data-over={over || undefined} title={detail} aria-describedby={id}
     aria-label={locale === 'zh-CN' ? 'DRG 费用进度，点击查看 DRG 预分组' : 'DRG charge progress; open DRG pre-grouping'} onClick={onOpenDrg}>
     {children}<span className="sr-only" id={id}>{detail}</span><ChevronRightIcon aria-hidden="true" />
-  </button>
+  </Button>
 }
 
 function ProgressLine({ progress, locale, onOpenDrg }: { progress: ReturnType<typeof drgProgress>; locale: WorkspaceLocale; onOpenDrg(): void }) {
