@@ -561,42 +561,69 @@ export class ClinicalFactLedgerService {
     return results
   }
 
+  #resourceBelongsToPatient(resource: Record<string, unknown>, patientRef: string): boolean {
+    const subject = resource['subject']
+    if (typeof subject === 'object' && subject !== null && (subject as { reference?: unknown }).reference === patientRef) {
+      return true
+    }
+    const patient = resource['patient']
+    if (typeof patient === 'object' && patient !== null && (patient as { reference?: unknown }).reference === patientRef) {
+      return true
+    }
+    return false
+  }
+
   #loadFhirHistoryForPatient(
     context: RepositoryContext,
     resourceType: Parameters<FhirRepository['search']>[1],
     patientId: string,
   ): Record<string, unknown>[] {
-    const currentEntries = this.#searchAllFhirIdsForPatient(context, resourceType, patientId)
-    if (currentEntries.length === 0) return []
-
-    const selectHistory = this.#database.driver.prepare(`
-      SELECT resource_id, version_id, last_updated, content_json
-      FROM fhir_history
-      WHERE workspace_id = ? AND epoch = ? AND resource_type = ? AND resource_id = ? AND deleted = 0
-      ORDER BY version_id ASC
-    `)
+    const patientRef = `Patient/${patientId}`
+    const historyRows = z.array(fhirHistoryContentRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT h.resource_id, h.version_id, h.last_updated, h.content_json
+        FROM fhir_history AS h
+        WHERE h.workspace_id = ? AND h.epoch = ? AND h.resource_type = ? AND h.deleted = 0
+          AND (
+            json_extract(h.content_json, '$.subject.reference') = ?
+            OR json_extract(h.content_json, '$.patient.reference') = ?
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM fhir_resource AS r
+            WHERE r.workspace_id = h.workspace_id
+              AND r.epoch = h.epoch
+              AND r.resource_type = h.resource_type
+              AND r.resource_id = h.resource_id
+              AND r.deleted = 1
+          )
+        ORDER BY h.resource_id ASC, h.version_id ASC
+      `).all(context.workspaceId, context.epoch, resourceType, patientRef, patientRef),
+    )
 
     const resources: Record<string, unknown>[] = []
-    for (const entry of currentEntries) {
-      const historyRows = z.array(fhirHistoryContentRowSchema).parse(
-        selectHistory.all(context.workspaceId, context.epoch, resourceType, entry.id),
-      )
-      if (historyRows.length === 0) {
-        resources.push(entry.resource)
+    const seenResourceIds = new Set<string>()
+    for (const row of historyRows) {
+      const parsed = fhirResourceSchema.parse(JSON.parse(row.content_json))
+      if (!this.#resourceBelongsToPatient(parsed as Record<string, unknown>, patientRef)) {
         continue
       }
-      for (const row of historyRows) {
-        const parsed = fhirResourceSchema.parse(JSON.parse(row.content_json))
-        const existingMeta = parsed.meta
-        resources.push({
-          ...parsed,
-          meta: {
-            ...existingMeta,
-            versionId: String(row.version_id),
-            lastUpdated: existingMeta?.lastUpdated ?? row.last_updated,
-          },
-        })
-      }
+      seenResourceIds.add(row.resource_id)
+      const existingMeta = parsed.meta
+      resources.push({
+        ...parsed,
+        meta: {
+          ...existingMeta,
+          versionId: String(row.version_id),
+          lastUpdated: existingMeta?.lastUpdated ?? row.last_updated,
+        },
+      })
+    }
+
+    // Fallback for any current FHIR resource lacking a fhir_history row
+    for (const entry of this.#searchAllFhirIdsForPatient(context, resourceType, patientId)) {
+      if (seenResourceIds.has(entry.id)) continue
+      if (!this.#resourceBelongsToPatient(entry.resource, patientRef)) continue
+      resources.push(entry.resource)
     }
     return resources
   }

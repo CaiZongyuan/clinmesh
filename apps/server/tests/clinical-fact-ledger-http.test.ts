@@ -767,5 +767,49 @@ describe('Clinical Fact Ledger & Fact Verification HTTP integration (S2 #555)', 
     expect(expiredCrFact.isExpiredAtAsOf).toBe(true)
     expect(expiredCrFact.eligibleForScoringAndRedLine).toBe(false)
     expect(expiredCrFact.ineligibleReasons).toContain('expired')
+
+    // Reassigning an Observation from stay (Patient A) to conflictStay (Patient B) keeps historical versions scoped to each patient
+    const scope = { epoch: scenario.epoch, workspaceId: scenario.workspaceId }
+    const reassignedObsId = 'obs-reassigned-patient-a-to-b'
+    const v1Obs = fixture.runtime.fhir.create(scope, {
+      category: [{ coding: [{ code: 'laboratory' }] }],
+      code: { coding: [{ code: '2160-0', display: '血清肌酐', system: 'http://loinc.org' }] },
+      effectiveDateTime: '2026-08-24T09:30:00+08:00',
+      id: reassignedObsId,
+      issued: '2026-08-24T09:30:00+08:00',
+      resourceType: 'Observation',
+      status: 'final',
+      subject: { reference: `Patient/${stay.patientId}` },
+      valueQuantity: { code: 'mg/dL', system: 'http://unitsofmeasure.org', unit: 'mg/dL', value: 6.5 },
+    })
+    fixture.runtime.fhir.update(scope, {
+      ...v1Obs,
+      issued: '2026-08-24T11:30:00+08:00',
+      status: 'amended',
+      subject: { reference: `Patient/${conflictStay.patientId}` },
+      valueQuantity: { code: 'mg/dL', system: 'http://unitsofmeasure.org', unit: 'mg/dL', value: 0.9 },
+    }, v1Obs.meta!.versionId!)
+
+    // Patient B must NEVER receive Patient A's pre-merge v1 (6.5 mg/dL), even with includeSuperseded=true
+    const patientBLedger = await fixture.read(
+      'inpatient-doctor',
+      `/api/his/v1/inpatient/admissions/${conflictStay.admissionId}/clinical-fact-ledger?asOf=${encodeURIComponent('2026-08-24T12:00:00+08:00')}&itemCodes=2160-0&includeSuperseded=true`,
+      clinicalFactLedgerSchema,
+    )
+    const bFactsForObs = patientBLedger.facts.filter(f => f.provenance.recordId === reassignedObsId)
+    expect(bFactsForObs).toHaveLength(1)
+    expect(bFactsForObs[0]?.provenance.recordVersion).toBe('2')
+    expect(bFactsForObs[0]?.value.normalizedValue).toEqual({ unit: 'mg/dL', value: 0.9 })
+
+    // Patient A retains access to its pre-merge v1 (6.5 mg/dL) at earlier asOf without seeing Patient B's v2
+    const patientAHistory = await fixture.read(
+      'inpatient-doctor',
+      `/api/his/v1/inpatient/admissions/${stay.admissionId}/clinical-fact-ledger?asOf=${encodeURIComponent('2026-08-24T10:00:00+08:00')}&itemCodes=2160-0`,
+      clinicalFactLedgerSchema,
+    )
+    const aFactsForObs = patientAHistory.facts.filter(f => f.provenance.recordId === reassignedObsId)
+    expect(aFactsForObs).toHaveLength(1)
+    expect(aFactsForObs[0]?.provenance.recordVersion).toBe('1')
+    expect(aFactsForObs[0]?.value.normalizedValue).toEqual({ unit: 'mg/dL', value: 6.5 })
   })
 })
