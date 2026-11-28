@@ -297,7 +297,7 @@ export class DoctorRecommendationsService {
       population,
       inactiveSources: retrieved?.inactiveSources,
     })
-    const evaluationAsOf = visitRow?.visit_date ?? visitRow?.virtual_time ?? new Date().toISOString()
+    const evaluationAsOf = visitRow?.virtual_time ?? visitRow?.visit_date ?? new Date().toISOString()
     const activePackRuntime = this.options.diseasePacks?.activeRuntimeSummaryForSubject(
       context,
       { id: caseId, kind: 'outpatient', patientId: detail.patient.id },

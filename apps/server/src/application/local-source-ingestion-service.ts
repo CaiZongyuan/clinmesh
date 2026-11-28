@@ -826,7 +826,7 @@ export class LocalSourceIngestionService {
       this.#database.driver.prepare(`
         SELECT resource_id AS id, content_json
         FROM fhir_resource
-        WHERE workspace_id = ? AND epoch = ? AND resource_type = 'Patient'
+        WHERE workspace_id = ? AND epoch = ? AND resource_type = 'Patient' AND deleted = 0
         ORDER BY resource_id ASC
       `).all(context.workspaceId, context.epoch),
     )

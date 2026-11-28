@@ -1430,4 +1430,91 @@ describe('DSAP Slice S8: Timing Hooks, Unified ClinicalPromptCard, Historical Re
     expect(afterActivated.visibleCards).toEqual([])
     expect(afterActivated.blockedRecords.some(b => b.blockedReason === 'allergy-conflict')).toBe(true)
   })
+
+  it('excludes future manual pack overrides and future card dismissals from historical asOf prompt replays', async () => {
+    const { fixture } = await setupFixture({ withGuidelineCorpus: true })
+    const visit = await createOutpatientVisit(fixture, '稳定性冠心病复诊', 'male')
+    const { epoch, virtualTime, workspaceId } = currentScope(fixture)
+    const scope = { epoch, workspaceId } as const
+
+    // Insert CAD diagnosis at T0 (1 hour before current virtualTime)
+    const diagTime = new Date(Date.parse(virtualTime) - 3_600_000).toISOString()
+    const midpointAsOf = new Date(Date.parse(virtualTime) - 1_800_000).toISOString()
+    fixture.runtime.fhir.create(scope, {
+      clinicalStatus: { coding: [{ code: 'active', system: 'http://terminology.hl7.org/CodeSystem/condition-clinical' }] },
+      code: { coding: [{ code: 'I25.103', display: '冠状动脉粥样硬化性心脏病', system: 'http://hl7.org/fhir/sid/icd-10' }], text: '冠状动脉粥样硬化性心脏病' },
+      encounter: { reference: `Encounter/${visit.encounterId}` },
+      id: `cond-hist-override-${randomUUID()}`,
+      recordedDate: diagTime,
+      resourceType: 'Condition',
+      subject: { reference: `Patient/${visit.patientId}` },
+      verificationStatus: { coding: [{ code: 'confirmed', system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status' }] },
+    })
+
+    // Confirm a coronary-cad card is visible at current time, then dismiss it at T1 (current virtualTime)
+    const currentBefore = await fixture.read(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/clinical-prompts?timing=encounter-open`,
+      clinicalPromptBundleSchema,
+    )
+    const cadCard = currentBefore.cards.find(c => c.packId === 'coronary-cad')!
+    expect(cadCard).toBeDefined()
+
+    const dismissRes = await fixture.request(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/clinical-prompts/${encodeURIComponent(cadCard.cardId)}/dismiss`,
+      {
+        note: '当前时点已阅忽略',
+        packId: 'coronary-cad',
+        reasonCode: 'clinical-judgement',
+        timing: 'encounter-open',
+      },
+    )
+    expect(dismissRes.status, await dismissRes.clone().text()).toBe(200)
+
+    // Current view hides the dismissed card
+    const currentAfterDismiss = await fixture.read(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/clinical-prompts?timing=encounter-open`,
+      clinicalPromptBundleSchema,
+    )
+    expect(currentAfterDismiss.cards.some(c => c.cardId === cadCard.cardId)).toBe(false)
+
+    // Historical replay at midpointAsOf (BEFORE dismissal at T1) MUST still show the card as active (not dismissed)
+    const histBeforeDismiss = await fixture.read(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/clinical-prompts?timing=encounter-open&asOf=${encodeURIComponent(midpointAsOf)}`,
+      clinicalPromptBundleSchema,
+    )
+    const histCard = histBeforeDismiss.cards.find(c => c.cardId === cadCard.cardId)
+    expect(histCard).toBeDefined()
+    expect(histCard?.status).toBe('active')
+
+    // Now manually disable coronary-cad at T1 (current virtualTime)
+    const toggleRes = await fixture.request(
+      'doctor',
+      `/api/his/v1/outpatient/cases/${visit.caseId}/disease-packs/coronary-cad/toggle`,
+      {
+        note: '当前时点手动关闭专病包',
+        overrideMode: 'disabled',
+      },
+    )
+    expect(toggleRes.status, await toggleRes.clone().text()).toBe(200)
+
+    // Current view reflects the manual disable (0 coronary-cad cards)
+    const currentAfterDisable = await fixture.read(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/clinical-prompts?timing=encounter-open`,
+      clinicalPromptBundleSchema,
+    )
+    expect(currentAfterDisable.cards.filter(c => c.packId === 'coronary-cad')).toEqual([])
+
+    // Historical replay at midpointAsOf (BEFORE manual disable at T1) MUST still evaluate coronary-cad as active
+    const histBeforeDisable = await fixture.read(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/clinical-prompts?timing=encounter-open&asOf=${encodeURIComponent(midpointAsOf)}`,
+      clinicalPromptBundleSchema,
+    )
+    expect(histBeforeDisable.cards.some(c => c.packId === 'coronary-cad')).toBe(true)
+  })
 })

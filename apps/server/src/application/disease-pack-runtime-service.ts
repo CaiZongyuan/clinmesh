@@ -747,7 +747,7 @@ export class DiseasePackRuntimeService {
     const subject = { id: input.subjectId, kind: input.subjectKind, patientId }
     const ledger = this.#factLedger.buildInternalLedger(input.context, subject, { asOf, includeSuperseded: false })
     const encounterMap = this.#resolveEncounterMap(input.context, patientId)
-    const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, input.packId)
+    const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, input.packId, asOf)
     const activation = this.#resolveActivationWithExit(
       input.context,
       subject,
@@ -868,7 +868,7 @@ export class DiseasePackRuntimeService {
 
     const activeEntries: EffectiveDiseasePack[] = []
     for (const effective of effectiveList) {
-      const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, effective.pack.manifest.id)
+      const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, effective.pack.manifest.id, asOf)
       const vocabulary = this.#resolvePackVocabulary(effective)
       const activation = this.#resolveActivationWithExit(
         input.context,
@@ -978,7 +978,7 @@ export class DiseasePackRuntimeService {
     let blocked = false
 
     for (const effective of effectiveList) {
-      const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, effective.pack.manifest.id)
+      const override = this.#loadOverride(input.context, input.subjectKind, input.subjectId, effective.pack.manifest.id, asOf)
       const vocabulary = this.#resolvePackVocabulary(effective)
       const activation = this.#resolveActivationWithExit(
         input.context,
@@ -1091,7 +1091,7 @@ export class DiseasePackRuntimeService {
     for (const entry of effectiveList) {
       const taskIds = matchingTaskIdsByPack.get(entry.pack.manifest.id)
       if (!taskIds) continue
-      const override = this.#loadOverride(context, 'inpatient', admissionId, entry.pack.manifest.id)
+      const override = this.#loadOverride(context, 'inpatient', admissionId, entry.pack.manifest.id, asOf)
       const vocabulary = this.#resolvePackVocabulary(entry)
       const activation = evaluatePackActivation(entry, ledger, {
         asOf,
@@ -1299,7 +1299,7 @@ export class DiseasePackRuntimeService {
     let hasStageScopeRestriction = false
 
     for (const effective of this.registry.listEffective()) {
-      const override = this.#loadOverride(context, subject.kind, subject.id, effective.pack.manifest.id)
+      const override = this.#loadOverride(context, subject.kind, subject.id, effective.pack.manifest.id, asOf)
       const entry = this.#evaluateSinglePack(context, subject, effective, ledger, encounterMap, override, asOf)
       entries.push(entry)
       if (entry.activationStatus !== 'active') continue
@@ -1433,7 +1433,9 @@ export class DiseasePackRuntimeService {
     if (activation.active && existingExit?.status !== 're-enabled') {
       const exitEval = evaluatePackExit(effective, ledger, evalOptions)
       if (exitEval.exited) {
-        if (!this.#database.driver.inTransaction && existingExit?.status !== 'exited') {
+        const currentVirtualMs = Date.parse(this.#outpatient.virtualTime(context))
+        const isHistoricalAsOf = Number.isFinite(asOfMs) && Number.isFinite(currentVirtualMs) && asOfMs < currentVirtualMs
+        if (!this.#database.driver.inTransaction && !isHistoricalAsOf && existingExit?.status !== 'exited') {
           this.#persistExitedState(context, subject, packId, exitEval, asOf)
         }
         return {
@@ -1587,14 +1589,24 @@ export class DiseasePackRuntimeService {
     subjectKind: 'outpatient' | 'inpatient',
     subjectId: string,
     packId: string,
+    asOf?: string,
   ) {
-    return overrideRowSchema.optional().parse(
+    const row = overrideRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT pack_id, override_mode, note, updated_at, version
         FROM disease_pack_activation_override
         WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ? AND pack_id = ?
       `).get(context.workspaceId, context.epoch, subjectKind, subjectId, packId),
     )
+    if (row === undefined) return undefined
+    if (asOf !== undefined) {
+      const asOfMs = Date.parse(asOf)
+      const updatedMs = Date.parse(row.updated_at)
+      if (Number.isFinite(asOfMs) && Number.isFinite(updatedMs) && updatedMs > asOfMs) {
+        return undefined
+      }
+    }
+    return row
   }
 
   readOutpatientPatientId(context: ActorContext, caseId: string): string {

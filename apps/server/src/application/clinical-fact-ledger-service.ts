@@ -961,8 +961,14 @@ export class ClinicalFactLedgerService {
         JOIN clinical_request_context AS ctx
           ON ctx.workspace_id = r.workspace_id AND ctx.epoch = r.epoch AND ctx.case_id = r.case_id
         WHERE r.workspace_id = ? AND r.epoch = ? AND ctx.patient_id = ?
-          AND (r.status IN ('reported', 'acknowledged', 'cancelled') OR r.diagnostic_report_id IS NOT NULL)
-      `).all(context.workspaceId, context.epoch, patientId),
+          AND (
+            r.status = 'cancelled'
+            OR (
+              (r.status IN ('reported', 'acknowledged') OR r.diagnostic_report_id IS NOT NULL)
+              AND (r.reported_at IS NULL OR julianday(r.reported_at) <= julianday(?))
+            )
+          )
+      `).all(context.workspaceId, context.epoch, patientId, asOf),
     )
     const closedServiceRequestIds = new Set(closedLabReqRows.map(r => r.service_request_id))
 
@@ -1025,10 +1031,11 @@ export class ClinicalFactLedgerService {
           text: z.string().optional(),
         }).loose().optional(),
         id: z.string().min(1),
+        meta: z.object({ lastUpdated: z.string().optional() }).loose().optional(),
         status: z.string().optional(),
       }).loose().safeParse(sr.resource)
       if (!parsed.success || parsed.data.status !== 'active' || closedServiceRequestIds.has(parsed.data.id)) continue
-      const authoredAt = parsed.data.authoredOn ?? asOf
+      const authoredAt = parsed.data.authoredOn ?? parsed.data.meta?.lastUpdated ?? asOf
       const codings = [
         ...(parsed.data.code?.concept?.coding ?? []),
         ...(parsed.data.code?.coding ?? []),
@@ -1136,9 +1143,10 @@ export class ClinicalFactLedgerService {
             SELECT 1 FROM inpatient_discharge_event r
             WHERE r.workspace_id = de.workspace_id AND r.epoch = de.epoch
               AND r.kind = 'recall' AND r.reverses_event_id = de.event_id
+              AND julianday(r.virtual_time) <= julianday(?)
           )
         ORDER BY julianday(de.virtual_time) ASC, de.event_id ASC
-      `).all(context.workspaceId, context.epoch, subject.patientId, asOf),
+      `).all(context.workspaceId, context.epoch, subject.patientId, asOf, asOf),
     )
     for (const row of dischargeRows) {
       candidates.push({

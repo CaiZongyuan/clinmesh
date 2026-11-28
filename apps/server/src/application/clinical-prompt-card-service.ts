@@ -1409,13 +1409,14 @@ export class ClinicalPromptCardService {
     const timing: ClinicalPromptTiming = query.timing ?? 'encounter-open'
     const baselineAsOf = query.asOf ?? virtualNow
 
+    const isHistoricalReadOnly = query.asOf !== undefined
     const baseline = this.#evaluateSingleSnapshotPass({
       asOf: baselineAsOf,
       context,
-      historicalAsOf: query.asOf !== undefined,
+      historicalAsOf: isHistoricalReadOnly,
       inpatient,
       query,
-      recordAudit: persistSnapshot,
+      recordAudit: persistSnapshot && !isHistoricalReadOnly,
       subject,
       systemBackgroundRefresh,
       timing,
@@ -1424,6 +1425,7 @@ export class ClinicalPromptCardService {
     let workingCards = baseline.cards
     let blockedRecords = baseline.blockedRecords
     let pendingIndications = baseline.pendingIndications
+    let activeEvaluatedPacks = baseline.evaluatedPacks
     let reevaluateDiffs: ClinicalPromptReevaluateDiff[] | undefined
     let historicalReplay: ClinicalPromptHistoricalReplay | null = null
 
@@ -1433,10 +1435,11 @@ export class ClinicalPromptCardService {
         context,
         inpatient,
         query,
-        recordAudit: persistSnapshot,
+        recordAudit: persistSnapshot && !isHistoricalReadOnly,
         subject,
         timing,
       })
+      activeEvaluatedPacks = latest.evaluatedPacks
       blockedRecords = [...baseline.blockedRecords, ...latest.blockedRecords]
       pendingIndications = latest.pendingIndications
 
@@ -1524,7 +1527,7 @@ export class ClinicalPromptCardService {
 
     // Never re-surface stale snapshots from packs that are currently exited
     const exitedPackIds = new Set(
-      baseline.evaluatedPacks
+      activeEvaluatedPacks
         .filter(item => item.entry.exited === true || item.entry.activationReason === 'pack-exited')
         .map(item => item.entry.packId),
     )
@@ -1550,8 +1553,13 @@ export class ClinicalPromptCardService {
       }
     }
 
-    // Apply clinician dismissals
-    const dismissals = this.#loadDismissals(context, subject)
+    // Apply clinician dismissals effective at the evaluated timestamp
+    const effectiveAsOf = query.reevaluateWithLatestKnowledge ? virtualNow : baselineAsOf
+    const dismissals = this.#loadDismissals(
+      context,
+      subject,
+      query.asOf !== undefined && query.reevaluateWithLatestKnowledge !== true ? effectiveAsOf : undefined,
+    )
     const withDismissals = workingCards.map(card => {
       const dismissal = dismissals.get(card.cardId)
       if (!dismissal) return card
@@ -1576,17 +1584,23 @@ export class ClinicalPromptCardService {
 
     const finalizedGroups = attachRiskTagsAndSideBySide(filteredVisibility, new Map())
     const persistedBlockCount = z.object({ cnt: z.number().int().nonnegative() }).parse(
-      this.#database.driver.prepare(`
-        SELECT COUNT(*) AS cnt FROM clinical_prompt_safety_block_audit
-        WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ?
-      `).get(context.workspaceId, context.epoch, subject.kind, subject.id),
+      query.asOf !== undefined && query.reevaluateWithLatestKnowledge !== true
+        ? this.#database.driver.prepare(`
+            SELECT COUNT(*) AS cnt FROM clinical_prompt_safety_block_audit
+            WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ?
+              AND julianday(blocked_at) <= julianday(?)
+          `).get(context.workspaceId, context.epoch, subject.kind, subject.id, effectiveAsOf)
+        : this.#database.driver.prepare(`
+            SELECT COUNT(*) AS cnt FROM clinical_prompt_safety_block_audit
+            WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ?
+          `).get(context.workspaceId, context.epoch, subject.kind, subject.id),
     ).cnt
 
     return clinicalPromptBundleSchema.parse({
       blockedAuditCount: Math.max(blockedRecords.length, persistedBlockCount),
       blockedRecords,
       cards: finalizedGroups.cards,
-      evaluatedAt: query.reevaluateWithLatestKnowledge ? virtualNow : baselineAsOf,
+      evaluatedAt: effectiveAsOf,
       historicalReplay,
       llmInvocationCount: 0,
       ...(pendingIndications.length === 0 ? {} : { pendingIndications }),
@@ -1735,7 +1749,11 @@ export class ClinicalPromptCardService {
     })
   }
 
-  #loadDismissals(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, subject: { id: string; kind: 'outpatient' | 'inpatient' }) {
+  #loadDismissals(
+    context: Pick<ActorContext, 'workspaceId' | 'epoch'>,
+    subject: { id: string; kind: 'outpatient' | 'inpatient' },
+    asOf?: string,
+  ) {
     const rows = z.array(dismissalRowSchema).parse(
       this.#database.driver.prepare(`
         SELECT actor_id, audit_id, card_id, dismissed_at, note, pack_id, reason_code
@@ -1743,7 +1761,14 @@ export class ClinicalPromptCardService {
         WHERE workspace_id = ? AND epoch = ? AND subject_kind = ? AND subject_id = ?
       `).all(context.workspaceId, context.epoch, subject.kind, subject.id),
     )
-    return new Map(rows.map(row => [row.card_id, row]))
+    const cutoffMs = asOf !== undefined ? Date.parse(asOf) : Number.NaN
+    const filteredRows = Number.isFinite(cutoffMs)
+      ? rows.filter(row => {
+          const dismissedMs = Date.parse(row.dismissed_at)
+          return !Number.isFinite(dismissedMs) || dismissedMs <= cutoffMs
+        })
+      : rows
+    return new Map(filteredRows.map(row => [row.card_id, row]))
   }
 
   #executeDismiss(
