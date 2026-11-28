@@ -1044,7 +1044,7 @@ describe('同台冠脉造影直接转 PCI（Ad-hoc PCI）HTTP 与真实 SQLite �
         )
         .run(scope.workspaceId, scope.epoch, now)
 
-      expect(applyMigrations(db).applied).toEqual([migrationFile, '0123_surgery-preop-policy-and-postop-investigations.sql', '0124_clinical-fact-verification.sql', '0125_local-source-ingestion.sql', '0126_disease-pack-runtime.sql', '0127_bedside-questionnaire-answers.sql', '0128_clinical-prompt-cards.sql', '0129_pack-exit-state.sql'])
+      expect(applyMigrations(db).applied).toEqual([migrationFile, '0123_surgery-preop-policy-and-postop-investigations.sql', '0124_clinical-fact-verification.sql', '0125_local-source-ingestion.sql', '0126_disease-pack-runtime.sql', '0127_bedside-questionnaire-answers.sql', '0128_clinical-prompt-cards.sql', '0129_pack-exit-state.sql', '0130_disease-pack-activation.sql'])
       expect(db.driver.pragma('foreign_key_check')).toEqual([])
 
       expect(

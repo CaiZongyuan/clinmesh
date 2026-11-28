@@ -635,6 +635,13 @@ export class DiseasePackExamService {
     if (this.#database === undefined) {
       return { restoredPackIds: [], skippedPackIds: [] }
     }
+    const tableExists = this.#database.driver.prepare(`
+      SELECT 1 AS found FROM sqlite_master
+      WHERE type = 'table' AND name = 'disease_pack_registry_activation'
+    `).get()
+    if (tableExists === undefined) {
+      return { restoredPackIds: [], skippedPackIds: [] }
+    }
     const rows = z.array(persistedPackActivationRowSchema).parse(
       this.#database.driver.prepare(`
         SELECT pack_id, pack_version, source_fingerprint, pack_dir
