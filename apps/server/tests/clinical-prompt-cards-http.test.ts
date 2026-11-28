@@ -1196,4 +1196,144 @@ describe('DSAP Slice S8: Timing Hooks, Unified ClinicalPromptCard, Historical Re
       }),
     ])
   })
+
+  it('scopes inpatient active medications to signedAt/stoppedAt during historical asOf prompt evaluation', async () => {
+    const { fixture } = await setupFixture({ withGuidelineCorpus: true })
+    const stay = await fixture.preparePciAdmission([])
+    const beforeSignTime = currentScope(fixture).virtualTime
+    const beforeSignIso = new Date(Date.parse(beforeSignTime) - 3_600_000).toISOString()
+
+    // Find clopidogrel in inpatient medication catalog and issue it at T1
+    const catalog = await fixture.read(
+      'inpatient-doctor',
+      '/api/his/v1/inpatient/clinical-catalog',
+      z.object({
+        medications: z.array(z.object({
+          allowedRouteCodes: z.array(z.string()),
+          doses: z.array(z.object({ doseText: z.string(), quantity: z.number() })),
+          frequencyCodes: z.array(z.string()),
+          id: z.string(),
+          version: z.number(),
+        }).loose()),
+      }).loose(),
+    )
+    const clopidogrel = catalog.medications.find(m => m.id.includes('clopidogrel'))!
+    const ticagrelor = catalog.medications.find(m => m.id.includes('ticagrelor'))!
+    expect(clopidogrel).toBeDefined()
+    expect(ticagrelor).toBeDefined()
+
+    const issueRes = await fixture.request('inpatient-doctor', `${stay.path}/orders/issue`, {
+      duration: 'long',
+      encounterVersion: stay.encounterVersion,
+      selection: {
+        catalogItemId: clopidogrel.id,
+        catalogVersion: clopidogrel.version,
+        doseQuantity: clopidogrel.doses[0]!.quantity,
+        doseText: clopidogrel.doses[0]!.doseText,
+        frequencyCode: clopidogrel.frequencyCodes[0]!,
+        kind: 'medication',
+        routeCode: clopidogrel.allowedRouteCodes[0]!,
+      },
+    })
+    expect(issueRes.status, await issueRes.clone().text()).toBe(200)
+    const issuedOrder = z.object({
+      data: z.object({
+        orders: z.array(z.object({
+          catalogItemId: z.string(),
+          id: z.string(),
+          signedAt: z.string(),
+          version: z.number(),
+        }).loose()),
+      }).loose(),
+    }).parse(await issueRes.json()).data.orders.find(o => o.catalogItemId === clopidogrel.id)!
+    expect(issuedOrder).toBeDefined()
+
+    const docCookie = await fixture.login('inpatient-doctor')
+    const docActor = (await fixture.runtime.identity.resolveSessionContext(new Headers({ cookie: docCookie }))).actor
+    const ticagrelorCard = clinicalPromptCardSchema.parse({
+      basedOnFactVersions: [],
+      blockingTier: 'none',
+      cardId: 'card-suggest-ticagrelor',
+      category: 'guideline-advice',
+      deliveryMode: 'display',
+      detail: '拟考虑替格瑞洛抗血小板治疗',
+      indicator: 'info',
+      knowledgeSnapshotVersion: '2026.08.v1',
+      knowledgeStatus: 'published',
+      overrideReasons: [],
+      packId: 'coronary-cad',
+      packVersion: '1.0.0',
+      riskTags: [],
+      sideBySideGroupKey: null,
+      source: { label: '抗血小板建议', topicId: 'cad-dapt' },
+      suggestions: [{
+        actionKind: 'draft-medication',
+        catalogItemId: ticagrelor.id,
+        id: 'sug-ticagrelor',
+        isDraftOnly: true,
+        labelZh: '开立替格瑞洛',
+      }],
+      summary: '替格瑞洛建议',
+      timing: 'encounter-open',
+      trialBadgeZh: null,
+      trialDisclaimerZh: null,
+    })
+    const evalTicagrelorAt = (asOf?: string) => fixture.runtime.workflow.promptCards.filterCandidateCardsForSubject({
+      ...(asOf === undefined ? {} : { asOf }),
+      cards: [ticagrelorCard],
+      context: docActor,
+      recordAudit: false,
+      subject: { id: stay.admissionId, kind: 'inpatient', patientId: stay.patientId },
+      timing: 'encounter-open',
+    })
+
+    // Before clopidogrel was signed: NO P2Y12 combination conflict
+    const beforeSignFilter = evalTicagrelorAt(beforeSignIso)
+    expect(beforeSignFilter.visibleCards).toHaveLength(1)
+    expect(beforeSignFilter.blockedRecords).toEqual([])
+
+    // Also verify HTTP historical replay before signing does NOT flag active P2Y12 combination risk
+    const httpBeforeSign = await fixture.read(
+      'inpatient-doctor',
+      `${stay.path}/clinical-prompts?timing=order-draft-select&selectedTemplateId=cad-pci-secondary-prevention&asOf=${encodeURIComponent(beforeSignIso)}`,
+      clinicalPromptBundleSchema,
+    )
+    expect(httpBeforeSign.blockedRecords.filter(b => b.blockedReason === 'red-line-violation')).toEqual([])
+
+    // At current time (after clopidogrel signed): P2Y12 combination conflict blocks ticagrelor
+    const afterSignFilter = evalTicagrelorAt()
+    expect(afterSignFilter.visibleCards).toEqual([])
+    expect(afterSignFilter.blockedRecords.some(b => b.blockedReason === 'red-line-violation')).toBe(true)
+
+    // Advance virtual time by 2 hours and stop clopidogrel at T2
+    const scenario = await fixture.read(
+      'admin',
+      '/api/sim/v1/scenario-runs/current',
+      z.object({ scenarioRunId: z.string(), virtualTime: z.string() }).loose(),
+    )
+    const betweenIso = new Date(Date.parse(issuedOrder.signedAt) + 1_800_000).toISOString()
+    const stopVirtualTime = new Date(Date.parse(issuedOrder.signedAt) + 7_200_000).toISOString()
+    const advRes = await fixture.request('admin', `/api/sim/v1/scenario-runs/${scenario.scenarioRunId}/actions/advance-time`, {
+      expectedVirtualTime: scenario.virtualTime,
+      targetVirtualTime: stopVirtualTime,
+    })
+    expect(advRes.status, await advRes.clone().text()).toBe(200)
+
+    const stopRes = await fixture.request('inpatient-doctor', `${stay.path}/orders/request-stop`, {
+      expectedOrderVersion: issuedOrder.version,
+      orderId: issuedOrder.id,
+      reason: '调整抗血小板方案',
+    })
+    expect(stopRes.status, await stopRes.clone().text()).toBe(200)
+
+    // Historical asOf between signedAt (T1) and stoppedAt (T2): clopidogrel WAS active -> blocks ticagrelor
+    const betweenFilter = evalTicagrelorAt(betweenIso)
+    expect(betweenFilter.visibleCards).toEqual([])
+    expect(betweenFilter.blockedRecords.some(b => b.blockedReason === 'red-line-violation')).toBe(true)
+
+    // After clopidogrel stopped (current time T2): NO longer active -> ticagrelor allowed
+    const afterStopFilter = evalTicagrelorAt()
+    expect(afterStopFilter.visibleCards).toHaveLength(1)
+    expect(afterStopFilter.blockedRecords).toEqual([])
+  })
 })

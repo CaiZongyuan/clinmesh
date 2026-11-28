@@ -361,7 +361,9 @@ export class ClinicalPromptCardService {
     primaryPack: { knowledgeSnapshotVersion: string | null; packId: string; packVersion: string } | undefined
     visibleCards: ClinicalPromptCard[]
   } {
-    const asOf = input.asOf ?? this.#outpatient.virtualTime(input.context)
+    const virtualNow = this.#outpatient.virtualTime(input.context)
+    const asOf = input.asOf ?? virtualNow
+    const historicalAsOf = input.asOf !== undefined && Date.parse(input.asOf) < Date.parse(virtualNow)
     const ledger = input.ledger ?? this.#factLedger.buildInternalLedger(input.context, input.subject, {
       asOf,
       includeSuperseded: false,
@@ -372,15 +374,16 @@ export class ClinicalPromptCardService {
     const needsMedicationContext = (
       input.medicationCandidatesByCardId !== undefined && input.medicationCandidatesByCardId.size > 0
     ) || input.cards.some(card => card.suggestions.length > 0)
+    const archivedCutoffOverride = historicalAsOf ? true : undefined
     const scores: ClinicalScoreBundle | undefined = !needsMedicationContext
       ? undefined
       : input.subject.kind === 'outpatient'
-        ? this.#clinicalScores.outpatientSnapshot(input.context, input.subject.id)
+        ? this.#clinicalScores.outpatientSnapshot(input.context, input.subject.id, input.asOf, archivedCutoffOverride)
         : effectiveInpatient
-          ? this.#clinicalScores.inpatientSnapshot(effectiveInpatient, input.context, input.subject.id)
+          ? this.#clinicalScores.inpatientSnapshot(effectiveInpatient, input.context, input.subject.id, input.asOf, archivedCutoffOverride)
           : undefined
     const activeMedications: QualityMedication[] = needsMedicationContext
-      ? this.#activeMedications(input.context, input.subject, effectiveInpatient)
+      ? this.#activeMedications(input.context, input.subject, effectiveInpatient, asOf, historicalAsOf)
       : []
     const allergyCodes: ReadonlySet<string> = needsMedicationContext
       ? this.#outpatient.patientAllergyCodes(input.context, input.subject.patientId)
@@ -727,10 +730,50 @@ export class ClinicalPromptCardService {
     context: ActorContext,
     subject: { id: string; kind: 'outpatient' | 'inpatient' },
     inpatient?: InpatientService,
+    asOf?: string,
+    historicalAsOf?: boolean,
   ): QualityMedication[] {
     if (subject.kind === 'inpatient' && inpatient !== undefined) {
+      const cutoffMs = asOf !== undefined ? Date.parse(asOf) : Number.NaN
+      const hasCutoff = Number.isFinite(cutoffMs)
+      const completedAtStmt = historicalAsOf && hasCutoff
+        ? this.#database.driver.prepare(`
+            SELECT MIN(last_updated) AS completed_at
+            FROM fhir_history
+            WHERE workspace_id = ? AND epoch = ?
+              AND resource_type = 'MedicationRequest'
+              AND resource_id = ?
+              AND json_extract(content_json, '$.status') = 'completed'
+          `)
+        : undefined
       return inpatient.orders.facts(context, subject.id).orders
-        .filter(order => order.kind === 'medication' && ['signed', 'verified'].includes(order.state))
+        .filter(order => {
+          if (order.kind !== 'medication') return false
+          if (hasCutoff) {
+            const signedMs = Date.parse(order.signedAt)
+            if (Number.isFinite(signedMs) && signedMs > cutoffMs) return false
+          }
+          if (order.state === 'signed' || order.state === 'verified') {
+            return true
+          }
+          if (!historicalAsOf || !hasCutoff) {
+            return false
+          }
+          if (order.state === 'stop-requested' || order.state === 'stopped') {
+            if (order.stoppedAt === undefined) return false
+            const stoppedMs = Date.parse(order.stoppedAt)
+            return Number.isFinite(stoppedMs) && stoppedMs > cutoffMs
+          }
+          if (order.state === 'completed' && completedAtStmt !== undefined) {
+            const row = z.object({ completed_at: z.string().nullable() }).optional().parse(
+              completedAtStmt.get(context.workspaceId, context.epoch, order.id),
+            )
+            if (!row?.completed_at) return false
+            const completedMs = Date.parse(row.completed_at)
+            return Number.isFinite(completedMs) && completedMs > cutoffMs
+          }
+          return false
+        })
         .map(order => ({
           catalogItemId: order.catalogItemId,
           display: order.display,
@@ -1131,7 +1174,13 @@ export class ClinicalPromptCardService {
     const medicationCatalog = this.#buildMedicationCatalog(input.context)
     const { classesByTemplateId: templateClassesByTemplateId, itemsByTemplateId: templateMedicationItemsByTemplateId } =
       this.#resolveTemplateMedicationMaps(medicationCatalog)
-    const activeMedications = this.#activeMedications(input.context, input.subject, input.inpatient)
+    const activeMedications = this.#activeMedications(
+      input.context,
+      input.subject,
+      input.inpatient,
+      input.asOf,
+      input.historicalAsOf,
+    )
     const activeMedicationClasses = [...new Set(activeMedications.flatMap(m => [...m.pharmacologyClasses]))]
     const candidateMedicationClasses = input.query.candidateMedicationClasses
       ?.split(',')
