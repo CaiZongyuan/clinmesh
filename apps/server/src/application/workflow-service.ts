@@ -422,6 +422,7 @@ export class WorkflowService
     })
     this.diseasePackExam = new DiseasePackExamService({
       commands,
+      database,
       diseasePacks: this.diseasePacks,
       now: this.#now,
       ...(options.referenceData === undefined ? {} : { referenceData: options.referenceData }),
@@ -672,6 +673,7 @@ export class WorkflowService
         ),
       },
     })
+    this.diseasePackExam.restorePersistedActivations()
     if (!options.skipStartupExamVerification) {
       this.diseasePackExam.verifyStartupActivePacks()
     }

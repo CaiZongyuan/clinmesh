@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
+import { z } from 'zod'
 import type { ClinicalFactLedger } from '@clinmesh/contracts/clinical-fact-ledger'
 import type {
   DiseasePackExamCase,
@@ -43,7 +44,7 @@ import {
 } from '@clinmesh/core/disease-pack-exam'
 import { evaluateOrderIndicationRules, type OrderIndicationOrderKind } from '@clinmesh/core/indication-rules'
 import { evaluateKnowledgeSnapshotForPatient } from '@clinmesh/core/knowledge-claims'
-import { applyMigrations, openClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import { applyMigrations, openClinMeshDatabase, type ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
 import { ClinicalFactLedgerService } from './clinical-fact-ledger-service.ts'
@@ -595,8 +596,16 @@ const startupPackExamCache = new Map<string, { passed: boolean; reasonsZh: strin
  * Pure deterministic Disease Pack Exam Runner, 7-Trap Gate, 5-Layer Attribution & Standardized Report Service.
  * Zero LLM invocations and zero Case Truth leakage.
  */
+const persistedPackActivationRowSchema = z.object({
+  pack_dir: z.string().nullable(),
+  pack_id: z.string().min(1),
+  pack_version: z.string().min(1),
+  source_fingerprint: z.string().min(1),
+}).strict()
+
 export class DiseasePackExamService {
   readonly #commands: CommandExecutor
+  readonly #database: ClinMeshDatabase | undefined
   readonly #diseasePacks: DiseasePackRuntimeService
   readonly #now: () => Date
   readonly #referenceData: ReferenceDataService | undefined
@@ -604,16 +613,74 @@ export class DiseasePackExamService {
 
   constructor(options: {
     commands: CommandExecutor
+    database?: ClinMeshDatabase
     diseasePacks: DiseasePackRuntimeService
     now?: () => Date
     referenceData?: ReferenceDataService
     tokenSecret: string
   }) {
     this.#commands = options.commands
+    this.#database = options.database
     this.#diseasePacks = options.diseasePacks
     this.#now = options.now ?? (() => new Date())
     this.#referenceData = options.referenceData
     this.#tokenSecret = options.tokenSecret
+  }
+
+  /**
+   * Restores previously approved gated draft-pack activations from SQLite on server startup
+   * only when the on-disk pack still matches the exact approved source fingerprint.
+   */
+  restorePersistedActivations(): { restoredPackIds: string[]; skippedPackIds: string[] } {
+    if (this.#database === undefined) {
+      return { restoredPackIds: [], skippedPackIds: [] }
+    }
+    const rows = z.array(persistedPackActivationRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT pack_id, pack_version, source_fingerprint, pack_dir
+        FROM disease_pack_registry_activation
+        ORDER BY pack_id ASC
+      `).all(),
+    )
+    const restoredPackIds: string[] = []
+    const skippedPackIds: string[] = []
+    for (const row of rows) {
+      if (this.#diseasePacks.registry.hasPack(row.pack_id)) {
+        const current = this.#diseasePacks.registry.getEffective(row.pack_id)
+        if (current.pack.manifest.status === 'active') continue
+        if (current.pack.manifest.status === 'draft' && current.pack.manifest.fingerprint === row.source_fingerprint) {
+          this.#diseasePacks.registry.activatePack(row.pack_id)
+          restoredPackIds.push(row.pack_id)
+        } else {
+          skippedPackIds.push(row.pack_id)
+        }
+        continue
+      }
+      if (row.pack_dir !== null && existsSync(row.pack_dir)) {
+        try {
+          const probe = new DiseasePackRegistry({
+            includeBuiltinDraftPacks: false,
+            packs: [],
+            registeredClinicianReviewers: this.#diseasePacks.registry.listRegisteredClinicianReviewers(),
+            verifyFingerprint: true,
+          })
+          const loaded = probe.loadDirectory(row.pack_dir, { verifyFingerprint: true })
+          if (
+            loaded.pack.manifest.id === row.pack_id
+            && loaded.pack.manifest.status === 'draft'
+            && loaded.pack.manifest.fingerprint === row.source_fingerprint
+          ) {
+            this.#diseasePacks.registry.activatePack(row.pack_id, { packDir: row.pack_dir })
+            restoredPackIds.push(row.pack_id)
+            continue
+          }
+        } catch {
+          // On-disk pack was tampered, invalid, or unverified; fail closed and keep inactive.
+        }
+      }
+      skippedPackIds.push(row.pack_id)
+    }
+    return { restoredPackIds, skippedPackIds }
   }
 
   /**
@@ -906,6 +973,30 @@ export class DiseasePackExamService {
       input,
       operation: 'admin.disease-packs.activate',
     }, () => {
+      const sourceFingerprint = targetEffective.pack.manifest.fingerprint
+      if (this.#database !== undefined) {
+        this.#database.driver.prepare(`
+          INSERT INTO disease_pack_registry_activation (
+            pack_id, pack_version, source_fingerprint, pack_dir,
+            activated_by_actor_id, activated_at, note
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(pack_id) DO UPDATE SET
+            pack_version = excluded.pack_version,
+            source_fingerprint = excluded.source_fingerprint,
+            pack_dir = excluded.pack_dir,
+            activated_by_actor_id = excluded.activated_by_actor_id,
+            activated_at = excluded.activated_at,
+            note = excluded.note
+        `).run(
+          targetEffective.pack.manifest.id,
+          targetEffective.pack.manifest.version,
+          sourceFingerprint,
+          input.packDir ?? null,
+          context.actorId,
+          nowIso,
+          input.note ?? null,
+        )
+      }
       const { effective, previousStatus } = this.#diseasePacks.registry.activatePack(
         input.packId,
         input.packDir === undefined ? undefined : { packDir: input.packDir },

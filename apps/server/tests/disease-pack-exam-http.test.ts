@@ -536,4 +536,64 @@ describe('DSAP Slice S11: Exam Runner, 7 Public Traps, 5-Layer Attribution, AC10
     const catalog = await fixture.read('doctor', '/api/his/v1/catalogs/disease-packs', diseasePackCatalogListSchema)
     expect(catalog.items.find(i => i.id === 'synthetic-tampered-active')?.status).toBe('draft')
   })
+
+  it('persists gated draft pack activation in SQLite across runtime restarts and fails closed if tampered', async () => {
+    const draftDir = await mkdtemp(join(tmpdir(), 'clinmesh-persist-activate-'))
+    cleanups.push(() => rm(draftDir, { recursive: true, force: true }))
+    await cp(SYNTHETIC_PACK_DIR, draftDir, { recursive: true })
+    await recomputeDirManifestFingerprint(draftDir, (raw) => {
+      ;(raw.manifest as Record<string, unknown>).id = 'synthetic-draft-restart'
+      ;(raw.manifest as Record<string, unknown>).status = 'draft'
+      if (raw.conceptVocabulary && typeof raw.conceptVocabulary === 'object') {
+        const vocab = raw.conceptVocabulary as { nodes?: Array<Record<string, unknown>> }
+        for (const node of vocab.nodes ?? []) {
+          if (node.packId !== undefined) node.packId = 'synthetic-draft-restart'
+        }
+      }
+      if (Array.isArray(raw.knowledgeSnapshots)) {
+        for (const snap of raw.knowledgeSnapshots as Array<{ claims?: Array<Record<string, unknown>>; topics?: Array<Record<string, unknown>> }>) {
+          for (const claim of snap.claims ?? []) claim.packId = 'synthetic-draft-restart'
+          for (const topic of snap.topics ?? []) topic.packId = 'synthetic-draft-restart'
+        }
+      }
+    })
+
+    const prepared = await preparePciPaymentDrgFixture()
+    cleanups.push(() => rm(prepared.directory, { recursive: true, force: true }))
+    prepared.options.includeBuiltinDraftDiseasePacks = false
+    prepared.options.registeredClinicianReviewers = [{
+      licenseVerified: true,
+      nameZh: '合成测试审核人',
+      reviewerId: 'reviewer-syn-cardio-01',
+      specialty: 'cardiology',
+    }]
+
+    const fixture1 = await createPciPaymentDrgFixture(prepared)
+    const activateRes = await postAdminJson(
+      fixture1,
+      'admin',
+      '/api/his/v1/admin/disease-packs/synthetic-draft-restart/activate',
+      { note: '考卷通过后持久化上线', packDir: draftDir },
+      randomUUID(),
+    )
+    expect(activateRes.status, await activateRes.clone().text()).toBe(200)
+    const catalogBeforeRestart = await fixture1.read('doctor', '/api/his/v1/catalogs/disease-packs', diseasePackCatalogListSchema)
+    expect(catalogBeforeRestart.items.find(i => i.id === 'synthetic-draft-restart')?.status).toBe('active')
+    await fixture1.runtime.close()
+
+    // Reopen runtime on the same SQLite database without explicitly passing draftDir -> activation persists!
+    const fixture2 = await createPciPaymentDrgFixture(prepared)
+    const catalogAfterRestart = await fixture2.read('doctor', '/api/his/v1/catalogs/disease-packs', diseasePackCatalogListSchema)
+    expect(catalogAfterRestart.items.find(i => i.id === 'synthetic-draft-restart')?.status).toBe('active')
+    await fixture2.runtime.close()
+
+    // Modify pack on disk (changes source fingerprint) -> restart fails closed and does NOT restore stale approval
+    await recomputeDirManifestFingerprint(draftDir, (raw) => {
+      ;(raw.manifest as Record<string, unknown>).titleZh = '重启前已篡改版本的专病包'
+    })
+    const fixture3 = await createPciPaymentDrgFixture(prepared)
+    cleanups.push(() => fixture3.runtime.close())
+    const catalogAfterTamper = await fixture3.read('doctor', '/api/his/v1/catalogs/disease-packs', diseasePackCatalogListSchema)
+    expect(catalogAfterTamper.items.find(i => i.id === 'synthetic-draft-restart')).toBeUndefined()
+  })
 })
