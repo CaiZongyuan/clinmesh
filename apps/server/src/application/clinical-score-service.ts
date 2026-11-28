@@ -2329,6 +2329,7 @@ export class ClinicalScoreService {
       verifiedExternalFacts,
       eligibleIngestedLocalFacts,
       eligibleIngestedByObsId,
+      ...(options.isArchivedCutoff && Number.isFinite(cutoffMs) ? { historicalCutoffMs: cutoffMs } : {}),
     }
     const labs = this.#extractLaboratoryAnalytes(
       context,
@@ -3104,6 +3105,7 @@ export class ClinicalScoreService {
       verifiedExternalFacts: readonly ClinicalFact[]
       eligibleIngestedLocalFacts?: readonly ClinicalFact[]
       eligibleIngestedByObsId?: ReadonlyMap<string, unknown>
+      historicalCutoffMs?: number | undefined
     },
   ) {
     const rows = z.array(z.object({
@@ -3175,6 +3177,10 @@ export class ClinicalScoreService {
       const rawReport = this.#fhir.read(context, 'DiagnosticReport', reportId)
       const report = diagnosticReportResourceSchema.safeParse(rawReport)
       if (!report.success || !['final', 'amended', 'corrected'].includes(report.data.status ?? '')) continue
+      const reportTsMs = parseResourceTimestampMs(report.data.issued ?? reportTime ?? report.data.effectiveDateTime)
+      if (factGate?.historicalCutoffMs !== undefined && reportTsMs !== undefined && reportTsMs > factGate.historicalCutoffMs) {
+        continue
+      }
       const rootReportId = revisionIndex.resolveRootMeta(reportId)?.rootReportId ?? reportId
       const fallbackReportIso = report.data.effectiveDateTime ?? report.data.issued ?? reportTime ?? undefined
       for (const [resultIndex, ref] of (report.data.result ?? []).entries()) {
@@ -3182,6 +3188,11 @@ export class ClinicalScoreService {
         if (!obsId) continue
         const obs = observationResourceSchema.safeParse(this.#fhir.read(context, 'Observation', obsId))
         if (!obs.success || !['final', 'amended', 'corrected'].includes(obs.data.status ?? '')) continue
+        const obsIssued = typeof obs.data['issued'] === 'string' ? obs.data['issued'] : undefined
+        const obsTsMs = parseResourceTimestampMs(obsIssued ?? obs.data.effectiveDateTime ?? fallbackReportIso)
+        if (factGate?.historicalCutoffMs !== undefined && obsTsMs !== undefined && obsTsMs > factGate.historicalCutoffMs) {
+          continue
+        }
         seenReportObservationIds.add(obs.data.id)
         if (factGate?.ineligibleObservationIds.has(obs.data.id)) continue
 

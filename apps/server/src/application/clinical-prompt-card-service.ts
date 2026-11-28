@@ -1107,6 +1107,7 @@ export class ClinicalPromptCardService {
   #evaluateSingleSnapshotPass(input: {
     asOf: string
     context: ActorContext
+    historicalAsOf?: boolean | undefined
     inpatient?: InpatientService | undefined
     query: ClinicalPromptReadQuery
     recordAudit: boolean
@@ -1180,10 +1181,22 @@ export class ClinicalPromptCardService {
     const allergyCodes = this.#outpatient.patientAllergyCodes(input.context, input.subject.patientId)
     let scores: ClinicalScoreBundle | undefined
     try {
+      const archivedCutoffOverride = input.historicalAsOf ? true : undefined
       scores = input.subject.kind === 'outpatient'
-        ? this.#clinicalScores.outpatientSnapshot(input.context, input.subject.id)
+        ? this.#clinicalScores.outpatientSnapshot(
+            input.context,
+            input.subject.id,
+            input.asOf,
+            archivedCutoffOverride,
+          )
         : input.inpatient
-          ? this.#clinicalScores.inpatientSnapshot(input.inpatient, input.context, input.subject.id)
+          ? this.#clinicalScores.inpatientSnapshot(
+              input.inpatient,
+              input.context,
+              input.subject.id,
+              input.asOf,
+              archivedCutoffOverride,
+            )
           : undefined
     } catch (error) {
       if (!input.systemBackgroundRefresh) throw error
@@ -1234,6 +1247,7 @@ export class ClinicalPromptCardService {
     const baseline = this.#evaluateSingleSnapshotPass({
       asOf: baselineAsOf,
       context,
+      historicalAsOf: query.asOf !== undefined,
       inpatient,
       query,
       recordAudit: persistSnapshot,

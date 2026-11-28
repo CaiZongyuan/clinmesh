@@ -1079,4 +1079,42 @@ describe('DSAP Slice S8: Timing Hooks, Unified ClinicalPromptCard, Historical Re
     )
     expect(ledgerCheck.facts.length).toBeGreaterThan(0)
   })
+
+  it('evaluates renal safety cutoff at the requested asOf timestamp during historical prompt replay without leaking future labs', async () => {
+    const { fixture } = await setupFixture({ withGuidelineCorpus: true })
+    const visit = await createOutpatientVisit(fixture, '糖尿病复诊', 'male')
+    const { virtualTime } = currentScope(fixture)
+    const beforeLabIso = new Date(Date.parse(virtualTime) - 3_600_000).toISOString()
+
+    // Insert a severe creatinine report (4.2 mg/dL -> eGFR < 30) at virtualTime (AFTER beforeLabIso)
+    insertSerumCreatinineReport(fixture, {
+      caseId: visit.caseId,
+      encounterId: visit.encounterId,
+      patientId: visit.patientId,
+      valueMgDl: 4.2,
+    })
+
+    const doctorCookie = await fixture.login('doctor')
+    const doctorActor = (await fixture.runtime.identity.resolveSessionContext(new Headers({ cookie: doctorCookie }))).actor
+
+    // Current snapshot sees the severe creatinine (eGFR < 30)
+    const currentScores = fixture.runtime.workflow.clinicalScores.outpatientSnapshot(doctorActor, visit.caseId)
+    const currentEgfr = currentScores.scores.find(s => s.id === 'ckd-epi-2021-egfr')
+    expect(currentEgfr?.status).toBe('complete')
+    expect(currentEgfr?.value).toBeLessThan(30)
+
+    // Historical cutoff before the lab report must NOT leak the future creatinine into renal evaluation
+    const historicalScores = fixture.runtime.workflow.clinicalScores.outpatientSnapshot(doctorActor, visit.caseId, beforeLabIso, true)
+    const historicalEgfr = historicalScores.scores.find(s => s.id === 'ckd-epi-2021-egfr')
+    expect(historicalEgfr?.status).toBe('incomplete')
+
+    // Historical prompt replay with asOf before the severe lab executes cleanly with zero renal red-line blocks
+    const historicalPrompts = await fixture.read(
+      'doctor',
+      `/api/his/v1/doctor/cases/${visit.caseId}/clinical-prompts?timing=encounter-open&asOf=${encodeURIComponent(beforeLabIso)}`,
+      clinicalPromptBundleSchema,
+    )
+    expect(historicalPrompts.historicalReplay?.asOf).toBe(beforeLabIso)
+    expect(historicalPrompts.blockedRecords.filter(b => b.blockedReason === 'red-line-violation')).toEqual([])
+  })
 })
