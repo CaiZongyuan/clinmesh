@@ -14,8 +14,10 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from '@clinmesh/ui/components/message-scroller'
-import { CircleAlertIcon, MessagesSquareIcon, RefreshCwIcon, SendIcon } from 'lucide-react'
+import { CircleAlertIcon, MessagesSquareIcon, RefreshCwIcon, SendIcon, SettingsIcon } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
+import { ApiClientError } from '../api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { formatClinicalTime } from './clinical-date-time.ts'
@@ -122,6 +124,16 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                   id="consultation-message"
                   maxLength={2000}
                   onChange={event => setMessage(event.target.value)}
+                  onKeyDown={event => {
+                    // IME-safe Enter submission (guards WebKit keyCode 229).
+                    if (event.key !== 'Enter' || event.shiftKey) return
+                    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+                    event.preventDefault()
+                    if (message.trim() !== '' && !action.pending && !unanswered) {
+                      action.onAsk(message.trim())
+                      setMessage('')
+                    }
+                  }}
                   placeholder={messages.askPatient}
                   value={message}
                 />
@@ -170,7 +182,17 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
               <Alert variant="destructive">
                 <CircleAlertIcon aria-hidden="true" />
                 <AlertTitle>{getWorkspaceErrorTitle(action.error, messages, messages.operationFailed)}</AlertTitle>
-                <AlertDescription>{getWorkspaceErrorMessage(action.error, messages)}</AlertDescription>
+                <AlertDescription className="space-y-2">
+                  <p>{getWorkspaceErrorMessage(action.error, messages)}</p>
+                  {action.error instanceof ApiClientError && (
+                    action.error.code === 'LLM_PROVIDER_UNCONFIGURED' || action.error.code === 'AI_AUTH_FAILED'
+                  ) ? (
+                    <Button render={<Link to="/settings/models" />} size="sm" variant="outline">
+                      <SettingsIcon aria-hidden="true" data-icon="inline-start" />
+                      {locale === 'zh-CN' ? '前往模型与服务商设置' : 'Open Models & Provider settings'}
+                    </Button>
+                  ) : null}
+                </AlertDescription>
               </Alert>
             )}
           </FieldGroup>

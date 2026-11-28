@@ -348,6 +348,7 @@
     [data-slot="alert-dialog-content"],
     [data-slot="alert-dialog-backdrop"],
     [data-slot="menu-content"],
+    [data-slot="popover-content"],
     [data-slot="select-content"],
     [data-slot="tooltip-content"]
   ):is([data-ending-style], [data-closed]),
@@ -355,6 +356,7 @@
     [data-slot="dialog-content"],
     [data-slot="alert-dialog-content"],
     [data-slot="menu-content"],
+    [data-slot="popover-content"],
     [data-slot="select-content"],
     [data-slot="tooltip-content"]
   ):is([data-ending-style], [data-closed]) * {

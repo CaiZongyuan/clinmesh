@@ -10,7 +10,7 @@ import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
 export async function startBrowserServer(webRoot: string, options: Partial<Pick<CreateClinMeshRuntimeOptions,
   'activeReferenceReleaseId' | 'referenceDatabasePath' | 'guidelineDatabasePath' | 'guidelineLocalEvaluation' | 'syntheaProvider' | 'chatCompletionsProvider'
   | 'consultationModel' | 'patientPersonaModel' | 'trustedOrigins' | 'autoDispatchIntervalMs' | 'modelPricing' | 'drgRulesDirectory'
-  | 'imagingAssetDirectory' | 'imagingCatalogDirectory' | 'pathologyAssetDirectory' | 'pathologyCatalogDirectory'
+  | 'imagingAssetDirectory' | 'imagingCatalogDirectory' | 'pathologyAssetDirectory' | 'pathologyCatalogDirectory' | 'localProviders'
 >> & { qualityCompletions?: NonNullable<CreateClinMeshRuntimeOptions['chatCompletionsProvider']>['completeJson'] } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-e2e-server-'))
   let runtime: Awaited<ReturnType<typeof createClinMeshRuntime>> | undefined

@@ -1,5 +1,6 @@
 import { ComponentCatalog } from './component-catalog.tsx'
 import { ModelUsageWorkspace } from './model-usage-workspace.tsx'
+import { ModelsSettingsPage } from './models-settings-page.tsx'
 import { WorkspaceCard, WorkspaceCardLayout } from './workspace-card-layout.tsx'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { Field, FieldTitle } from '@clinmesh/ui/components/field'
@@ -80,6 +81,10 @@ export function SettingsWorkspace({
   theme,
 }: SettingsWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+
+  if (activeSection === 'modelsProvider') {
+    return <ModelsSettingsPage locale={locale} />
+  }
 
   if (activeSection === 'modelUsage') {
     return <div className="min-h-0 flex-1 overflow-y-auto p-4"><ModelUsageWorkspace key={`${session.actor.workspaceId}:${session.actor.epoch}:${session.actor.practitionerRoleId}`}

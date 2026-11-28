@@ -260,9 +260,11 @@ export function getWorkspaceErrorMessage(
   if (error.code === 'NETWORK_ERROR') return messages.networkErrorDescription
   if (error.code === 'REQUEST_TIMEOUT') return messages.requestTimeoutDescription
   if (error.code === 'UNEXPECTED_RESPONSE') return messages.unexpectedResponseDescription
-  if (error.code === 'AI_AUTH_FAILED') return messages.aiAuthenticationFailedDescription
-  if (error.code === 'AI_REQUEST_FAILED') return messages.aiRequestFailedDescription
-  if (error.code === 'AI_TIMEOUT') return messages.aiTimeoutDescription
+  if (error.code === 'LLM_PROVIDER_UNCONFIGURED') return messages.llmProviderUnconfiguredDescription
+  if (error.code === 'LLM_AUTH_FAILED' || error.code === 'AI_AUTH_FAILED') return messages.aiAuthenticationFailedDescription
+  if (error.code === 'LLM_RATE_LIMITED') return messages.llmRateLimitedDescription
+  if (error.code === 'LLM_REQUEST_FAILED' || error.code === 'AI_REQUEST_FAILED') return messages.aiRequestFailedDescription
+  if (error.code === 'LLM_TIMEOUT' || error.code === 'AI_TIMEOUT') return messages.aiTimeoutDescription
   if (error.code === 'AI_RESPONSE_INVALID') return messages.aiResponseInvalidDescription
   if (error.code === 'AI_REQUEST_TOO_LARGE' || error.code === 'AI_RESPONSE_TOO_LARGE') {
     return messages.aiSizeLimitDescription

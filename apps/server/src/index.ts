@@ -36,6 +36,7 @@ const runtime = await createClinMeshRuntime({
   imagingCatalogDirectory: resolve(config.imagingCatalogDirectory),
   pathologyAssetDirectory: resolve(config.pathologyAssetDirectory),
   pathologyCatalogDirectory: resolve(config.pathologyCatalogDirectory),
+  localProviders: { enabled: config.localCliProvidersEnabled },
   migrationMode: 'verify',
   ...(config.referenceDatabasePath === undefined
     ? {}

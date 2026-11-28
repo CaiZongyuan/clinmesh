@@ -45,6 +45,7 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_IMAGING_CATALOG_DIRECTORY: z.string().trim().min(1).optional(),
   CLINMESH_PATHOLOGY_ASSET_DIRECTORY: z.string().trim().min(1).optional(),
   CLINMESH_PATHOLOGY_CATALOG_DIRECTORY: z.string().trim().min(1).optional(),
+  CLINMESH_LOCAL_CLI_PROVIDERS: z.enum(['true', 'false']).default('true').transform(value => value === 'true'),
   CLINMESH_PORT: z.string()
     .regex(/^\d+$/)
     .default('51868')
@@ -104,6 +105,7 @@ export interface ServerConfig {
   imagingCatalogDirectory: string
   pathologyAssetDirectory: string
   pathologyCatalogDirectory: string
+  localCliProvidersEnabled: boolean
   port: number
   referenceDatabasePath?: string
   referenceReleaseId?: string
@@ -246,6 +248,7 @@ export function readServerConfig(
     imagingCatalogDirectory: parsed.CLINMESH_IMAGING_CATALOG_DIRECTORY ?? defaultImagingCatalogDirectory,
     pathologyAssetDirectory: parsed.CLINMESH_PATHOLOGY_ASSET_DIRECTORY ?? defaultPathologyAssetDirectory,
     pathologyCatalogDirectory: parsed.CLINMESH_PATHOLOGY_CATALOG_DIRECTORY ?? defaultPathologyCatalogDirectory,
+    localCliProvidersEnabled: parsed.CLINMESH_LOCAL_CLI_PROVIDERS,
     port: parsed.CLINMESH_PORT,
     ...(parsed.CLINMESH_REFERENCE_DATABASE_PATH === undefined
       ? {}

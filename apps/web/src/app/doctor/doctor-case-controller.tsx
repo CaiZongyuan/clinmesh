@@ -36,6 +36,7 @@ import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
 import { DoctorQueueModule } from './doctor-queue-module.tsx'
 import { insertImagingReportSummary } from './imaging-report-summary.ts'
 import { DoctorCaseDetailRegion, DoctorWorkspaceLayout } from './responsive-layout.tsx'
+import { useActiveEncounterStore } from '../active-encounter-context.tsx'
 
 export function DoctorWorkspace(props: DoctorWorkspaceProps): React.JSX.Element {
   const actor = props.session.actor
@@ -192,6 +193,22 @@ function DoctorCaseController(props: DoctorCaseControllerProps): React.JSX.Eleme
   } = model
   const [completionReview, setCompletionReview] = useState<{ caseId: string; signature: string }>()
   useEffect(() => { setCompletionReview(undefined) }, [pageScope])
+  const setActiveEncounter = useActiveEncounterStore(state => state.setActiveEncounter)
+  const clearActiveEncounter = useActiveEncounterStore(state => state.clearActiveEncounter)
+  useEffect(() => {
+    const active = detail.data
+    if (active === undefined) {
+      clearActiveEncounter()
+      return
+    }
+    setActiveEncounter({
+      encounterId: active.encounter.id,
+      caseId: active.caseId,
+      patientId: active.patient.id,
+      patientName: active.patient.name,
+    })
+  }, [clearActiveEncounter, detail.data, setActiveEncounter])
+  useEffect(() => () => clearActiveEncounter(), [clearActiveEncounter])
   const completionSignature = stableViewKey(completion.data ?? {})
   // The completion trigger remounts when the review bar closes; focus it once it is back.
   const restoreCompletionTrigger = useRef(false)

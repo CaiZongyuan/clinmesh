@@ -1,4 +1,5 @@
 type RuntimeErrorScope =
+  | 'agent-runtime'
   | 'http'
   | 'laboratory-service-publication-dispatch'
   | 'model-usage-retention'

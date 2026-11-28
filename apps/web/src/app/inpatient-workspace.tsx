@@ -33,6 +33,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { ChevronDownIcon, RefreshCwIcon } from 'lucide-react'
 import { useInpatientRecordContinuation } from './inpatient-record-continuation.tsx'
+import { useActiveEncounterStore } from './active-encounter-context.tsx'
 
 export { yuanToFen } from './workspace-format.ts'
 
@@ -77,6 +78,21 @@ function InpatientWorkspaceContent({ session, locale }: { session: SessionContex
     if (patients.data?.items.length === 1 && !patient) setPatient(patients.data.items[0])
   }, [patients.data, patient])
   const selected = admissions.data?.items.find(admission => admission.id === selectedId)
+  const setActiveEncounter = useActiveEncounterStore(state => state.setActiveEncounter)
+  const clearActiveEncounter = useActiveEncounterStore(state => state.clearActiveEncounter)
+  useEffect(() => {
+    if (selected === undefined) {
+      clearActiveEncounter()
+      return
+    }
+    setActiveEncounter({
+      encounterId: selected.id,
+      caseId: selected.id,
+      patientId: selected.patientId,
+      patientName: selected.patientName,
+    })
+  }, [clearActiveEncounter, selected, setActiveEncounter])
+  useEffect(() => () => clearActiveEncounter(), [clearActiveEncounter])
   const issuedReferrals = (referrals.data?.items ?? []).filter(item => item.status === 'issued')
   const referral = referrals.data?.items.find(item => item.id === referralId) ?? (route === 'outpatient' ? issuedReferrals[0] : undefined)
   const availableWards = (catalog.data?.wards ?? []).filter(ward => ward.acceptingAdmissions !== false)

@@ -152,6 +152,7 @@ import {
 } from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
 import { clearMultiChargeDrafts } from './billing-multi-charge-draft.ts'
+import { buildLlmRequestHeaders } from './llm-settings-storage.ts'
 import {
   confirmDoctorPreparationRequestSchema,
   confirmDoctorPreparationResponseSchema,
@@ -185,7 +186,7 @@ export function configureApiBasePath(basePath: string): () => void {
   }
 }
 
-function resolveApiPath(path: string, method = 'GET'): string {
+export function resolveApiPath(path: string, method = 'GET'): string {
   if (configuredApiBasePath === '') return path
   if (method === 'GET' && /^\/fhir\/R5\/Patient\/(?!\.{1,2}$)[A-Za-z0-9.-]{1,64}$/.test(path)) {
     return `${configuredApiBasePath}/_${path.slice(1)}`
@@ -346,14 +347,16 @@ export async function apiMutation<Schema extends z.ZodType>(
   schema: Schema,
   body?: unknown,
   options: {
+    extraHeaders?: Record<string, string>
     idempotencyKey?: string
-    method?: 'DELETE' | 'POST' | 'PUT'
+    method?: 'DELETE' | 'PATCH' | 'POST' | 'PUT'
     signal?: AbortSignal
   } = {},
 ): Promise<z.infer<Schema>> {
   const headers: Record<string, string> = {
     accept: 'application/json',
     'content-type': 'application/json',
+    ...options.extraHeaders,
   }
   if (options.idempotencyKey !== undefined) {
     headers['idempotency-key'] = options.idempotencyKey
@@ -1248,7 +1251,10 @@ export function sendConsultationMessage(input: {
         message: input.message,
       },
     },
-    { idempotencyKey },
+    {
+      extraHeaders: buildLlmRequestHeaders('patient'),
+      idempotencyKey,
+    },
   )
 }
 
@@ -1265,7 +1271,10 @@ export function retryConsultationReply(input: {
         expectedConsultationVersion: input.expectedConsultationVersion,
       },
     },
-    { idempotencyKey },
+    {
+      extraHeaders: buildLlmRequestHeaders('patient'),
+      idempotencyKey,
+    },
   )
 }
 

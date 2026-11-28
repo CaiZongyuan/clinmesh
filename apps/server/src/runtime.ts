@@ -12,6 +12,10 @@ import { ScenarioService } from './application/scenario-service.ts'
 import { ReferenceDataService } from './application/reference-data-service.ts'
 import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { ConsultationDialogueService } from './application/consultation-dialogue-service.ts'
+import { AgentSessionService } from './application/agent-session-service.ts'
+import { createVisibleCaseReader } from './application/agent-clinical-reader.ts'
+import { ClinMeshProviderRegistry, type CustomMockResponder } from './infrastructure/agents/byok-provider-resolver.ts'
+import type { LocalCliProviderDiscoveryOptions } from './infrastructure/agents/local-cli-providers.ts'
 import { PatientPersonaService } from './application/patient-persona-service.ts'
 import { LaboratoryServicePublisher } from './application/laboratory-service-publisher.ts'
 import { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
@@ -158,6 +162,9 @@ export interface CreateClinMeshRuntimeOptions {
   pathologyCatalogDirectory?: string
   migrationMode: 'apply' | 'verify'
   chatCompletionsProvider?: JsonChatCompletionsProvider
+  mockResponder?: CustomMockResponder
+  mockTokensPerSecond?: number
+  localProviders?: LocalCliProviderDiscoveryOptions
   investigationModel?: string
   catalogEnrichmentModel?: string
   consultationModel?: string
@@ -182,6 +189,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
   })
   let referenceDatabase: ReferenceDatabase | undefined
   let guidelineCorpus: GuidelineCorpus | undefined
+  let agentSessions: AgentSessionService | undefined
   try {
     if (options.migrationMode === 'apply') applyMigrations(database)
     else verifyMigrations(database)
@@ -393,6 +401,30 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       profiles: syntheticPatientProfiles,
       workflow,
     })
+    const providerRegistry = new ClinMeshProviderRegistry({
+      ...(options.ai === undefined
+        ? {}
+        : {
+            serverDefault: {
+              provider: 'openai-compatible',
+              baseUrl: options.ai.baseUrl,
+              apiKey: options.ai.apiKey,
+              defaultModel: options.ai.consultationModel ?? options.ai.briefModel,
+              patientModel: options.ai.consultationModel,
+              timeoutMs: options.ai.timeoutMs,
+            },
+          }),
+      ...(recoverableChatCompletions === undefined ? {} : { injectedChatCompletions: recoverableChatCompletions }),
+      ...(options.mockResponder === undefined ? {} : { mockResponder: options.mockResponder }),
+      ...(options.mockTokensPerSecond === undefined ? {} : { mockTokensPerSecond: options.mockTokensPerSecond }),
+      ...(options.localProviders === undefined ? {} : { localProviders: options.localProviders }),
+    })
+    agentSessions = await AgentSessionService.open({
+      database,
+      providers: providerRegistry,
+      visibleCaseReader: createVisibleCaseReader((actor, caseId) => workflow.doctorCaseDetail(actor, caseId)),
+      onReport: (_scope, error) => reportRuntimeError({ error, scope: 'agent-runtime' }),
+    })
     const consultationDialogue = new ConsultationDialogueService({
       canResume: (workspaceId, taskId) => modelTasks.ready(workspaceId, taskId),
       contextStatus: context => identity.modelTaskContextStatus(context, ['consultation.ask-question', 'consultation.reply.retry']),
@@ -401,6 +433,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       cases: syntheticCases,
       commands,
       fhir,
+      agentSessions,
       ...(consultationModel === undefined ? {} : { model: consultationModel }),
       ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
       workflow,
@@ -784,6 +817,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       caseVisits,
       patientPersona,
       consultationDialogue,
+      agentSessions,
       laboratoryServicePublisher,
       referenceData,
       scenario,
@@ -796,6 +830,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     }, 60 * 60 * 1000)
     modelUsageRetentionTimer.unref()
     return {
+      agentSessions,
       app,
       close: (): Promise<void> => {
         if (closePromise !== undefined) return closePromise
@@ -819,6 +854,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             laboratoryServicePublicationCycle,
             patientPersonaCycle,
           ])
+          await agentSessions?.close()
           referenceDatabase?.close()
           referenceDatabase = undefined
           guidelineCorpus?.close()
@@ -847,6 +883,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workflow,
     }
   } catch (error) {
+    await agentSessions?.close().catch(() => undefined)
     referenceDatabase?.close()
     guidelineCorpus?.close()
     database.close()

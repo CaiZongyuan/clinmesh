@@ -30,6 +30,7 @@
     "@ui-sdk/core": "catalog:",
     "@ui-sdk/react": "catalog:",
     "lucide-react": "catalog:",
+    "mdast-util-from-markdown": "2.0.3",
     "openseadragon": "6.1.1",
     "react": "catalog:",
     "react-dom": "catalog:",

@@ -203,7 +203,7 @@ function canonicalDomainTables(database: ClinMeshDatabase): Record<string, unkno
     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
     ORDER BY name
   `).all() as Array<{ name: string }>).map(row => row.name)
-    .filter(table => !NON_AUTHORITATIVE_STATE_TABLES.has(table))
+    .filter(table => !NON_AUTHORITATIVE_STATE_TABLES.has(table) && !table.startsWith('pi_'))
 
   return Object.fromEntries(tables.map((table) => {
     const columns = database.driver.prepare(

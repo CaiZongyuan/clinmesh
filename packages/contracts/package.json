@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./agent": "./src/agent.ts",
+    "./agent-sessions": "./src/agent-sessions.ts",
     "./fhir": "./src/fhir.ts",
     "./health": "./src/health.ts",
     "./model-usage": "./src/model-usage.ts",

@@ -2,6 +2,7 @@ import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
 import { WorkspaceHeaderFlowSlot, WorkspaceHeaderLeadSlot, WorkspaceHeaderPatientSlot, WorkspaceHeaderProvider } from './workspace-card-layout.tsx'
 import { useWorkspaceMode, workspaceModeScope } from './workspace-mode.tsx'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
+import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -43,7 +44,9 @@ import {
   ClipboardPlusIcon,
   ChevronDownIcon,
   ComponentIcon,
+  CpuIcon,
   DatabaseIcon,
+  FlaskConicalIcon,
   HeartPulseIcon,
   LayoutDashboardIcon,
   LogOutIcon,
@@ -51,6 +54,8 @@ import {
   MaximizeIcon,
   MinimizeIcon,
   MoonIcon,
+  PanelRightCloseIcon,
+  PanelRightOpenIcon,
   PillIcon,
   ReceiptTextIcon,
   SettingsIcon,
@@ -63,6 +68,8 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 import { useWebRuntime } from './web-runtime.tsx'
+import { ClinicianAssistantSidebar } from './clinician-assistant-sidebar.tsx'
+import { useLlmSettings } from './llm-settings-storage.ts'
 import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessageKey } from './workspace-i18n.ts'
 
 export type WorkspaceTheme = 'system' | 'light' | 'dark'
@@ -82,6 +89,7 @@ export type WorkspaceSection = (typeof workspaceRoutes)[number]['key']
 
 export const settingsRoutes = [
   { key: 'settingsGeneral', path: '/settings', icon: SlidersHorizontalIcon },
+  { key: 'modelsProvider', path: '/settings/models', icon: CpuIcon },
   { key: 'modelUsage', path: '/settings/model-usage', icon: ChartNoAxesCombinedIcon },
   { key: 'uiComponents', path: '/settings/developer/components', icon: ComponentIcon },
 ] as const
@@ -474,6 +482,9 @@ export function WorkspaceShell({
   theme,
 }: WorkspaceShellProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const llmSettings = useLlmSettings()
+  const [assistantOpen, setAssistantOpen] = useState(false)
+  const [assistantRunning, setAssistantRunning] = useState(false)
   const mode = useWorkspaceMode(workspaceModeScope(session))
   const activeRoleSection = roleSections[session.actor.roleCode]
   const inpatientTitles: Partial<Record<SessionContext['actor']['roleCode'], string>> = {
@@ -503,6 +514,41 @@ export function WorkspaceShell({
         <WorkspaceHeaderPatientSlot />
         <WorkspaceHeaderFlowSlot />
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          {llmSettings.mockMode ? (
+            <Link
+              aria-label={locale === 'zh-CN' ? '当前为 Mock 模式，点击前往模型设置' : 'Mock Mode active, open Models settings'}
+              className="inline-flex items-center"
+              to="/settings/models"
+            >
+              <Badge data-clinmesh-mock-badge="" variant="secondary">
+                <FlaskConicalIcon aria-hidden="true" className="size-3" />
+                <span>Mock Mode</span>
+              </Badge>
+            </Link>
+          ) : null}
+          {!settingsMode ? (
+            <Button
+              aria-expanded={assistantOpen}
+              aria-label={locale === 'zh-CN'
+                ? (assistantOpen ? '收起临床助手' : '展开临床助手')
+                : (assistantOpen ? 'Hide clinician assistant' : 'Show clinician assistant')}
+              className="relative"
+              onClick={() => setAssistantOpen(open => !open)}
+              size="icon"
+              title={locale === 'zh-CN'
+                ? (assistantOpen ? '收起临床助手' : '展开临床助手')
+                : (assistantOpen ? 'Hide clinician assistant' : 'Show clinician assistant')}
+              type="button"
+              variant="ghost"
+            >
+              {assistantOpen
+                ? <PanelRightCloseIcon aria-hidden="true" />
+                : <PanelRightOpenIcon aria-hidden="true" />}
+              {!assistantOpen && assistantRunning ? (
+                <span aria-hidden="true" className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-primary" />
+              ) : null}
+            </Button>
+          ) : null}
           <WorkspaceDisplayButton locale={locale} />
           <UserMenu
             settingsMode={settingsMode}
@@ -543,9 +589,19 @@ export function WorkspaceShell({
   if (!settingsMode) {
     return (
       <WorkspaceHeaderProvider><TooltipProvider>
-        <main className="flex h-svh min-h-0 min-w-0 flex-col overflow-hidden">
-          {content}
-        </main>
+        <div className="flex h-svh min-h-0 min-w-0 overflow-hidden">
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            {content}
+          </main>
+          <ClinicianAssistantSidebar
+            locale={locale}
+            onCollapse={() => setAssistantOpen(false)}
+            onExpand={() => setAssistantOpen(true)}
+            onRunningChange={setAssistantRunning}
+            open={assistantOpen}
+            session={session}
+          />
+        </div>
       </TooltipProvider></WorkspaceHeaderProvider>
     )
   }

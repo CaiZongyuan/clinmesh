@@ -140,6 +140,8 @@ import { ScenarioError } from './application/scenario-service.ts'
 import type { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { ScenarioDataError } from './application/scenario-data/scenario-data-service.ts'
 import { ConsultationDialogueError, type ConsultationDialogueService } from './application/consultation-dialogue-service.ts'
+import { AgentSessionError, type AgentSessionService } from './application/agent-session-service.ts'
+import { registerAgentSessionRoutes } from './http/agent-session-routes.ts'
 import { createPatientPersonaRevisionFromEditRequestSchema } from '@clinmesh/contracts/scenario'
 import type { PatientPersonaService } from './application/patient-persona-service.ts'
 import { PatientPersonaError } from './application/patient-persona-service.ts'
@@ -192,6 +194,7 @@ export interface CreateAppOptions {
   investigation?: InvestigationService
   laboratoryServicePublisher?: LaboratoryServicePublisher
   consultationDialogue?: ConsultationDialogueService
+  agentSessions?: AgentSessionService
   patientPersona?: PatientPersonaService
   referenceData?: ReferenceDataService
   scenario?: ScenarioService
@@ -273,6 +276,7 @@ function apiErrorResponse(
       || error instanceof InsuranceError
       || error instanceof InpatientError
       || error instanceof ConsultationDialogueError
+      || error instanceof AgentSessionError
       || error instanceof LaboratoryServicePublisherError
     || error instanceof PatientPersonaError
     || error instanceof ImagingPreparationError
@@ -2256,6 +2260,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
           message: body.input.message,
+          llmHeaders: context.req.raw.headers,
         }))
       } catch (error) {
         return apiErrorResponse(context, error)
@@ -2276,6 +2281,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           encounterId: context.req.param('encounterId'),
           expectedConsultationVersion: body.input.expectedConsultationVersion,
           idempotencyKey: idempotencyKey(context),
+          llmHeaders: context.req.raw.headers,
         }))
       } catch (error) {
         return apiErrorResponse(context, error)
@@ -3637,6 +3643,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         Allow: 'GET',
         'Content-Type': 'application/fhir+json',
       })
+    })
+  }
+
+  if (options.identity !== undefined && options.agentSessions !== undefined) {
+    registerAgentSessionRoutes(app, {
+      identity: options.identity,
+      agentSessions: options.agentSessions,
+      apiErrorResponse,
     })
   }
 
