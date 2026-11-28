@@ -42,12 +42,15 @@ const runtime = await createClinMeshRuntime({
     ? {}
     : { referenceDatabasePath: config.referenceDatabasePath }),
   trustedOrigins: config.trustedOrigins,
+  ...(config.voice === undefined ? {} : { voice: config.voice }),
   webRoot,
 })
 const server = startServer({
   app: runtime.app,
   hostname: config.hostname,
+  identity: runtime.identity,
   port: config.port,
+  voice: runtime.voice,
 })
 
 server.once('close', () => {

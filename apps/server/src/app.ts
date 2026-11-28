@@ -142,6 +142,9 @@ import { ScenarioDataError } from './application/scenario-data/scenario-data-ser
 import { ConsultationDialogueError, type ConsultationDialogueService } from './application/consultation-dialogue-service.ts'
 import { AgentSessionError, type AgentSessionService } from './application/agent-session-service.ts'
 import { registerAgentSessionRoutes } from './http/agent-session-routes.ts'
+import type { VoiceService } from './application/voice-service.ts'
+import { VoiceServiceError } from './infrastructure/voice/bailian-voice-config.ts'
+import { registerVoiceRoutes } from './http/voice-routes.ts'
 import { createPatientPersonaRevisionFromEditRequestSchema } from '@clinmesh/contracts/scenario'
 import type { PatientPersonaService } from './application/patient-persona-service.ts'
 import { PatientPersonaError } from './application/patient-persona-service.ts'
@@ -195,6 +198,7 @@ export interface CreateAppOptions {
   laboratoryServicePublisher?: LaboratoryServicePublisher
   consultationDialogue?: ConsultationDialogueService
   agentSessions?: AgentSessionService
+  voice?: VoiceService
   patientPersona?: PatientPersonaService
   referenceData?: ReferenceDataService
   scenario?: ScenarioService
@@ -277,6 +281,7 @@ function apiErrorResponse(
       || error instanceof InpatientError
       || error instanceof ConsultationDialogueError
       || error instanceof AgentSessionError
+      || error instanceof VoiceServiceError
       || error instanceof LaboratoryServicePublisherError
     || error instanceof PatientPersonaError
     || error instanceof ImagingPreparationError
@@ -3650,6 +3655,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     registerAgentSessionRoutes(app, {
       identity: options.identity,
       agentSessions: options.agentSessions,
+      apiErrorResponse,
+    })
+  }
+
+  if (options.identity !== undefined && options.voice !== undefined) {
+    registerVoiceRoutes(app, {
+      identity: options.identity,
+      voice: options.voice,
       apiErrorResponse,
     })
   }

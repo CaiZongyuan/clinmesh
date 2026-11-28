@@ -24,7 +24,12 @@ import {
   Undo2Icon,
   XIcon,
 } from 'lucide-react'
-import { type RefObject, useMemo, useState } from 'react'
+import { type RefObject, useMemo, useRef, useState } from 'react'
+import {
+  AssistantDictationBanner,
+  AssistantVoiceDictateButton,
+  useAssistantDictation,
+} from '../voice/assistant-voice-dictate-button.tsx'
 import { AssistantModelPicker } from './assistant-model-picker.tsx'
 import { AssistantThinkingPicker } from './assistant-thinking-picker.tsx'
 import { ContextOccupancyRing } from './context-occupancy-ring.tsx'
@@ -164,6 +169,19 @@ export function AssistantComposer({
   zh,
 }: AssistantComposerProps): React.JSX.Element {
   const [mentionPickerOpen, setMentionPickerOpen] = useState(false)
+  const latestValueRef = useRef(value)
+  latestValueRef.current = value
+  const dictation = useAssistantDictation({
+    zh,
+    disabled: sendPending,
+    onAppendTranscript: (transcript) => {
+      const cleaned = transcript.trim()
+      if (cleaned.length === 0) return
+      const current = latestValueRef.current
+      const separator = current.length === 0 || /\s$/.test(current) ? '' : ' '
+      onChange(`${current}${separator}${cleaned}`)
+    },
+  })
   const trimmed = value.trim()
 
   const matchedSlashCommands = useMemo(() => {
@@ -402,6 +420,18 @@ export function AssistantComposer({
         </div>
       ) : null}
 
+      {/* Voice Dictation Live Preview / Error Banner */}
+      <AssistantDictationBanner
+        error={dictation.error}
+        interimText={dictation.interimText}
+        isListening={dictation.isListening}
+        level={dictation.level}
+        needsBailianConfig={dictation.needsBailianConfig}
+        onDismissError={dictation.clearError}
+        onStop={dictation.stop}
+        zh={zh}
+      />
+
       {/* Main Composer Frame (explicitly outside InputGroup so Popover portals keep focus cleanly) */}
       <div className="flex flex-col rounded-xl border border-border bg-background shadow-xs transition-shadow focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/25">
         {/* Quoted Passage Chip & Attached Clinical Entity Chips */}
@@ -531,6 +561,12 @@ export function AssistantComposer({
                 <AtSignIcon aria-hidden="true" className="size-3.5" />
               </Button>
             ) : null}
+            <AssistantVoiceDictateButton
+              disabled={sendPending}
+              isListening={dictation.isListening}
+              onToggle={dictation.toggleDictation}
+              zh={zh}
+            />
           </div>
 
           <div className="flex shrink-0 items-center gap-1">

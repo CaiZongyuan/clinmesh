@@ -532,10 +532,13 @@ export function CaseDetail({
                     setActiveSection('laboratory')
                   }
                 }}
+                caseId={detail.caseId}
                 consultation={detail.consultation}
                 key={`consultation:${detail.caseId}`}
                 locale={locale}
                 messages={messages}
+                patientBirthDate={detail.patient.birthDate}
+                patientGender={detail.patient.gender}
                 patientName={detail.patient.name}
                 readOnly={clinicalReadOnly}
               />

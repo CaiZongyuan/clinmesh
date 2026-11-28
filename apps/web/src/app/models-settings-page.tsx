@@ -43,6 +43,7 @@ import {
   type LiveLlmProviderKind,
 } from './llm-settings-storage.ts'
 import { WorkspaceCard, WorkspaceCardLayout } from './workspace-card-layout.tsx'
+import { VoiceSettingsCard } from './voice/voice-settings-card.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 
@@ -763,6 +764,8 @@ export function ModelsSettingsPage({ locale }: { locale: WorkspaceLocale }): Rea
             ) : null}
           </form>
         </WorkspaceCard>
+
+        <VoiceSettingsCard locale={locale} />
       </section>
     </WorkspaceCardLayout>
   )

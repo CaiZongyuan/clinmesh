@@ -14,6 +14,8 @@ import { ScenarioDataService } from './application/scenario-data/scenario-data-s
 import { ConsultationDialogueService } from './application/consultation-dialogue-service.ts'
 import type { DevReflectionConfig } from './application/agent-dev-reflection.ts'
 import { AgentSessionService } from './application/agent-session-service.ts'
+import { VoiceService } from './application/voice-service.ts'
+import type { ConnectVoiceUpstream, ServerVoiceConfig } from './infrastructure/voice/bailian-voice-config.ts'
 import { createVisibleCaseReader } from './application/agent-clinical-reader.ts'
 import { ClinMeshProviderRegistry, type CustomMockResponder } from './infrastructure/agents/byok-provider-resolver.ts'
 import type { LocalCliProviderDiscoveryOptions } from './infrastructure/agents/local-cli-providers.ts'
@@ -178,6 +180,8 @@ export interface CreateClinMeshRuntimeOptions {
   referencePerformanceObserver?: SqlitePerformanceObserver
   syntheaProvider?: ScenarioGenerationProvider
   trustedOrigins: string[]
+  voice?: ServerVoiceConfig
+  voiceConnectUpstream?: ConnectVoiceUpstream
   webRoot?: string
 }
 
@@ -786,6 +790,11 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             reportRuntimeError({ error, scope: 'laboratory-service-publication-dispatch' })
           })
         }, options.autoDispatchIntervalMs)
+    const voice = new VoiceService({
+      config: options.voice,
+      connectUpstream: options.voiceConnectUpstream,
+      now: options.now,
+    })
     const app = createApp({
       modelUsage,
       inpatient,
@@ -821,6 +830,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       patientPersona,
       consultationDialogue,
       agentSessions,
+      voice,
       laboratoryServicePublisher,
       referenceData,
       scenario,
@@ -886,6 +896,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       referenceData,
       scenario,
       scenarioData,
+      voice,
       workflow,
     }
   } catch (error) {
