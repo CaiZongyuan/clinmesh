@@ -1,5 +1,6 @@
 import type { Context, Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
+import { buildRoleAgentCapabilitiesManifest } from '@clinmesh/contracts/agent-capabilities'
 import {
   compactAgentSessionRequestSchema,
   createAgentSessionRequestSchema,
@@ -7,8 +8,11 @@ import {
   forkAgentSessionRequestSchema,
   renameAgentSessionRequestSchema,
   resetAgentSessionRequestSchema,
+  resolveAgentApprovalRequestSchema,
+  resolveAgentDevReflectionRequestSchema,
   sendAgentMessageRequestSchema,
   sideChatRequestSchema,
+  submitAgentUiBridgeResultRequestSchema,
   testLlmProviderRequestSchema,
   updateClinicianMemoryRequestSchema,
   type AgentSessionSseEvent,
@@ -30,6 +34,16 @@ export function registerAgentSessionRoutes(
     const session = await identity.resolveSessionContext(context.req.raw.headers)
     return session.actor
   }
+
+  app.get('/api/agents/capabilities', async (context) => {
+    context.header('Cache-Control', 'no-store')
+    try {
+      const actor = await resolveActor(context)
+      return context.json(buildRoleAgentCapabilitiesManifest(actor.roleCode))
+    } catch (error) {
+      return apiErrorResponse(context, error)
+    }
+  })
 
   app.get('/api/agents/providers/status', async (context) => {
     context.header('Cache-Control', 'no-store')
@@ -400,6 +414,61 @@ export function registerAgentSessionRoutes(
       return context.json(detail, 202)
     } catch (error) {
       return apiErrorResponse(context, error)
+    }
+  })
+
+  app.post('/api/agents/sessions/:sessionId/approvals/:approvalId', async (context) => {
+    context.header('Cache-Control', 'no-store')
+    try {
+      identity.assertTrustedMutation(context.req.raw.headers)
+      const actor = await resolveActor(context)
+      const body = resolveAgentApprovalRequestSchema.parse(await context.req.json())
+      const detail = await agentSessions.resolveClinicianApproval(
+        actor,
+        context.req.param('sessionId'),
+        context.req.param('approvalId'),
+        body,
+        context.req.raw.headers,
+      )
+      return context.json(detail)
+    } catch (error) {
+      return apiErrorResponse(context, error, 'The approval decision payload is invalid')
+    }
+  })
+
+  app.post('/api/agents/sessions/:sessionId/ui-bridge/:requestId', async (context) => {
+    context.header('Cache-Control', 'no-store')
+    try {
+      identity.assertTrustedMutation(context.req.raw.headers)
+      const actor = await resolveActor(context)
+      const body = submitAgentUiBridgeResultRequestSchema.parse(await context.req.json())
+      const result = await agentSessions.submitUiBridgeResult(
+        actor,
+        context.req.param('sessionId'),
+        context.req.param('requestId'),
+        body,
+      )
+      return context.json(result)
+    } catch (error) {
+      return apiErrorResponse(context, error, 'The UI bridge result payload is invalid')
+    }
+  })
+
+  app.post('/api/agents/sessions/:sessionId/dev-reflections/:reflectionId', async (context) => {
+    context.header('Cache-Control', 'no-store')
+    try {
+      identity.assertTrustedMutation(context.req.raw.headers)
+      const actor = await resolveActor(context)
+      const body = resolveAgentDevReflectionRequestSchema.parse(await context.req.json())
+      const result = await agentSessions.resolveDevReflection(
+        actor,
+        context.req.param('sessionId'),
+        context.req.param('reflectionId'),
+        body,
+      )
+      return context.json(result)
+    } catch (error) {
+      return apiErrorResponse(context, error, 'The dev reflection action payload is invalid')
     }
   })
 

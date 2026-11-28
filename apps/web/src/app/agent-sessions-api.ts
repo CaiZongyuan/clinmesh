@@ -1,4 +1,7 @@
 import {
+  agentCapabilitiesManifestSchema,
+} from '@clinmesh/contracts/agent-capabilities'
+import {
   agentSessionDetailSchema,
   agentSessionSseEventSchema,
   agentSessionSummarySchema,
@@ -10,6 +13,7 @@ import {
   llmProviderCatalogResponseSchema,
   llmProviderStatusResponseSchema,
   modelCallDetailResponseSchema,
+  resolveAgentDevReflectionResponseSchema,
   searchAgentSessionsResponseSchema,
   sessionContextResponseSchema,
   sideChatResponseSchema,
@@ -21,8 +25,11 @@ import {
   type ForkAgentSessionRequest,
   type RenameAgentSessionRequest,
   type ResetAgentSessionRequest,
+  type ResolveAgentApprovalRequest,
+  type ResolveAgentDevReflectionRequest,
   type SendAgentMessageRequest,
   type SideChatRequest,
+  type SubmitAgentUiBridgeResultRequest,
   type TestLlmProviderRequest,
   type UpdateClinicianMemoryRequest,
 } from '@clinmesh/contracts/agent-sessions'
@@ -37,6 +44,10 @@ const recallQueueResponseSchema = z.object({
   content: z.string(),
   detail: agentSessionDetailSchema,
 }).strict()
+
+export function getAgentCapabilities(signal?: AbortSignal) {
+  return apiGet('/api/agents/capabilities', agentCapabilitiesManifestSchema, signal)
+}
 
 export function getLlmProviderStatus(signal?: AbortSignal) {
   return apiGet('/api/agents/providers/status', llmProviderStatusResponseSchema, signal)
@@ -262,6 +273,44 @@ export function deleteClinicianMemory(memoryId: string) {
     listClinicianMemoryResponseSchema,
     undefined,
     { method: 'DELETE' },
+  )
+}
+
+const uiBridgeResultResponseSchema = z.object({ delivered: z.boolean() }).strict()
+
+export function resolveAgentApproval(
+  sessionId: string,
+  approvalId: string,
+  input: ResolveAgentApprovalRequest,
+) {
+  return apiMutation(
+    `/api/agents/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(approvalId)}`,
+    agentSessionDetailSchema,
+    input,
+  )
+}
+
+export function submitAgentUiBridgeResult(
+  sessionId: string,
+  requestId: string,
+  input: SubmitAgentUiBridgeResultRequest,
+) {
+  return apiMutation(
+    `/api/agents/sessions/${encodeURIComponent(sessionId)}/ui-bridge/${encodeURIComponent(requestId)}`,
+    uiBridgeResultResponseSchema,
+    input,
+  )
+}
+
+export function resolveAgentDevReflection(
+  sessionId: string,
+  reflectionId: string,
+  input: ResolveAgentDevReflectionRequest,
+) {
+  return apiMutation(
+    `/api/agents/sessions/${encodeURIComponent(sessionId)}/dev-reflections/${encodeURIComponent(reflectionId)}`,
+    resolveAgentDevReflectionResponseSchema,
+    input,
   )
 }
 

@@ -86,6 +86,7 @@ import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 import { AppRail } from './app-rail.tsx'
 import { useAppearance } from './appearance-context.tsx'
+import { AgentPresenceOverlay } from './agent-presence-overlay.tsx'
 import { ClinicianAssistantSidebar } from './clinician-assistant-sidebar.tsx'
 import { GlobalCommandPalette } from './command-palette.tsx'
 import { useLlmSettings } from './llm-settings-storage.ts'
@@ -1016,7 +1017,8 @@ export function WorkspaceShell({
               data-cm="app-shell-card"
             >
               <NavigationProgress sectionKey={activeSection} />
-              <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                {clinicalMode ? <AgentPresenceOverlay locale={locale} /> : null}
                 {content}
               </main>
               {clinicalMode ? (

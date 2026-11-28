@@ -433,3 +433,58 @@ _Avoid_: Access log, Audit Event
 **Audit Event**:
 说明谁在什么上下文中访问或操作了什么以及结果如何的安全事件。
 _Avoid_: Provenance, application log
+
+## 智能体协作与操作面
+
+**Clinician Assistant**:
+嵌入医院工作台、与当前登录人类共同观察和协作的临床辅助智能体。它只能访问当前岗位与当前就诊的可见事实和页面草稿，不拥有独立越过人类提交正式临床决策的权限。
+_Avoid_: Copilot, AI sidebar, Agent Client
+
+**Evaluation Subject**:
+在受控评测运行（Evaluation Run）中接受临床能力评估的受测智能体。它运行在独立的 **Epoch** 中，严格受限于与人类医生相同的 **Reveal Policy**，与 **Virtual Patient** 对接完成完整诊疗闭环。
+_Avoid_: Clinician Assistant, test runner, simulator
+
+**Clinical Read View**:
+依据当前岗位权限与 **Reveal Policy**，从医院权威事实投影出的只读临床信息视图（涵盖病史、报告、目录、指南与确定性评分）。它不是可写数据源，且永不包含 **Case Truth** 或未揭示的 **Hidden Fact**。
+_Avoid_: Database dump, raw API, Case Truth
+
+**Workspace Surface**:
+人类临床工作者当前在工作台上看到并交互的实时视图，包含尚未提交后端的本地表单草稿、当前打开的页签与审阅控件。它是建立人机互信的共同工作界面。
+_Avoid_: DOM, backend state, Command
+
+**Staged Draft**:
+由 **Clinician Assistant** 写入 **Workspace Surface**、处于待人类审阅状态的未提交修改集合。它尚未触发任何后端 **Command**，可被人类编辑、采纳或整批撤回，且不得静默覆盖人类已手工修改的内容。
+_Avoid_: Committed record, Command, Proposal receipt
+
+**UI Confirmation**:
+人类在 **Workspace Surface** 的目标临床控件原位对 **Clinician Assistant** 发起的高风险界面动作作出的显式批准。拒绝可在侧栏或原位触发，但批准必须在原位核对业务内容后点击；它保护界面到正式业务提交的人机交接边界，不等同于后端签发给受限客户端的一次性 **Approval Grant**。
+_Avoid_: Approval Grant, auto-submit, silent click, chat-box blind approve
+
+**Clinical Risk Tier**:
+跨越 **Workspace Surface** 与后端 **Command** 的唯一业务风险分级标准，区分只读观察（`read`）、常规可逆或草稿写入（`write`）与产生正式临床责任、不可逆状态跃迁或资金变动的高风险提交（`high-risk-write`）。前后端所有人工确认门禁均以同一风险分级为单一依据。
+_Avoid_: UI-only confirm flag, per-endpoint ad-hoc check
+
+**Volatile Interaction**:
+严格绑定于当前浏览器工作台瞬时状态、在页面刷新、切换患者、断开连接或超时后必须失效且不得自动重放的界面交互动作。它与可幂等重放的只读查询或可凭回执恢复的后端 **Command** 严格区分。
+_Avoid_: Durable Command, idempotent retry, background job
+
+**Clinical Playbook**:
+面向特定临床场景与岗位的精简操作指引，界定核对顺序、临床约束与异常处理路径。它按当前任务按需加载以替代冗长的全量手册，本身不构成授权、规则引擎或客观临床证据。
+_Avoid_: Monolithic manual, system prompt dump, Guideline Topic
+
+**Clinical Workflow Macro**:
+将特定岗位高频、固定的多步临床只读核查（如接诊全景核查、开药前安全预筛、完诊门禁核查）收敛为单一确定性复合动作的能力。它只聚合可见事实与风险提示，不产生正式业务写入。
+_Avoid_: Ad-hoc script, automatic order execution, Command
+
+**Ambient Trigger**:
+在用户显式开启伴随模式后，由高价值临床事件（如新问诊终态轮次或新报告签发）自动触发的后台草稿更新回合。它严格限于只读分析与 **Staged Draft** 更新，不得抢占人类主动对话，也不得主动发起 **UI Confirmation**。
+_Avoid_: Background auto-commit, silent write, keystroke watcher
+
+**Operation Surface**:
+从同一权威医院业务能力集合与 **Clinical Risk Tier** 投影出的受控访问接口形态，面向不同运行环境的参与者（如院内嵌入式交互、远程协议或命令行）暴露一致的业务语义、权限与审计边界。它不是第二套业务逻辑。
+_Avoid_: Separate backend, raw API proxy, duplicated service
+
+**Skill Receipt**:
+记录某次智能体运行实际交付的 **Clinical Playbook** 集合及其版本指纹与可用状态的可审计回执。它证明指导材料已送达该次运行，但不等同于智能体已遵循其中全部规则。
+_Avoid_: Execution log, Audit Event, prompt dump
+

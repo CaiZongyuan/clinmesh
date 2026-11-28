@@ -26,11 +26,17 @@ import {
   type ConversationView,
   type EntryId,
   type EntryRecord,
+  type Extension,
   type InboxState,
   type LiveState,
   type SubmissionId,
+  type TaskId,
+  type ToolRegistration,
   type ToolSlot,
 } from '@earendil-works/pi-durable'
+import { createToolSearchExtension } from '@earendil-works/pi-durable/tool-search'
+import { createCodemodeExtension } from '@earendil-works/pi-durable/codemode'
+import { CodemodeSandbox } from '@earendil-works/pi-codemode'
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite'
 import {
   type AgentCompactionState,
@@ -53,13 +59,34 @@ import {
   type ModelCallSummary,
   type RenameAgentSessionRequest,
   type ResetAgentSessionRequest,
+  type ResolveAgentApprovalRequest,
+  type ResolveAgentDevReflectionRequest,
+  type ResolveAgentDevReflectionResponse,
   type SearchAgentSessionsResponse,
   type SendAgentMessageRequest,
   type SessionContextResponse,
   type SideChatRequest,
   type SideChatResponse,
+  type SubmitAgentUiBridgeResultRequest,
   type UpdateClinicianMemoryRequest,
 } from '@clinmesh/contracts/agent-sessions'
+import {
+  ClinMeshDevReflectionsDoc,
+  createDevReflectionRuntime,
+  persistDevReflectionToDisk,
+  type DevReflectionConfig,
+  type DevReflectionRuntime,
+} from './agent-dev-reflection.ts'
+import {
+  ClinMeshPendingApprovalsDoc,
+  ClinMeshUiBridgeDoc,
+  ClinicianApprovalSignal,
+  UiBridgeResultSignal,
+  createProductionHisToolsBundle,
+  type EphemeralHisAuthContext,
+  type InProcessHisDispatcher,
+  type ProductionHisToolsBundle,
+} from './agent-his-tools.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import { BetterSqliteAdapter } from '../infrastructure/agents/better-sqlite-adapter.ts'
 import {
@@ -99,6 +126,7 @@ export type AgentSessionErrorCode =
   | 'AGENT_SESSION_BUSY'
   | 'AGENT_SESSION_RETRY_UNAVAILABLE'
   | 'AGENT_SESSION_INVALID'
+  | 'AGENT_APPROVAL_NOT_FOUND'
 
 export class AgentSessionError extends Error {
   readonly code: AgentSessionErrorCode
@@ -271,6 +299,7 @@ function patientEncounterKey(workspaceId: string, epoch: string, encounterId: st
 function clinicianAssistantSystemPrompt(
   meta: StoredSessionMeta,
   approvedMemories: readonly StoredClinicianMemoryItem[] = [],
+  devReflectionEnabled = false,
 ): string {
   const scopeLines = [
     CLINICAL_CONTEXT_MARKER,
@@ -281,11 +310,26 @@ function clinicianAssistantSystemPrompt(
   ]
   const customInstructions = meta.customInstructions?.trim() ?? ''
   return [
-    '你是 ClinMesh 中国公立医院仿真 HIS 的临床助手（Clinician Assistant）。',
-    '你只能依据医生界面当前可见信息和对话内容提供临床思路、问诊建议、鉴别诊断清单、病历整理和检查/用药安全提醒。',
-    '严禁臆造未报告的检验/检查结果；不得假设或泄露任何未向医生公开的病例真值。',
-    '可按需调用只读临床工具：read_visible_case_summary、read_lab_results、read_imaging_reports、read_medication_orders、read_vital_trends。',
-    '回答保持清晰、结构化，适合使用 Markdown 列表与小标题。',
+    '你是 ClinMesh 中国公立医院仿真 HIS 的可执行临床助手（Clinician Assistant）。',
+    '你不仅能回答临床问题，还可以【直接帮医生完成实际业务操作】（起草病历、诊断草稿、处方草稿、检查检验申请草稿、预填界面表单、核查完诊门禁等），而所有正式签署/确诊/开方/完诊/出院/收退款等高危提交都会自动弹出【医生确认卡片】，由医生一键确认后才真正落库。',
+    '',
+    '## 权限原则：黑名单与确认红线之外，默认全部放行',
+    '- **硬黑名单（仅禁止）**：`auth.*` 身份切换、`agent.*` 密钥与会话管理、`[data-agent-hidden]` 隐藏病例真值、`[data-agent-secret]` 明文口令。',
+    '- **医生一键确认红线（高危正式提交）**：正式签署病历（`encounter_clinical_document_sign`）、确认诊断（`encounter_diagnosis_confirm`）、开立处方（`encounter_prescription_issue`）、确认无需用药（`encounter_medication_conclusion_confirm_none`）、完诊（`encounter_complete`）、开立检查检验申请、分诊提交、住院医嘱/出院、收费退款等。此类操作已物理禁止在 `codemode` 中执行，请用 `tool_search` 加载后由模型直接调用，系统会自动弹出【医生确认卡片】待医生一键确认；医生点拒绝后严禁擅自重试。',
+    '- **默认全部放行（自主执行）**：除上述黑名单与确认红线外，所有读取、检索、**切换界面栏位/页签**、展开/筛选面板、表单预填草稿、病历/诊断/处方/检验草稿保存、预签预览、安全质控审计均可直接自主执行！不确定当前可执行事件清单时可调 `list_agent_capabilities`。',
+    '',
+    '## 工具体系与高效工作准则（严禁低效盲猜与反复弹窗）',
+    '1. **主动向患者问诊（1 步到位）**：医生让你继续问诊或向患者提问时，**直接调用 `macro_consultation_ask({ message })`**（可把 2–4 个关键追问合并成一条发送），内部自动读取最新 `consultation.version` 并返回患者回复，**严禁在 `codemode` 中循环试探版本号**！',
+    '2. **多项检验/检查/签署/确诊一次确认（强烈优先）**：需要开立多项检验、心电图/检查、影像，或同时需要签署病历+确认诊断+开立多项检查时，先用 `macro_search_clinical_catalog({ kind, queries })` 一次查齐有效目录 ID，然后**一次性调用 `batch_confirm_clinical_orders`** 把所有待确认项打包成 **1 张简洁清单卡片**让医生一次点确认；**严禁逐项调用 `*_issue` 反复弹窗打扰医生**！（提示：检验/检查草稿接口每次仅保存单条草稿，多项检验务必直接走 `batch_confirm_clinical_orders`。）',
+    '3. **前端工作台导航与实时协同（默认放行）**：切换栏位（如「问诊记录/患者对话栏」↔「病历记录/病历栏」/「诊断」/「检验检查」/「处方」）直接调用 `ui_navigate_workspace({ target })`；读取页面未保存手改内容调 `ui_read_workspace`；预填表单调 `ui_stage_form_draft`（自动跳过医生手改字段）。',
+    '4. **高频门诊快捷宏**：读病例全貌用 `macro_clinical_briefing`；安全质控预检用 `macro_safety_completion_audit`；写草稿前准备版本号用 `macro_outpatient_write_preflight`（`doctor_case_get` 已完整包含 `consultation.version` 及各项 `draftVersion`）；不确定流程调 `read_clinical_playbook`。',
+    '5. **全量角色授权 HIS 操作（渐进按需）**：可用 `codemode`（QuickJS 沙箱）并行执行只读/草稿/预览接口，或用 `tool_search` 加载单个工具。切记：**禁止在 `codemode` 中用 `for` 循环穷举试探版本号**——版本号直接从 `doctor_case_get` 读取。',
+    '6. **兼容快捷只读工具**：也可随时调用 `read_visible_case_summary`、`read_lab_results`、`read_imaging_reports`、`read_medication_orders`、`read_vital_trends` 与 `propose_clinician_preference`。',
+    '7. **隐私与真值红线**：严禁臆造未报告的检验/检查结果；严格遵守 Reveal Policy，严禁假设或泄露任何未向医生公开的隐藏病例真值。',
+    ...(devReflectionEnabled ? [
+      '8. **开发模式自检反思**：若当前处于开发模式且遭遇工具反复失败、字段缺失、参数校验摩擦、被迫多次弹窗或看到 `[DEV-WATCHDOG]` 熔断提示，请立即停止盲试，并在汇报后调用 `dev_reflect_friction` 生成结构化开发反思卡片，由开发者决定是否写入 `.dev-reflections/` 优化清单。',
+    ] : []),
+    '回答保持清晰、结构化，汇报实际写入的草稿/ID/待确认项。',
     ...(approvedMemories.length > 0 ? [
       '',
       '【已批准的医生工作偏好】',
@@ -645,6 +689,7 @@ export interface AgentSessionServiceOptions {
   database: ClinMeshDatabase
   providers: ClinMeshProviderRegistry
   visibleCaseReader?: VisibleCaseSummaryReader
+  devReflection?: DevReflectionConfig
   onReport?: (message: string, error: unknown) => void
 }
 
@@ -657,7 +702,15 @@ export class AgentSessionService {
   readonly #harness: Harness
   readonly #adapter: BetterSqliteAdapter
   readonly #providers: ClinMeshProviderRegistry
-  readonly #assistantExtension: ReturnType<typeof defineExtension>
+  readonly #assistantExtension: Extension
+  readonly #allAssistantExtensions: readonly Extension[]
+  readonly #baseAssistantTools: readonly ToolRegistration[]
+  readonly #toolSearchTools: readonly ToolRegistration[]
+  readonly #codemodeTools: readonly ToolRegistration[]
+  readonly #hisBundle: ProductionHisToolsBundle
+  readonly #devReflection: DevReflectionRuntime
+  readonly #httpDispatcherRef: { current?: InProcessHisDispatcher }
+  readonly #hisAuthByConversation: Map<number, EphemeralHisAuthContext>
   readonly #visibleCaseReader: VisibleCaseReader | undefined
   readonly #shutdown = new AbortController()
   readonly #activeWatchers = new Set<AbortController>()
@@ -667,13 +720,29 @@ export class AgentSessionService {
     harness: Harness,
     adapter: BetterSqliteAdapter,
     providers: ClinMeshProviderRegistry,
-    assistantExtension: ReturnType<typeof defineExtension>,
+    assistantExtension: Extension,
+    allAssistantExtensions: readonly Extension[],
+    baseAssistantTools: readonly ToolRegistration[],
+    toolSearchTools: readonly ToolRegistration[],
+    codemodeTools: readonly ToolRegistration[],
+    hisBundle: ProductionHisToolsBundle,
+    devReflection: DevReflectionRuntime,
+    httpDispatcherRef: { current?: InProcessHisDispatcher },
+    hisAuthByConversation: Map<number, EphemeralHisAuthContext>,
     visibleCaseReader: VisibleCaseReader | undefined,
   ) {
     this.#harness = harness
     this.#adapter = adapter
     this.#providers = providers
     this.#assistantExtension = assistantExtension
+    this.#allAssistantExtensions = allAssistantExtensions
+    this.#baseAssistantTools = baseAssistantTools
+    this.#toolSearchTools = toolSearchTools
+    this.#codemodeTools = codemodeTools
+    this.#hisBundle = hisBundle
+    this.#devReflection = devReflection
+    this.#httpDispatcherRef = httpDispatcherRef
+    this.#hisAuthByConversation = hisAuthByConversation
     this.#visibleCaseReader = visibleCaseReader
   }
 
@@ -683,6 +752,24 @@ export class AgentSessionService {
     const registry = createRegistry()
 
     let harnessRef: Harness | undefined
+    const httpDispatcherRef: { current?: InProcessHisDispatcher } = {}
+    const hisAuthByConversation = new Map<number, EphemeralHisAuthContext>()
+    const devReflection = createDevReflectionRuntime(options.devReflection)
+
+    const hisBundle = createProductionHisToolsBundle({
+      getDispatcher: () => httpDispatcherRef.current,
+      getAuthContext: conversationId => hisAuthByConversation.get(conversationId),
+      devReflection,
+      onMutationCommitted: async (conversationId) => {
+        if (harnessRef === undefined) return
+        const conv = await harnessRef.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT)
+        if (conv === undefined) return
+        await conv.commit(async (tx) => {
+          const doc = await tx.doc(ClinMeshPendingApprovalsDoc, conversationId as ConversationId)
+          doc.mutationVersion += 1
+        }, BACKGROUND_CONTEXT)
+      },
+    })
 
     const makeVisibleClinicalTool = (
       name: string,
@@ -890,6 +977,13 @@ export class AgentSessionService {
                   response: responseItems,
                   responseToolNames: toolNames,
                 })
+                if (message.stopReason === 'stop') {
+                  const fallbackReflection = devReflection.buildFallbackWatchdogReflection(api.conversationId)
+                  if (fallbackReflection !== null) {
+                    const reflDoc = await tx.doc(ClinMeshDevReflectionsDoc, api.conversationId)
+                    reflDoc.items = [...reflDoc.items.slice(-7), fallbackReflection]
+                  }
+                }
               }, BACKGROUND_CONTEXT)
             } catch (error) {
               options.onReport?.('context-snapshot:afterResponse', error)
@@ -925,7 +1019,33 @@ export class AgentSessionService {
         }),
       ],
     })
-    registry.install(assistantExtension)
+    const baseAssistantTools: readonly ToolRegistration[] = [
+      readVisibleCaseSummaryTool,
+      readLabResultsTool,
+      readImagingReportsTool,
+      readMedicationOrdersTool,
+      readVitalTrendsTool,
+      proposeClinicianPreferenceTool,
+    ]
+    const toolSearchExtension = createToolSearchExtension()
+    const codemodeSandbox = new CodemodeSandbox()
+    const codemodeExtension = createCodemodeExtension({
+      sandbox: codemodeSandbox,
+      models: false,
+      inlineBudget: 2_400,
+    })
+    const allAssistantExtensions: readonly Extension[] = [
+      assistantExtension,
+      toolSearchExtension,
+      codemodeExtension,
+      hisBundle.macroExtension,
+      hisBundle.uiBridgeExtension,
+      devReflection.extension,
+      ...hisBundle.domainExtensions,
+    ]
+    for (const ext of allAssistantExtensions) {
+      registry.install(ext)
+    }
 
     const harness = await Harness.open(
       storage,
@@ -966,8 +1086,70 @@ export class AgentSessionService {
       adapter,
       options.providers,
       assistantExtension,
+      allAssistantExtensions,
+      baseAssistantTools,
+      toolSearchExtension.tools ?? [],
+      codemodeExtension.tools ?? [],
+      hisBundle,
+      devReflection,
+      httpDispatcherRef,
+      hisAuthByConversation,
       options.visibleCaseReader,
     )
+  }
+
+  attachHttpDispatcher(dispatcher: InProcessHisDispatcher): void {
+    this.#httpDispatcherRef.current = dispatcher
+  }
+
+  #clinicianAgentConfig(
+    meta: StoredSessionMeta,
+    approvedMemories: readonly StoredClinicianMemoryItem[],
+  ) {
+    const isOutpatientDoctor = meta.roleCode === 'outpatient-doctor'
+    const roleMacros = isOutpatientDoctor
+      ? this.#hisBundle.macroTools
+      : this.#hisBundle.macroTools.filter(
+          t => t.name === 'read_clinical_playbook' || t.name === 'list_agent_capabilities',
+        )
+    const roleHisTools = this.#hisBundle.getRoleAllowedHisTools(meta.roleCode)
+    const allowedTools: ToolRegistration[] = [
+      ...this.#baseAssistantTools,
+      ...this.#toolSearchTools,
+      ...this.#codemodeTools,
+      ...roleMacros,
+      ...this.#hisBundle.uiBridgeTools,
+      ...this.#devReflection.tools,
+      ...roleHisTools,
+    ]
+    return {
+      extensions: this.#allAssistantExtensions,
+      tools: allowedTools,
+      instructions: clinicianAssistantSystemPrompt(meta, approvedMemories, this.#devReflection.enabled),
+      compaction: { enabled: meta.autoCompact ?? true },
+    }
+  }
+
+  #bindEphemeralHisAuth(conversationId: number, meta: StoredSessionMeta, headers: Headers): void {
+    const cookie = headers.get('cookie')?.trim()
+    const authorization = headers.get('authorization')?.trim()
+    const originHeader = headers.get('origin')?.trim()
+    const hostHeader = headers.get('host')?.trim()
+    const origin = originHeader && originHeader.startsWith('http')
+      ? originHeader
+      : hostHeader
+        ? `http://${hostHeader}`
+        : 'http://localhost'
+    this.#hisAuthByConversation.set(conversationId, {
+      ...(cookie ? { cookie } : {}),
+      ...(authorization ? { authorization } : {}),
+      origin,
+      roleCode: meta.roleCode,
+      workspaceId: meta.workspaceId,
+      epoch: meta.epoch,
+      caseId: meta.caseId,
+      encounterId: meta.encounterId,
+    })
   }
 
   get providers(): ClinMeshProviderRegistry {
@@ -986,6 +1168,7 @@ export class AgentSessionService {
       controller.abort()
     }
     this.#activeWatchers.clear()
+    this.#hisAuthByConversation.clear()
     await this.#harness.close(BACKGROUND_CONTEXT)
     await this.#adapter.close()
   }
@@ -1057,11 +1240,7 @@ export class AgentSessionService {
     const approvedMemories = await this.#approvedMemoriesFor(actor)
     const conversation = await this.#harness.createConversation({
       ownership: { kind: 'ownerless' },
-      agent: {
-        extensions: [this.#assistantExtension],
-        instructions: clinicianAssistantSystemPrompt(meta, approvedMemories),
-        compaction: { enabled: meta.autoCompact ?? true },
-      },
+      agent: this.#clinicianAgentConfig(meta, approvedMemories),
       init: async (tx, conversationId) => {
         // Ensure ProviderDoc exists immediately so transient BYOK credentials bind stably.
         await tx.doc(ProviderDoc, conversationId)
@@ -1203,11 +1382,7 @@ export class AgentSessionService {
     const approvedMemories = await this.#approvedMemoriesFor(actor)
     const forked = await conversation.fork(targetEntryId, {
       ownership: { kind: 'ownerless' },
-      agent: {
-        extensions: [this.#assistantExtension],
-        instructions: clinicianAssistantSystemPrompt(forkedMeta, approvedMemories),
-        compaction: { enabled: forkedMeta.autoCompact ?? true },
-      },
+      agent: this.#clinicianAgentConfig(forkedMeta, approvedMemories),
       init: async (tx, newConversationId) => {
         await tx.doc(ProviderDoc, newConversationId)
         const doc = await tx.doc(ClinMeshSessionMetaDoc, newConversationId)
@@ -1249,14 +1424,14 @@ export class AgentSessionService {
     const providerSessionId = await this.#ensureProviderSessionId(conversation)
     const bindingToken = this.#providers.bindTurn(providerSessionId, resolved)
     const approvedMemories = await this.#approvedMemoriesFor(actor)
+    this.#bindEphemeralHisAuth(conversation.id, meta, headers)
+    this.#devReflection.startTurn(conversation.id)
 
     try {
       await conversation.configure({
         model: { provider: resolved.internalProviderId, modelId: resolved.modelId },
         thinkingLevel: resolved.thinkingLevel,
-        extensions: [this.#assistantExtension],
-        instructions: clinicianAssistantSystemPrompt(meta, approvedMemories),
-        compaction: { enabled: meta.autoCompact ?? true },
+        ...this.#clinicianAgentConfig(meta, approvedMemories),
       }, BACKGROUND_CONTEXT)
 
       await conversation.commit(async (tx) => {
@@ -1737,6 +1912,115 @@ export class AgentSessionService {
     return this.#buildDetail(conversation)
   }
 
+  async resolveClinicianApproval(
+    actor: ActorContext,
+    sessionId: string,
+    approvalId: string,
+    input: ResolveAgentApprovalRequest,
+    headers: Headers,
+  ): Promise<AgentSessionDetail> {
+    const { conversation, meta } = await this.#resolveOwnedClinicianSession(actor, sessionId)
+    const approvalsDoc = await this.#harness.snapshot(ClinMeshPendingApprovalsDoc, conversation.id, BACKGROUND_CONTEXT)
+    const pending = approvalsDoc?.items.find(item => item.approvalId === approvalId)
+    if (pending === undefined) {
+      throw new AgentSessionError('AGENT_APPROVAL_NOT_FOUND', '未找到待确认的高危操作，可能已处理或已超时。', 404)
+    }
+
+    // Refresh ephemeral clinician cookie/origin from the explicit approval click request
+    this.#bindEphemeralHisAuth(conversation.id, meta, headers)
+
+    const delivery = await this.#harness.signal(
+      pending.taskId as TaskId,
+      ClinicianApprovalSignal,
+      approvalId,
+      {
+        approved: input.approved,
+        ...(input.reason === undefined ? {} : { reason: input.reason }),
+      },
+      BACKGROUND_CONTEXT,
+    )
+    if (delivery === 'not_found' || delivery === 'closed') {
+      await conversation.commit(async (tx) => {
+        const doc = await tx.doc(ClinMeshPendingApprovalsDoc, conversation.id)
+        doc.items = doc.items.filter(item => item.approvalId !== approvalId)
+      }, BACKGROUND_CONTEXT)
+    }
+    return this.#buildDetail(conversation)
+  }
+
+  async submitUiBridgeResult(
+    actor: ActorContext,
+    sessionId: string,
+    requestId: string,
+    input: SubmitAgentUiBridgeResultRequest,
+  ): Promise<{ delivered: boolean }> {
+    const { conversation } = await this.#resolveOwnedClinicianSession(actor, sessionId)
+    const bridgeDoc = await this.#harness.snapshot(ClinMeshUiBridgeDoc, conversation.id, BACKGROUND_CONTEXT)
+    const pending = bridgeDoc?.requests.find(item => item.requestId === requestId)
+    if (pending === undefined) {
+      return { delivered: false }
+    }
+    const delivery = await this.#harness.signal(
+      pending.taskId as TaskId,
+      UiBridgeResultSignal,
+      requestId,
+      {
+        ok: input.ok,
+        ...(input.resultJson === undefined ? {} : { resultJson: input.resultJson }),
+        ...(input.error === undefined ? {} : { error: input.error }),
+      },
+      BACKGROUND_CONTEXT,
+    )
+    if (delivery === 'not_found' || delivery === 'closed') {
+      await conversation.commit(async (tx) => {
+        const doc = await tx.doc(ClinMeshUiBridgeDoc, conversation.id)
+        doc.requests = doc.requests.filter(item => item.requestId !== requestId)
+      }, BACKGROUND_CONTEXT)
+      return { delivered: false }
+    }
+    return { delivered: delivery === 'delivered' }
+  }
+
+  async resolveDevReflection(
+    actor: ActorContext,
+    sessionId: string,
+    reflectionId: string,
+    input: ResolveAgentDevReflectionRequest,
+  ): Promise<ResolveAgentDevReflectionResponse> {
+    const { conversation, meta } = await this.#resolveOwnedClinicianSession(actor, sessionId)
+    const docSnap = await this.#harness.snapshot(ClinMeshDevReflectionsDoc, conversation.id, BACKGROUND_CONTEXT)
+    const target = docSnap?.items.find(item => item.reflectionId === reflectionId)
+    if (target === undefined) {
+      throw new AgentSessionError('AGENT_APPROVAL_NOT_FOUND', '未找到对应的开发反思记录。', 404)
+    }
+
+    let savedPath: string | null = target.savedPath
+    if (input.action === 'save' && target.status !== 'saved') {
+      savedPath = await persistDevReflectionToDisk(this.#devReflection.outputDir, target, {
+        roleCode: meta.roleCode,
+        sessionId: meta.sessionId,
+      })
+    }
+
+    const nextStatus: 'saved' | 'dismissed' = input.action === 'save' ? 'saved' : 'dismissed'
+    await conversation.commit(async (tx) => {
+      const doc = await tx.doc(ClinMeshDevReflectionsDoc, conversation.id)
+      doc.items = doc.items.map(item =>
+        item.reflectionId === reflectionId
+          ? { ...item, status: nextStatus, savedPath }
+          : item,
+      )
+    }, BACKGROUND_CONTEXT)
+
+    const detail = await this.#buildDetail(conversation)
+    const updatedReflection = { ...target, status: nextStatus, savedPath }
+    return {
+      reflection: updatedReflection,
+      savedPath,
+      detail,
+    }
+  }
+
   async retryLatestClinicianMessage(
     actor: ActorContext,
     sessionId: string,
@@ -1803,14 +2087,14 @@ export class AgentSessionService {
     const providerSessionId = await this.#ensureProviderSessionId(conversation)
     const bindingToken = this.#providers.bindTurn(providerSessionId, resolved)
     const approvedMemories = await this.#approvedMemoriesFor(actor)
+    this.#bindEphemeralHisAuth(conversation.id, meta, headers)
+    this.#devReflection.startTurn(conversation.id)
 
     try {
       await conversation.configure({
         model: { provider: resolved.internalProviderId, modelId: resolved.modelId },
         thinkingLevel: resolved.thinkingLevel,
-        extensions: [this.#assistantExtension],
-        instructions: clinicianAssistantSystemPrompt(meta, approvedMemories),
-        compaction: { enabled: meta.autoCompact ?? true },
+        ...this.#clinicianAgentConfig(meta, approvedMemories),
       }, BACKGROUND_CONTEXT)
 
       await conversation.commit(async (tx) => {
@@ -1864,6 +2148,9 @@ export class AgentSessionService {
         const inbox = (view.docs['pi.inbox'] as InboxState | undefined)
           ?? await this.#harness.snapshot(InboxDoc, conversation.id, BACKGROUND_CONTEXT)
         const snapDoc = await this.#harness.snapshot(ClinMeshContextSnapshotsDoc, conversation.id, BACKGROUND_CONTEXT)
+        const approvalsDoc = await this.#harness.snapshot(ClinMeshPendingApprovalsDoc, conversation.id, BACKGROUND_CONTEXT)
+        const uiBridgeDoc = await this.#harness.snapshot(ClinMeshUiBridgeDoc, conversation.id, BACKGROUND_CONTEXT)
+        const reflectionsDoc = await this.#harness.snapshot(ClinMeshDevReflectionsDoc, conversation.id, BACKGROUND_CONTEXT)
         const modelCalls = snapDoc?.calls.map(item => toPublicModelCallSummary(item.summary)) ?? []
         const latestContextCall = modelCalls.length > 0 ? modelCalls[modelCalls.length - 1]! : null
         const { messages, canRetryLatest } = projectMessagesFromEntries(view.entries, live, modelCalls)
@@ -1875,6 +2162,10 @@ export class AgentSessionService {
           queuedInputs: projectQueuedInputs(inbox),
           retryState: projectRetryState(live, text => this.#providers.redact(text)),
           compactionState: projectCompactionState(live, text => this.#providers.redact(text)),
+          pendingApprovals: approvalsDoc?.items ?? [],
+          pendingUiRequests: uiBridgeDoc?.requests ?? [],
+          devReflections: (reflectionsDoc?.items ?? []).filter(item => item.status !== 'dismissed'),
+          mutationVersion: approvalsDoc?.mutationVersion ?? 0,
         })
       }
 
@@ -2143,6 +2434,9 @@ export class AgentSessionService {
     const live = await this.#harness.snapshot(LiveDoc, conversation.id, BACKGROUND_CONTEXT)
     const inbox = await this.#harness.snapshot(InboxDoc, conversation.id, BACKGROUND_CONTEXT)
     const snapDoc = await this.#harness.snapshot(ClinMeshContextSnapshotsDoc, conversation.id, BACKGROUND_CONTEXT)
+    const approvalsDoc = await this.#harness.snapshot(ClinMeshPendingApprovalsDoc, conversation.id, BACKGROUND_CONTEXT)
+    const uiBridgeDoc = await this.#harness.snapshot(ClinMeshUiBridgeDoc, conversation.id, BACKGROUND_CONTEXT)
+    const reflectionsDoc = await this.#harness.snapshot(ClinMeshDevReflectionsDoc, conversation.id, BACKGROUND_CONTEXT)
     const modelCalls = snapDoc?.calls.map(item => toPublicModelCallSummary(item.summary)) ?? []
     const latestContextCall = modelCalls.length > 0 ? modelCalls[modelCalls.length - 1]! : null
     const page = await conversation.entries({ order: 'ascending' }, 500, undefined, BACKGROUND_CONTEXT)
@@ -2155,6 +2449,10 @@ export class AgentSessionService {
       queuedInputs: projectQueuedInputs(inbox),
       retryState: projectRetryState(live, text => this.#providers.redact(text)),
       compactionState: projectCompactionState(live, text => this.#providers.redact(text)),
+      pendingApprovals: approvalsDoc?.items ?? [],
+      pendingUiRequests: uiBridgeDoc?.requests ?? [],
+      devReflections: (reflectionsDoc?.items ?? []).filter(item => item.status !== 'dismissed'),
+      mutationVersion: approvalsDoc?.mutationVersion ?? 0,
     }
   }
 }

@@ -38,3 +38,4 @@ docs/ui/references/
 dsh-upstreams.discovery.json
 .upstream-evidence/
 .baseline-ui/
+.dev-reflections/

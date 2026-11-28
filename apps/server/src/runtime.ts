@@ -12,6 +12,7 @@ import { ScenarioService } from './application/scenario-service.ts'
 import { ReferenceDataService } from './application/reference-data-service.ts'
 import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { ConsultationDialogueService } from './application/consultation-dialogue-service.ts'
+import type { DevReflectionConfig } from './application/agent-dev-reflection.ts'
 import { AgentSessionService } from './application/agent-session-service.ts'
 import { createVisibleCaseReader } from './application/agent-clinical-reader.ts'
 import { ClinMeshProviderRegistry, type CustomMockResponder } from './infrastructure/agents/byok-provider-resolver.ts'
@@ -131,6 +132,7 @@ function pathologyActorContext(event: {
 export interface CreateClinMeshRuntimeOptions {
   modelUsageControl?: ModelUsagePolicyConfig
   modelPricing?: ModelPricingConfig
+  devReflection?: DevReflectionConfig
   activeReferenceReleaseId?: string
   ai?: {
     apiKey: string
@@ -423,6 +425,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       database,
       providers: providerRegistry,
       visibleCaseReader: createVisibleCaseReader((actor, caseId) => workflow.doctorCaseDetail(actor, caseId)),
+      ...(options.devReflection === undefined ? {} : { devReflection: options.devReflection }),
       onReport: (_scope, error) => reportRuntimeError({ error, scope: 'agent-runtime' }),
     })
     const consultationDialogue = new ConsultationDialogueService({
@@ -824,6 +827,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       scenarioData,
       workflow,
       ...(options.webRoot === undefined ? {} : { webRoot: options.webRoot }),
+    })
+    agentSessions.attachHttpDispatcher({
+      dispatch: request => Promise.resolve(app.fetch(request)),
     })
     const modelUsageRetentionTimer = setInterval(() => {
       try { modelUsage.compactUsage() } catch (error) { reportRuntimeError({ error, scope: 'model-usage-retention' }) }

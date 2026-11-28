@@ -363,6 +363,105 @@ export const agentSessionSummarySchema = z.object({
 }).strict()
 export type AgentSessionSummary = z.infer<typeof agentSessionSummarySchema>
 
+export const agentApprovalDetailItemSchema = z.object({
+  label: z.string().min(1),
+  value: z.string().min(1),
+  badge: z.string().min(1).nullable().optional(),
+}).strict()
+export type AgentApprovalDetailItem = z.infer<typeof agentApprovalDetailItemSchema>
+
+export const agentPendingApprovalSchema = z.object({
+  approvalId: z.string().min(1),
+  taskId: z.number().int().positive(),
+  callId: z.string().min(1),
+  operationId: z.string().min(1),
+  toolName: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  risk: z.enum(['write', 'high-risk-write']),
+  details: z.array(agentApprovalDetailItemSchema).optional(),
+  argumentsPreview: z.string(),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+}).strict()
+export type AgentPendingApproval = z.infer<typeof agentPendingApprovalSchema>
+
+export const resolveAgentApprovalRequestSchema = z.object({
+  approved: z.boolean(),
+  reason: z.string().trim().max(500).optional(),
+}).strict()
+export type ResolveAgentApprovalRequest = z.infer<typeof resolveAgentApprovalRequestSchema>
+
+export const agentUiBridgeActionSchema = z.enum([
+  'scopedSnapshot',
+  'navigate',
+  'query',
+  'stage',
+  'act',
+  'undoAgent',
+])
+export type AgentUiBridgeAction = z.infer<typeof agentUiBridgeActionSchema>
+
+export const agentUiBridgeRequestSchema = z.object({
+  requestId: z.string().min(1),
+  taskId: z.number().int().positive(),
+  callId: z.string().min(1),
+  action: agentUiBridgeActionSchema,
+  payloadJson: z.string(),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+}).strict()
+export type AgentUiBridgeRequest = z.infer<typeof agentUiBridgeRequestSchema>
+
+export const submitAgentUiBridgeResultRequestSchema = z.object({
+  ok: z.boolean(),
+  resultJson: z.string().max(120_000).optional(),
+  error: z.string().max(2_000).optional(),
+}).strict()
+export type SubmitAgentUiBridgeResultRequest = z.infer<typeof submitAgentUiBridgeResultRequestSchema>
+
+export const agentDevReflectionCategorySchema = z.enum([
+  'missing-field',
+  'schema-friction',
+  'version-conflict',
+  'approval-fatigue',
+  'slow-loop',
+  'ui-bridge-mismatch',
+  'prompt-gap',
+  'tool-error',
+])
+export type AgentDevReflectionCategory = z.infer<typeof agentDevReflectionCategorySchema>
+
+export const agentDevReflectionTelemetrySchema = z.object({
+  turnToolCalls: z.number().int().nonnegative(),
+  turnErrors: z.number().int().nonnegative(),
+  turnApprovals: z.number().int().nonnegative(),
+  turnDurationMs: z.number().int().nonnegative(),
+  topErrorCode: z.string().nullable(),
+}).strict()
+export type AgentDevReflectionTelemetry = z.infer<typeof agentDevReflectionTelemetrySchema>
+
+export const agentDevReflectionSchema = z.object({
+  reflectionId: z.string().min(1),
+  source: z.enum(['watchdog', 'agent-tool']),
+  category: agentDevReflectionCategorySchema,
+  title: z.string().min(1).max(160),
+  symptom: z.string().min(1).max(1_000),
+  rootCause: z.string().min(1).max(1_200),
+  suggestedFix: z.string().min(1).max(1_200),
+  affectedTools: z.array(z.string().min(1)).max(16),
+  telemetry: agentDevReflectionTelemetrySchema,
+  status: z.enum(['pending', 'saved', 'dismissed']),
+  savedPath: z.string().nullable(),
+  createdAt: z.string(),
+}).strict()
+export type AgentDevReflection = z.infer<typeof agentDevReflectionSchema>
+
+export const resolveAgentDevReflectionRequestSchema = z.object({
+  action: z.enum(['save', 'dismiss']),
+}).strict()
+export type ResolveAgentDevReflectionRequest = z.infer<typeof resolveAgentDevReflectionRequestSchema>
+
 export const agentSessionDetailSchema = z.object({
   session: agentSessionSummarySchema,
   messages: z.array(agentSessionMessageSchema),
@@ -371,8 +470,19 @@ export const agentSessionDetailSchema = z.object({
   queuedInputs: z.array(agentQueuedInputSchema).optional(),
   retryState: agentRetryStateSchema.nullable().optional(),
   compactionState: agentCompactionStateSchema.optional(),
+  pendingApprovals: z.array(agentPendingApprovalSchema).optional(),
+  pendingUiRequests: z.array(agentUiBridgeRequestSchema).optional(),
+  devReflections: z.array(agentDevReflectionSchema).optional(),
+  mutationVersion: z.number().int().nonnegative().optional(),
 }).strict()
 export type AgentSessionDetail = z.infer<typeof agentSessionDetailSchema>
+
+export const resolveAgentDevReflectionResponseSchema = z.object({
+  reflection: agentDevReflectionSchema,
+  savedPath: z.string().nullable(),
+  detail: agentSessionDetailSchema,
+}).strict()
+export type ResolveAgentDevReflectionResponse = z.infer<typeof resolveAgentDevReflectionResponseSchema>
 
 export const listAgentSessionsResponseSchema = z.object({
   sessions: z.array(agentSessionSummarySchema),

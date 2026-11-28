@@ -1,6 +1,8 @@
+import './app/ui-agent-bridge.ts'
 import '@clinmesh/ui/styles.css'
 import './app/workspace-card-layout.css'
 import './app/agent-action-feedback.css'
+import './app/agent-presence-overlay.css'
 import './app/doctor/clinical-document-updates.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'

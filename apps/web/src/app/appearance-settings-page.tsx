@@ -50,6 +50,7 @@ import {
   UploadIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useAgentPresenceStore } from './agent-presence-store.ts'
 import { useAppearance } from './appearance-context.tsx'
 import type { FontSizePreference } from './preferences.ts'
 import {
@@ -71,6 +72,8 @@ export function AppearanceSettingsPage({
 }): React.JSX.Element {
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
+  const agentEffectsPaused = useAgentPresenceStore(s => s.effectsPaused)
+  const setAgentEffectsPaused = useAgentPresenceStore(s => s.setEffectsPaused)
   const {
     appearance,
     resolvedColorMode,
@@ -618,6 +621,19 @@ export function AppearanceSettingsPage({
                 aria-label={zh ? '减弱动效' : 'Reduce Motion'}
                 checked={appearance.reduceMotion}
                 onCheckedChange={setReduceMotion}
+              />
+            </SettingsRow>
+
+            <SettingsRow
+              anchor="agent-presence-fx"
+              description={zh ? '控制临床助手操作工作台时的流光边框、感知扫描线、目标高亮与虚拟光标提示（操作完成后自动退出）。' : 'Toggle the active border, perception scan, element highlight, and virtual cursor while the assistant works.'}
+              label={zh ? '智能体工作特效' : 'Agent Presence Visual Effects'}
+            >
+              <Switch
+                aria-label={zh ? '智能体工作特效' : 'Agent Presence Visual Effects'}
+                checked={!agentEffectsPaused}
+                data-testid="agent-presence-settings-switch"
+                onCheckedChange={checked => setAgentEffectsPaused(!checked)}
               />
             </SettingsRow>
           </SettingsCard>

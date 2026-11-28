@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { useState } from 'react'
+import { buildRoleAgentCapabilitiesManifest } from '@clinmesh/contracts/agent-capabilities'
 import type {
   AgentSessionDetail,
   LlmProviderCatalogResponse,
@@ -16,8 +18,12 @@ import userEvent from '@testing-library/user-event'
 import { createAgent } from '@ui-sdk/react/agent'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useActiveEncounterStore } from './active-encounter-context.tsx'
+import { AgentPresenceOverlay } from './agent-presence-overlay.tsx'
+import { useAgentPresenceStore } from './agent-presence-store.ts'
 import { ClinicianAssistantSidebar } from './clinician-assistant-sidebar.tsx'
 import { ModelsSettingsPage } from './models-settings-page.tsx'
+import { clinmeshUiAgentBridge } from './ui-agent-bridge.ts'
+import { WorkspaceTabs } from './workspace-card-layout.tsx'
 import {
   buildLlmRequestHeaders,
   DEFAULT_LLM_SETTINGS,
@@ -487,12 +493,11 @@ describe('Step 3 Models settings and Claude-style Clinician Assistant UI + Conte
 
     await screen.findByText('问诊建议')
 
-    // Every visible interactive element inside the sidebar has a clean accessible label
+    // Sidebar carries data-agent-hidden="" so UI-SDK agents cannot accidentally click their own controls
     const snapshot = agent.snapshot().filter(entry => !entry.offPage && entry.component !== 'more')
-    expect(snapshot.length).toBeGreaterThan(0)
-    for (const entry of snapshot) {
-      expect(entry.label, `${entry.component} (${entry.ref}) missing label`).toBeTruthy()
-    }
+    expect(snapshot).toEqual([])
+    const sidebarAside = document.querySelector('[data-clinmesh-assistant-sidebar]')
+    expect(sidebarAside?.hasAttribute('data-agent-hidden')).toBe(true)
 
     // Unified WorkProcessBlock is collapsed initially; clicking expands thinking + tool row
     expect(screen.queryByText('先核对主诉和既往史。')).toBeNull()
@@ -938,5 +943,302 @@ describe('Step 3 Models settings and Claude-style Clinician Assistant UI + Conte
     await user.click(screen.getByRole('button', { name: '新建助手会话' }))
     expect(await screen.findByText('临床助手已就绪')).toBeTruthy()
     expect(mutations).toHaveLength(0)
+  })
+
+  it('renders inline clinician approval cards and auto-executes parked UI-SDK bridge requests', async () => {
+    const user = userEvent.setup()
+    const bridgeCalls: Array<{ url: string; body: Record<string, unknown> }> = []
+    const approvalCalls: Array<{ url: string; body: Record<string, unknown> }> = []
+
+    const prevBridge = (window as unknown as { __clinmeshAgent?: unknown }).__clinmeshAgent
+    const mockBridge = {
+      scopedSnapshot: vi.fn(() => [{ ref: '主诉', component: 'input', value: '反复头晕一周', label: '主诉' }]),
+      getHumanEditedLabels: vi.fn(() => ['主诉']),
+      drainHumanChanges: vi.fn(() => []),
+      stage: vi.fn(async () => ({ applied: [], skippedHumanEdited: [] })),
+      setConfirmPolicy: vi.fn(),
+      act: vi.fn(async () => ({ result: { ok: true } })),
+      undoAgent: vi.fn(async () => undefined),
+    }
+    ;(window as unknown as { __clinmeshAgent?: unknown }).__clinmeshAgent = mockBridge
+
+    const nowIso = new Date().toISOString()
+    const expiresIso = new Date(Date.now() + 300_000).toISOString()
+    const parkedSessionDetail: AgentSessionDetail = {
+      session: {
+        sessionId: 'asess-4',
+        conversationId: 4,
+        kind: 'clinician-assistant',
+        title: '病历代写与签署确认',
+        scope: {
+          workspaceId: 'workspace-demo',
+          epoch: 'epoch-1',
+          roleCode: 'outpatient-doctor',
+          encounterId: 'enc-1',
+          caseId: 'case-1',
+          patientId: 'pat-1',
+        },
+        forkedFromSessionId: null,
+        status: 'running',
+        lastError: null,
+        messageCount: 1,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+      messages: [
+        {
+          id: 'entry-1',
+          entryId: 1,
+          role: 'user',
+          createdAt: nowIso,
+          blocks: [{ type: 'text', text: '帮我代写门急诊病历并准备签署' }],
+          stopReason: null,
+          errorMessage: null,
+          streaming: false,
+        },
+      ],
+      canRetryLatest: false,
+      latestContextCall: null,
+      pendingApprovals: [
+        {
+          approvalId: 'appr-1',
+          taskId: 1,
+          callId: 'call-1',
+          operationId: 'encounter.clinical-document.sign',
+          toolName: 'encounter_clinical_document_sign',
+          title: '签署门诊病历文书',
+          summary: '将已预览的门诊病历文书正式签署并归档。',
+          risk: 'high-risk-write',
+          details: [
+            { label: '主诉', value: '反复头晕一周', badge: '病历' },
+            { label: '初步评估', value: '高血压伴头晕待查' },
+          ],
+          argumentsPreview: '{"encounterId":"enc-1"}',
+          createdAt: nowIso,
+          expiresAt: expiresIso,
+        },
+      ],
+      pendingUiRequests: [
+        {
+          requestId: 'uibridge-1',
+          taskId: 1,
+          callId: 'call-2',
+          action: 'scopedSnapshot',
+          payloadJson: '{}',
+          createdAt: nowIso,
+          expiresAt: expiresIso,
+        },
+      ],
+      devReflections: [
+        {
+          reflectionId: 'refl-1',
+          source: 'watchdog',
+          category: 'version-conflict',
+          title: '工具连续出错（WORKFLOW_CONFLICT × 3）',
+          symptom: '连续 3 次 409 版本冲突。',
+          rootCause: '上游查询遗漏了版本号字段。',
+          suggestedFix: '在 doctor_case_get 中透出 consultation.version。',
+          affectedTools: ['encounter_consultation_ask'],
+          telemetry: {
+            turnToolCalls: 6,
+            turnErrors: 3,
+            turnApprovals: 0,
+            turnDurationMs: 14_200,
+            topErrorCode: 'WORKFLOW_CONFLICT',
+          },
+          status: 'pending',
+          savedPath: null,
+          createdAt: nowIso,
+        },
+      ],
+      mutationVersion: 1,
+    }
+
+    useActiveEncounterStore.getState().setActiveEncounter({
+      encounterId: 'enc-1',
+      caseId: 'case-1',
+      patientId: 'pat-1',
+      patientName: '张琴',
+    })
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      const method = init?.method ?? 'GET'
+      if (url.pathname === '/api/agents/providers/catalog') return Response.json(sampleCatalogResponse)
+      if (url.pathname === '/api/agents/sessions' && method === 'GET') {
+        return Response.json({ sessions: [parkedSessionDetail.session] })
+      }
+      if (url.pathname === '/api/agents/sessions/asess-4' && method === 'GET') {
+        return Response.json(parkedSessionDetail)
+      }
+      if (url.pathname === '/api/agents/sessions/asess-4/clinical-entities' || url.pathname === '/api/agents/clinical-entities') {
+        return Response.json({ encounterId: 'enc-1', caseId: 'case-1', entities: [] })
+      }
+      if (url.pathname === '/api/agents/memory' && method === 'GET') {
+        return Response.json({ items: [] })
+      }
+      if (url.pathname === '/api/agents/sessions/asess-4/ui-bridge/uibridge-1' && method === 'POST') {
+        bridgeCalls.push({ url: url.pathname, body: JSON.parse(String(init?.body ?? '{}')) })
+        return Response.json({ delivered: true })
+      }
+      if (url.pathname === '/api/agents/sessions/asess-4/approvals/appr-1' && method === 'POST') {
+        approvalCalls.push({ url: url.pathname, body: JSON.parse(String(init?.body ?? '{}')) })
+        return Response.json({ ...parkedSessionDetail, pendingApprovals: [] })
+      }
+      if (url.pathname === '/api/agents/sessions/asess-4/dev-reflections/refl-1' && method === 'POST') {
+        const savedRefl = {
+          ...parkedSessionDetail.devReflections![0]!,
+          status: 'saved' as const,
+          savedPath: '.dev-reflections/2026-11-28-version-conflict-refl-1.md',
+        }
+        return Response.json({
+          reflection: savedRefl,
+          savedPath: savedRefl.savedPath,
+          detail: { ...parkedSessionDetail, devReflections: [savedRefl] },
+        })
+      }
+      throw new Error(`Unexpected fetch: ${method} ${url.pathname}`)
+    }))
+
+    try {
+      renderWithRouter(
+        <ClinicianAssistantSidebar
+          locale="zh-CN"
+          onCollapse={vi.fn()}
+          onExpand={vi.fn()}
+          open
+          session={doctorSession}
+        />,
+      )
+
+      // 1. Inline approval card renders with title & human-readable clinical details checklist
+      expect(await screen.findByTestId('assistant-approval-card')).toBeTruthy()
+      expect(screen.getByText('签署门诊病历文书')).toBeTruthy()
+      expect(screen.getByTestId('assistant-approval-details').textContent).toContain('反复头晕一周')
+
+      // 2. Parked UI-SDK bridge snapshot request executes automatically and posts back
+      await waitFor(() => expect(bridgeCalls).toHaveLength(1))
+      expect(mockBridge.scopedSnapshot).toHaveBeenCalledTimes(1)
+      expect(bridgeCalls[0]?.body.ok).toBe(true)
+
+      // 3. Clicking Approve submits { approved: true } to approval endpoint
+      await user.click(screen.getByTestId('assistant-approval-approve'))
+      await waitFor(() => expect(approvalCalls).toHaveLength(1))
+      expect(approvalCalls[0]?.body).toEqual({ approved: true })
+
+      // 4. Dev Reflection card renders telemetry & saves to .dev-reflections/ on click
+      expect(await screen.findByTestId('assistant-dev-reflection-card')).toBeTruthy()
+      await user.click(screen.getByTestId('assistant-dev-reflection-save'))
+      expect((await screen.findByTestId('assistant-dev-reflection-saved-path')).textContent).toContain('.dev-reflections/')
+    } finally {
+      ;(window as unknown as { __clinmeshAgent?: unknown }).__clinmeshAgent = prevBridge
+    }
+  })
+
+  it('allows default-allow tab navigation between consultation and record, drives Agent Presence visual effects, and renders capabilities manifest', async () => {
+    const user = userEvent.setup()
+    useAgentPresenceStore.getState().clearPresence()
+
+    function DemoWorkspaceWithPresence() {
+      const [tab, setTab] = useState('consultation')
+      return (
+        <main>
+          <AgentPresenceOverlay locale="zh-CN" />
+          <WorkspaceTabs
+            id="demo-doctor-tabs"
+            items={[
+              { value: 'consultation', label: '问诊记录' },
+              { value: 'record', label: '病历记录' },
+              { value: 'diagnosis', label: '诊断' },
+              { value: 'prescription', label: '处方' },
+            ]}
+            locale="zh-CN"
+            onValueChange={setTab}
+            value={tab}
+          />
+          <div data-testid="active-tab-value">{tab}</div>
+        </main>
+      )
+    }
+
+    const manifest = buildRoleAgentCapabilitiesManifest('outpatient-doctor')
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      const method = init?.method ?? 'GET'
+      if (url.pathname === '/api/agents/capabilities' && method === 'GET') {
+        return Response.json(manifest)
+      }
+      if (url.pathname === '/api/agents/providers/catalog') return Response.json(sampleCatalogResponse)
+      if (url.pathname === '/api/agents/sessions' && method === 'GET') return Response.json({ sessions: [] })
+      if (url.pathname === '/api/agents/clinical-entities') {
+        return Response.json({ encounterId: 'enc-1', caseId: 'case-1', entities: [] })
+      }
+      throw new Error(`Unexpected fetch: ${method} ${url.pathname}`)
+    }))
+
+    renderWithRouter(
+      <>
+        <DemoWorkspaceWithPresence />
+        <ClinicianAssistantSidebar
+          locale="zh-CN"
+          onCollapse={vi.fn()}
+          onExpand={vi.fn()}
+          open
+          session={doctorSession}
+        />
+      </>,
+    )
+
+    expect((await screen.findByTestId('active-tab-value')).textContent).toBe('consultation')
+
+    // 1. Default-allow navigation via bridge.navigate('病历栏') switches seamlessly from consultation -> record
+    const navRes = await clinmeshUiAgentBridge.navigate('病历栏')
+    expect(navRes.ok).toBe(true)
+    expect(navRes.matchedValue).toBe('record')
+    await waitFor(() => expect(screen.getByTestId('active-tab-value').textContent).toBe('record'))
+
+    // 2. LLM habit: calling act([{ ref: '患者对话栏', action: 'press' }]) auto-translates to Tabs.setValue -> consultation
+    const actRes = await clinmeshUiAgentBridge.act({
+      steps: [{ ref: '患者对话栏', action: 'press' }],
+    })
+    expect(actRes.result.ok).toBe(true)
+    await waitFor(() => expect(screen.getByTestId('active-tab-value').textContent).toBe('consultation'))
+
+    // 3. Real Agent Presence events activate Active Border, Virtual Cursor, Highlight, Scan, and HUD (with WCAG Pause toggle)
+    useAgentPresenceStore.getState().beginUiAction({
+      category: 'navigate',
+      headline: '正在切换至「病历记录」',
+      badge: '切换 · 病历记录',
+      targetRect: { top: 80, left: 140, width: 96, height: 32 },
+      triggerClickRipple: true,
+      scan: true,
+    })
+
+    expect(await screen.findByTestId('agent-presence-hud')).toBeTruthy()
+    expect(screen.queryByTestId('agent-presence-motion-toggle')).toBeNull()
+    expect(screen.getByTestId('agent-presence-border').getAttribute('data-active')).toBe('true')
+    expect(screen.getByTestId('agent-presence-cursor').getAttribute('data-visible')).toBe('true')
+    expect(screen.getByTestId('agent-presence-highlight').getAttribute('data-visible')).toBe('true')
+    expect(screen.getByTestId('agent-presence-scan').getAttribute('data-scanning')).toBe('true')
+    expect(screen.getByTestId('agent-presence-root').hasAttribute('data-agent-hidden')).toBe(true)
+
+    // Settings-controlled FX pause hides visual overlays without cluttering the live HUD
+    useAgentPresenceStore.getState().setEffectsPaused(true)
+    await waitFor(() => expect(screen.getByTestId('agent-presence-border').getAttribute('data-active')).toBe('false'))
+    expect(screen.getByTestId('agent-presence-cursor').getAttribute('data-visible')).toBe('false')
+    useAgentPresenceStore.getState().setEffectsPaused(false)
+    await waitFor(() => expect(screen.getByTestId('agent-presence-border').getAttribute('data-active')).toBe('true'))
+
+    // Finishing the UI action when session is idle auto-closes Presence mode completely!
+    useAgentPresenceStore.getState().finishUiAction(0)
+    await waitFor(() => expect(screen.queryByTestId('agent-presence-hud')).toBeNull())
+    expect(screen.getByTestId('agent-presence-border').getAttribute('data-active')).toBe('false')
+    expect(useAgentPresenceStore.getState().active).toBe(false)
+
+    // 4. Capabilities & Blacklist popover renders live manifest from /api/agents/capabilities
+    await user.click(screen.getByTestId('assistant-capabilities-trigger'))
+    expect(await screen.findByTestId('assistant-capabilities-popover')).toBeTruthy()
+    expect(await screen.findByText('黑名单制 · 默认放行')).toBeTruthy()
+    expect(screen.getByText('切换工作区栏位与界面导航')).toBeTruthy()
   })
 })

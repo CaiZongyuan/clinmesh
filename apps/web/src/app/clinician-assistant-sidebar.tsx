@@ -1,9 +1,14 @@
+import type { AgentActivityEventCategory } from '@clinmesh/contracts/agent-capabilities'
 import type {
   AgentContentBlock,
+  AgentDevReflection,
+  AgentDevReflectionCategory,
+  AgentPendingApproval,
   AgentRetryState,
   AgentSessionDetail,
   AgentSessionMessage,
   AgentSessionSummary,
+  AgentUiBridgeRequest,
   ClinicalEntityMention,
 } from '@clinmesh/contracts/agent-sessions'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -47,12 +52,15 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
   SettingsIcon,
+  ShieldAlertIcon,
   SparklesIcon,
   TimerIcon,
+  Undo2Icon,
   XIcon,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useActiveEncounterStore } from './active-encounter-context.tsx'
+import { useAgentPresenceStore, type AgentPresenceRect } from './agent-presence-store.ts'
 import {
   compactAgentSession,
   createAgentSession,
@@ -67,13 +75,17 @@ import {
   recallQueuedAgentInput,
   renameAgentSession,
   resetAgentSession,
+  resolveAgentApproval,
+  resolveAgentDevReflection,
   retryLatestAgentMessage,
   sendAgentMessage,
   stopAgentSession,
+  submitAgentUiBridgeResult,
   subscribeAgentSessionEvents,
   updateAgentSession,
 } from './agent-sessions-api.ts'
 import { ApiClientError } from './api-client.ts'
+import { AssistantCapabilitiesMenu } from './assistant/assistant-capabilities-menu.tsx'
 import { AssistantComposer, type ComposerSendMode } from './assistant/assistant-composer.tsx'
 import { AssistantHistoryMenu } from './assistant/assistant-history-menu.tsx'
 import { AssistantPreferencesMenu } from './assistant/assistant-preferences-menu.tsx'
@@ -167,26 +179,596 @@ function groupConversationMessages(messages: readonly AgentSessionMessage[]): Ag
 const STARTER_PROMPTS = [
   {
     id: 'summary',
-    zhLabel: '整理当前病例摘要',
-    enLabel: 'Summarize visible case',
-    zhPrompt: '请帮我整理当前病例摘要',
-    enPrompt: 'Please summarize the current visible case.',
+    zhLabel: '整理当前病例摘要与检验异常',
+    enLabel: 'Summarize visible case & labs',
+    zhPrompt: '请帮我整理当前病例摘要，并重点标出分诊体征、既往史与已发布检验异常项。',
+    enPrompt: 'Please summarize the current visible case including vitals, history, and abnormal labs.',
   },
   {
-    id: 'differential',
-    zhLabel: '列出鉴别诊断思路',
-    enLabel: 'Differential diagnosis',
-    zhPrompt: '请结合当前可见信息，列出需要优先考虑和排除的鉴别诊断思路。',
-    enPrompt: 'List prioritized differential diagnoses based on the currently visible clinical findings.',
+    id: 'draft-chart',
+    zhLabel: '自动起草并预填门诊病历草稿',
+    enLabel: 'Auto-draft clinical document',
+    zhPrompt: '请结合当前可见分诊体征、既往史和问诊信息，帮我自动起草并保存结构化病历草稿（若我当前表单已有手改内容请保留不覆写），准备好签名预览待我确认。',
+    enPrompt: 'Draft and save the structured clinical document from visible clinical data without overwriting my manual edits, and prepare sign preview for my confirmation.',
   },
   {
     id: 'checklist',
-    zhLabel: '核对问诊与检查遗漏',
-    enLabel: 'Check history & workup gaps',
-    zhPrompt: '请帮我核对当前问诊要点、体征及关键检查是否存在遗漏或用药安全风险。',
-    enPrompt: 'Review key history, physical exam, workup gaps, and medication safety checks.',
+    zhLabel: '核查完诊门禁与临床质控遗漏',
+    enLabel: 'Audit completion gates & quality',
+    zhPrompt: '请帮我核查当前完诊门禁、临床质控、专病评分及待补齐项目，并列出下一步处理建议。',
+    enPrompt: 'Audit completion blockers, clinical quality checks, scores, and missing items.',
   },
 ] as const
+
+function readElementRect(el: HTMLElement | null | undefined): AgentPresenceRect | null {
+  if (!el || typeof el.getBoundingClientRect !== 'function') return null
+  const r = el.getBoundingClientRect()
+  if (r.width <= 0 || r.height <= 0) return null
+  return { top: r.top, left: r.left, width: r.width, height: r.height }
+}
+
+function shouldDelayVisualBeat(): boolean {
+  if (typeof window === 'undefined') return false
+  if (useAgentPresenceStore.getState().effectsPaused) return false
+  if (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    return false
+  }
+  // Skip visual pacing delay in synthetic jsdom environments (no real layout rect)
+  const mainRect = document.querySelector('main')?.getBoundingClientRect()
+  return Boolean(mainRect && mainRect.width > 0 && mainRect.height > 0)
+}
+
+function waitVisualBeat(ms: number): Promise<void> {
+  if (!shouldDelayVisualBeat()) return Promise.resolve()
+  return new Promise(resolve => window.setTimeout(resolve, ms))
+}
+
+function serializeSnapshotEntry(entry: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    ref: entry.ref,
+    component: entry.component,
+    label: entry.label,
+  }
+  if ('actions' in entry && Array.isArray(entry.actions)) out.actions = entry.actions
+  if ('value' in entry) out.value = entry.value
+  if ('checked' in entry) out.checked = entry.checked
+  if ('open' in entry) out.open = entry.open
+  if ('disabled' in entry && entry.disabled) out.disabled = entry.disabled
+  if ('confirm' in entry && entry.confirm) out.confirm = entry.confirm
+  if ('items' in entry && Array.isArray(entry.items)) out.items = entry.items.slice(0, 30)
+  if ('more' in entry && typeof entry.more === 'number' && entry.more > 0) out.more = entry.more
+  return out
+}
+
+function clearAgentDraftMarks(): void {
+  if (typeof document === 'undefined') return
+  for (const el of document.querySelectorAll('[data-agent-draft="true"]')) {
+    el.removeAttribute('data-agent-draft')
+  }
+}
+
+async function executeBrowserUiBridgeRequest(request: AgentUiBridgeRequest): Promise<{
+  ok: boolean
+  resultJson?: string
+  error?: string
+}> {
+  const bridge = typeof window !== 'undefined' ? window.__clinmeshAgent : undefined
+  if (bridge === undefined) {
+    return { ok: false, error: 'ClinMesh UI-SDK bridge is not mounted in this window.' }
+  }
+  let payload: Record<string, unknown> = {}
+  try {
+    payload = request.payloadJson ? JSON.parse(request.payloadJson) as Record<string, unknown> : {}
+  } catch {
+    return { ok: false, error: 'Invalid UI bridge payload JSON.' }
+  }
+
+  const presence = useAgentPresenceStore.getState()
+
+  try {
+    if (request.action === 'scopedSnapshot') {
+      const selector = typeof payload.selector === 'string' && payload.selector.trim().length > 0
+        ? payload.selector.trim()
+        : 'main, form, section[aria-labelledby]'
+      presence.beginUiAction({
+        category: 'perceive',
+        headline: '正在感知当前工作区控件与未保存表单',
+        badge: '感知工作区',
+        scan: true,
+      })
+      const entries = bridge.scopedSnapshot(selector).map(entry =>
+        serializeSnapshotEntry(entry as unknown as Record<string, unknown>),
+      )
+      presence.finishUiAction(900)
+      return {
+        ok: true,
+        resultJson: JSON.stringify({
+          entries,
+          humanEditedLabels: bridge.getHumanEditedLabels(),
+          recentHumanChanges: bridge.drainHumanChanges().map(c => ({
+            label: c.label,
+            ref: c.ref,
+            value: c.value,
+            source: c.source,
+          })),
+        }),
+      }
+    }
+
+    if (request.action === 'navigate') {
+      const target = typeof payload.target === 'string' ? payload.target.trim() : ''
+      const container = typeof payload.container === 'string' && payload.container.trim().length > 0
+        ? payload.container.trim()
+        : undefined
+      if (!target) {
+        return { ok: false, error: 'Missing required target parameter for ui_navigate_workspace.' }
+      }
+      const previewEl = typeof bridge.findTargetElement === 'function'
+        ? bridge.findTargetElement(target, target)
+        : null
+      if (previewEl && typeof previewEl.scrollIntoView === 'function') {
+        previewEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }
+      presence.beginUiAction({
+        category: 'navigate',
+        headline: `正在切换至「${target}」`,
+        badge: `切换 · ${target}`,
+        targetRect: readElementRect(previewEl),
+        triggerClickRipple: true,
+      })
+      await waitVisualBeat(180)
+      const navRes = await bridge.navigate(target, container)
+      if (navRes.ok && navRes.targetElement) {
+        presence.beginUiAction({
+          category: 'navigate',
+          headline: `已切换至「${navRes.matchedLabel ?? target}」`,
+          badge: `已切换 · ${navRes.matchedLabel ?? target}`,
+          targetRect: readElementRect(navRes.targetElement),
+          triggerClickRipple: true,
+        })
+      }
+      presence.finishUiAction(1_200)
+      return {
+        ok: navRes.ok,
+        resultJson: JSON.stringify({
+          ok: navRes.ok,
+          matchedLabel: navRes.matchedLabel,
+          matchedValue: navRes.matchedValue,
+          previousValue: navRes.previousValue,
+          tabsRef: navRes.tabsRef,
+          tabsLabel: navRes.tabsLabel,
+          availableTargets: navRes.availableTargets,
+        }),
+        ...(navRes.ok ? {} : { error: navRes.error ?? `无法切换到「${target}」` }),
+      }
+    }
+
+    if (request.action === 'query') {
+      const queried = await bridge.query(payload as never)
+      return {
+        ok: !('error' in queried),
+        resultJson: JSON.stringify(queried),
+        ...('error' in queried ? { error: String(queried.error) } : {}),
+      }
+    }
+
+    if (request.action === 'stage') {
+      const changes = Array.isArray(payload.changes)
+        ? payload.changes as Array<{ ref: string; key?: string; value: unknown }>
+        : []
+      const firstRef = changes[0]?.ref ?? '表单草稿'
+      const firstEl = typeof bridge.findTargetElement === 'function'
+        ? bridge.findTargetElement(firstRef)
+        : null
+      if (firstEl && typeof firstEl.scrollIntoView === 'function') {
+        firstEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }
+      presence.beginUiAction({
+        category: 'draft',
+        headline: changes.length > 1
+          ? `正在预填 ${changes.length} 项表单草稿（${firstRef} 等）`
+          : `正在预填「${firstRef}」`,
+        badge: `预填 · ${firstRef}`,
+        targetRect: readElementRect(firstEl),
+      })
+      await waitVisualBeat(160)
+      const staged = await bridge.stage(changes, { protectHumanEdits: true })
+      if (typeof bridge.findTargetElement === 'function') {
+        for (const applied of staged.applied) {
+          const el = bridge.findTargetElement(applied.ref)
+          el?.setAttribute('data-agent-draft', 'true')
+        }
+      }
+      presence.finishUiAction(1_250)
+      return {
+        ok: true,
+        resultJson: JSON.stringify({
+          appliedCount: staged.applied.length,
+          appliedRefs: staged.applied.map(a => a.ref),
+          skippedHumanEdited: staged.skippedHumanEdited,
+        }),
+      }
+    }
+
+    if (request.action === 'act') {
+      const steps = Array.isArray(payload.steps)
+        ? payload.steps as Array<{ ref: string; action: string; args?: unknown[] }>
+        : []
+      const firstStep = steps[0]
+      const targetHint = firstStep
+        ? (typeof firstStep.args?.[0] === 'string' && firstStep.action === 'setValue' ? firstStep.args[0] : firstStep.ref)
+        : '页面控件'
+      const targetEl = firstStep && typeof bridge.findTargetElement === 'function'
+        ? bridge.findTargetElement(firstStep.ref, typeof firstStep.args?.[0] === 'string' ? firstStep.args[0] : undefined)
+        : null
+      if (targetEl && typeof targetEl.scrollIntoView === 'function') {
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }
+      const isNavigation = firstStep?.action === 'setValue' || firstStep?.action === 'press' || firstStep?.action === 'setOpen'
+      presence.beginUiAction({
+        category: isNavigation ? 'navigate' : 'draft',
+        headline: `正在操作界面控件「${targetHint}」`,
+        badge: `操作 · ${targetHint}`,
+        targetRect: readElementRect(targetEl),
+        triggerClickRipple: firstStep?.action === 'press' || firstStep?.action === 'setValue' || firstStep?.action === 'toggle',
+      })
+      await waitVisualBeat(160)
+      bridge.setConfirmPolicy('deny')
+      const res = await bridge.act({ steps: steps as never }, { protectHumanEdits: true })
+      presence.finishUiAction(1_150)
+      if (!res.result.ok && res.needsClinicianConfirm) {
+        return {
+          ok: false,
+          resultJson: JSON.stringify(res),
+          error: `该控件命中高危医生确认红线（${res.needsClinicianConfirm.confirmMessage}），前端禁止直接静默点击；请改用对应的后端高危 HIS 工具以弹出【医生确认卡片】，或请医生本人确认。`,
+        }
+      }
+      return {
+        ok: res.result.ok,
+        resultJson: JSON.stringify(res),
+        ...(res.result.ok ? {} : { error: res.result.error?.message ?? 'UI action failed' }),
+      }
+    }
+
+    if (request.action === 'undoAgent') {
+      presence.beginUiAction({
+        category: 'revert',
+        headline: '正在撤销助手填写的表单草稿',
+        badge: '撤销助手修改',
+      })
+      await bridge.undoAgent()
+      clearAgentDraftMarks()
+      presence.finishUiAction(900)
+      return { ok: true, resultJson: JSON.stringify({ ok: true, undone: true }) }
+    }
+
+    return { ok: false, error: `Unsupported UI bridge action: ${String(request.action)}` }
+  } catch (error) {
+    presence.finishUiAction(600)
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+function describeToolPresence(toolName: string, zh: boolean): {
+  phase: AgentActivityEventCategory
+  headline: string
+  sectionHint?: string
+  scanning?: boolean
+} {
+  if (toolName === 'macro_consultation_ask' || toolName.includes('consultation')) {
+    return {
+      phase: 'draft',
+      headline: zh ? '正在向患者发起补充问诊' : 'Asking patient follow-up question',
+      sectionHint: '问诊记录',
+    }
+  }
+  if (toolName === 'batch_confirm_clinical_orders') {
+    return {
+      phase: 'approval',
+      headline: zh ? '正在整理批量临床确认清单' : 'Preparing batch clinical confirmation',
+    }
+  }
+  if (toolName === 'macro_search_clinical_catalog') {
+    return {
+      phase: 'compute',
+      headline: zh ? '正在并行检索临床目录项目' : 'Searching clinical service catalog',
+    }
+  }
+  if (toolName === 'ui_read_workspace') {
+    return { phase: 'perceive', headline: zh ? '正在扫描当前工作区控件与表单' : 'Scanning workspace controls', scanning: true }
+  }
+  if (toolName === 'ui_navigate_workspace') {
+    return { phase: 'navigate', headline: zh ? '正在切换工作区栏位' : 'Switching workspace tab' }
+  }
+  if (toolName === 'ui_stage_form_draft') {
+    return { phase: 'draft', headline: zh ? '正在实时预填页面表单草稿' : 'Staging live form draft' }
+  }
+  if (toolName === 'ui_act_workspace') {
+    return { phase: 'navigate', headline: zh ? '正在协同操作工作台控件' : 'Operating workspace control' }
+  }
+  if (toolName === 'ui_undo_agent_edits') {
+    return { phase: 'revert', headline: zh ? '正在撤销助手填写内容' : 'Reverting assistant edits' }
+  }
+  if (toolName.includes('clinical_document')) {
+    return {
+      phase: toolName.includes('preview') ? 'verify' : toolName.endsWith('_sign') ? 'approval' : 'draft',
+      headline: toolName.includes('preview')
+        ? (zh ? '正在执行病历签署预检' : 'Running sign preview')
+        : toolName.endsWith('_sign')
+          ? (zh ? '准备签署病历（等待医生确认）' : 'Awaiting clinician signature')
+          : (zh ? '正在起草结构化病历' : 'Drafting structured medical record'),
+      sectionHint: '病历记录',
+    }
+  }
+  if (toolName.includes('diagnosis')) {
+    return {
+      phase: toolName.includes('confirm') ? 'approval' : 'draft',
+      headline: toolName.includes('confirm')
+        ? (zh ? '准备确认临床诊断（等待医生确认）' : 'Awaiting diagnosis confirmation')
+        : (zh ? '正在起草临床诊断' : 'Drafting clinical diagnosis'),
+      sectionHint: '诊断',
+    }
+  }
+  if (toolName.includes('prescription') || toolName.includes('medication')) {
+    return {
+      phase: toolName.includes('issue') || toolName.includes('confirm') ? 'approval' : 'draft',
+      headline: toolName.includes('issue') || toolName.includes('confirm')
+        ? (zh ? '准备签发处方/用药结论（等待医生确认）' : 'Awaiting prescription approval')
+        : (zh ? '正在起草用药与处方方案' : 'Drafting prescription'),
+      sectionHint: '处方',
+    }
+  }
+  if (toolName.includes('laboratory') || toolName.includes('imaging') || toolName.includes('pathology') || toolName.includes('examination')) {
+    return {
+      phase: toolName.includes('read') || toolName.includes('get') ? 'perceive' : 'draft',
+      headline: toolName.includes('read') || toolName.includes('get')
+        ? (zh ? '正在核对检验检查报告' : 'Reviewing lab & imaging reports')
+        : (zh ? '正在起草检验检查申请' : 'Drafting investigation request'),
+      sectionHint: '检验检查',
+      scanning: toolName.includes('read') || toolName.includes('get'),
+    }
+  }
+  if (toolName.includes('audit') || toolName.includes('preview') || toolName.includes('quality')) {
+    return { phase: 'verify', headline: zh ? '正在执行临床安全与完诊质控核验' : 'Running clinical safety audit', scanning: true }
+  }
+  if (toolName === 'codemode' || toolName === 'tool_search' || toolName === 'read_clinical_playbook' || toolName === 'list_agent_capabilities') {
+    return { phase: 'compute', headline: zh ? '正在沙箱并行检索与编排临床操作' : 'Running parallel HIS orchestration' }
+  }
+  return { phase: 'perceive', headline: zh ? '正在读取当前病例临床资料' : 'Reading visible clinical case', scanning: true }
+}
+
+const DEV_REFLECTION_CATEGORY_LABEL_ZH: Record<AgentDevReflectionCategory, string> = {
+  'missing-field': '字段缺失',
+  'schema-friction': '校验摩擦',
+  'version-conflict': '版本冲突',
+  'approval-fatigue': '频繁确认',
+  'slow-loop': '耗时过长',
+  'ui-bridge-mismatch': '界面桥接',
+  'prompt-gap': '引导缺失',
+  'tool-error': '工具报错',
+}
+
+function buildDevReflectionCopyBrief(reflection: AgentDevReflection): string {
+  const sec = (reflection.telemetry.turnDurationMs / 1_000).toFixed(1)
+  return [
+    `## ClinMesh 开发反思工单：${reflection.title}`,
+    `- 分类：\`${reflection.category}\` · 来源：${reflection.source === 'watchdog' ? '自动摩擦探针' : '助手自检'}`,
+    `- 遥测：调用 ${reflection.telemetry.turnToolCalls} 次 · 失败 ${reflection.telemetry.turnErrors} 次（${reflection.telemetry.topErrorCode ?? '无'}）· 确认 ${reflection.telemetry.turnApprovals} 次 · 耗时 ${sec}s`,
+    `- 涉及工具：${reflection.affectedTools.join('、') || '未指定'}`,
+    `- 现象：${reflection.symptom}`,
+    `- 根因：${reflection.rootCause}`,
+    `- 建议优化：${reflection.suggestedFix}`,
+  ].join('\n')
+}
+
+function DevReflectionCard({
+  reflection,
+  pending,
+  onAction,
+  onCopy,
+  zh,
+}: {
+  reflection: AgentDevReflection
+  pending: boolean
+  onAction: (reflectionId: string, action: 'save' | 'dismiss') => void
+  onCopy: (brief: string) => void
+  zh: boolean
+}): React.JSX.Element {
+  const catLabel = zh ? DEV_REFLECTION_CATEGORY_LABEL_ZH[reflection.category] : reflection.category
+  const sec = (reflection.telemetry.turnDurationMs / 1_000).toFixed(1)
+  const isSaved = reflection.status === 'saved'
+
+  return (
+    <div
+      aria-label={reflection.title}
+      className="flex flex-col gap-1.5 rounded-lg border border-info/50 bg-info/10 p-2.5 text-xs"
+      data-testid="assistant-dev-reflection-card"
+      role="region"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge className="px-1.5 py-0 text-[0.625rem]" variant="secondary">
+              {zh ? `开发反思 · ${catLabel}` : `Dev Reflection · ${catLabel}`}
+            </Badge>
+            <span className="text-[0.625rem] text-muted-foreground">
+              {reflection.source === 'watchdog'
+                ? (zh ? '自动探针' : 'Watchdog')
+                : (zh ? '助手自检' : 'Self-check')}
+            </span>
+          </div>
+          <div className="font-semibold text-foreground">{reflection.title}</div>
+        </div>
+        <Button
+          aria-label={zh ? '忽略此开发反思卡片' : 'Dismiss dev reflection'}
+          className="size-6 shrink-0"
+          data-testid="assistant-dev-reflection-dismiss"
+          disabled={pending}
+          onClick={() => onAction(reflection.reflectionId, 'dismiss')}
+          size="icon-xs"
+          type="button"
+          variant="ghost"
+        >
+          <XIcon aria-hidden="true" className="size-3.5" />
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[0.625rem] text-muted-foreground">
+        <span>{zh ? `调用 ${reflection.telemetry.turnToolCalls} 次` : `${reflection.telemetry.turnToolCalls} calls`}</span>
+        <span>·</span>
+        <span>{zh ? `失败 ${reflection.telemetry.turnErrors} 次` : `${reflection.telemetry.turnErrors} err`}</span>
+        {reflection.telemetry.turnApprovals > 0 ? (
+          <>
+            <span>·</span>
+            <span>{zh ? `确认 ${reflection.telemetry.turnApprovals} 次` : `${reflection.telemetry.turnApprovals} approvals`}</span>
+          </>
+        ) : null}
+        <span>·</span>
+        <span>{sec}s</span>
+      </div>
+
+      <div className="space-y-0.5 rounded-md border border-border/60 bg-background/80 px-2 py-1.5 text-[0.6875rem] leading-snug">
+        <p className="text-muted-foreground"><strong className="text-foreground">{zh ? '现象：' : 'Symptom: '}</strong>{reflection.symptom}</p>
+        <p className="text-muted-foreground"><strong className="text-foreground">{zh ? '根因：' : 'Cause: '}</strong>{reflection.rootCause}</p>
+        <p className="text-muted-foreground"><strong className="text-foreground">{zh ? '建议：' : 'Fix: '}</strong>{reflection.suggestedFix}</p>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-1.5 pt-0.5">
+        {isSaved && reflection.savedPath ? (
+          <span className="truncate font-mono text-[0.625rem] text-foreground" data-testid="assistant-dev-reflection-saved-path">
+            {zh ? `已记录：${reflection.savedPath}` : `Saved: ${reflection.savedPath}`}
+          </span>
+        ) : (
+          <span className="text-[0.625rem] text-muted-foreground">
+            {zh ? '可写入本地 .dev-reflections/ 优化清单' : 'Save to local .dev-reflections/'}
+          </span>
+        )}
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            className="h-6 px-2 text-[0.6875rem]"
+            data-testid="assistant-dev-reflection-copy"
+            onClick={() => onCopy(buildDevReflectionCopyBrief(reflection))}
+            size="xs"
+            type="button"
+            variant="outline"
+          >
+            <CopyIcon aria-hidden="true" className="size-3" />
+            {zh ? '复制给研发 Agent' : 'Copy brief'}
+          </Button>
+          {!isSaved ? (
+            <Button
+              className="h-6 px-2 text-[0.6875rem]"
+              data-testid="assistant-dev-reflection-save"
+              disabled={pending}
+              onClick={() => onAction(reflection.reflectionId, 'save')}
+              size="xs"
+              type="button"
+              variant="default"
+            >
+              <CheckIcon aria-hidden="true" className="size-3" />
+              {zh ? '记录到开发目录' : 'Save to .dev-reflections'}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ClinicianApprovalCard({
+  approval,
+  pending,
+  onDecision,
+  zh,
+}: {
+  approval: AgentPendingApproval
+  pending: boolean
+  onDecision: (approvalId: string, approved: boolean) => void
+  zh: boolean
+}): React.JSX.Element {
+  const details = approval.details ?? []
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-lg border border-warning/60 bg-warning/10 p-2.5 text-xs"
+      data-testid="assistant-approval-card"
+      role="region"
+      aria-label={approval.title}
+    >
+      <div className="flex items-start gap-2">
+        <ShieldAlertIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-semibold text-foreground">{approval.title}</span>
+            <Badge className="px-1.5 py-0 text-[0.625rem]" variant="outline">
+              {zh ? '需医生确认' : 'Confirmation required'}
+            </Badge>
+          </div>
+          <p className="text-[0.75rem] leading-snug text-muted-foreground">{approval.summary}</p>
+        </div>
+      </div>
+
+      {details.length > 0 ? (
+        <ul
+          className="max-h-48 space-y-1 overflow-auto rounded-md border border-border/70 bg-background/85 px-2.5 py-2"
+          data-testid="assistant-approval-details"
+        >
+          {details.map((item, idx) => (
+            <li className="flex items-start gap-1.5 text-[0.75rem] leading-snug" key={`${item.label}-${idx}`}>
+              {item.badge ? (
+                <Badge className="mt-0.5 shrink-0 px-1.5 py-0 text-[0.625rem]" variant="secondary">
+                  {item.badge}
+                </Badge>
+              ) : (
+                <span className="mt-0.5 shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{idx + 1}.</span>
+              )}
+              <div className="min-w-0 flex-1">
+                <span className="font-medium text-foreground">{item.label}</span>
+                {item.value ? (
+                  <span className="text-muted-foreground">：{item.value}</span>
+                ) : null}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div className="flex items-center justify-between gap-2 pt-0.5">
+        <details className="min-w-0 flex-1">
+          <summary className="cursor-pointer select-none text-[0.6875rem] text-muted-foreground hover:text-foreground">
+            {zh ? '高级技术参数' : 'Technical parameters'}
+          </summary>
+          <pre className="mt-1.5 max-h-28 overflow-auto whitespace-pre-wrap break-all rounded border border-border/70 bg-background/80 p-1.5 font-mono text-[0.625rem] text-muted-foreground">
+            {approval.argumentsPreview}
+          </pre>
+        </details>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            data-testid="assistant-approval-reject"
+            disabled={pending}
+            onClick={() => onDecision(approval.approvalId, false)}
+            size="xs"
+            type="button"
+            variant="outline"
+          >
+            {zh ? '拒绝' : 'Reject'}
+          </Button>
+          <Button
+            data-testid="assistant-approval-approve"
+            disabled={pending}
+            onClick={() => onDecision(approval.approvalId, true)}
+            size="xs"
+            type="button"
+            variant="default"
+          >
+            <CheckIcon aria-hidden="true" className="size-3.5" />
+            {zh ? '确认执行' : 'Approve & Run'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function RetryCountdownBanner({
   retryState,
@@ -665,10 +1247,16 @@ export function ClinicianAssistantSidebar({
   const [sideChatQuestion, setSideChatQuestion] = useState<string | null>(null)
   const [preferencesOpen, setPreferencesOpen] = useState(false)
   const [minimapOpen, setMinimapOpen] = useState(false)
+  const [hasAgentUiEdits, setHasAgentUiEdits] = useState(false)
 
   const dragStartRef = useRef<{ x: number; width: number } | null>(null)
   const sidebarRef = useRef<HTMLElement | null>(null)
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const handledUiBridgeIdsRef = useRef(new Set<string>())
+  const lastMutationVersionRef = useRef<{ sessionId: string | null; version: number }>({
+    sessionId: null,
+    version: 0,
+  })
   const onRunningChangeRef = useRef(onRunningChange)
   onRunningChangeRef.current = onRunningChange
 
@@ -802,6 +1390,85 @@ export function ClinicianAssistantSidebar({
   useEffect(() => {
     onRunningChangeRef.current?.(isRunning)
   }, [isRunning])
+
+  const pendingApprovals = activeDetail?.pendingApprovals ?? []
+  const pendingUiRequests = activeDetail?.pendingUiRequests ?? []
+  const devReflections = activeDetail?.devReflections ?? []
+  const activeMutationVersion = activeDetail?.mutationVersion ?? 0
+
+  // Automatically sync main clinical workspace caches whenever the assistant persists a HIS write/draft
+  useEffect(() => {
+    if (selectedSessionId === null) {
+      lastMutationVersionRef.current = { sessionId: null, version: 0 }
+      return
+    }
+    const prev = lastMutationVersionRef.current
+    if (prev.sessionId !== selectedSessionId) {
+      lastMutationVersionRef.current = { sessionId: selectedSessionId, version: activeMutationVersion }
+      return
+    }
+    if (activeMutationVersion > prev.version) {
+      lastMutationVersionRef.current = { sessionId: selectedSessionId, version: activeMutationVersion }
+      void queryClient.invalidateQueries({
+        predicate: (query) => {
+          const head = query.queryKey[0]
+          return typeof head !== 'string' || !head.startsWith('agent-session')
+        },
+      })
+    }
+  }, [activeMutationVersion, queryClient, selectedSessionId])
+
+  // Execute parked frontend UI-SDK Park Bridge requests live in the open browser window
+  useEffect(() => {
+    if (selectedSessionId === null || pendingUiRequests.length === 0) return
+    for (const req of pendingUiRequests) {
+      if (handledUiBridgeIdsRef.current.has(req.requestId)) continue
+      handledUiBridgeIdsRef.current.add(req.requestId)
+      const targetSessionId = selectedSessionId
+      void executeBrowserUiBridgeRequest(req)
+        .then(async (result) => {
+          if (result.ok && (req.action === 'stage' || req.action === 'act')) {
+            setHasAgentUiEdits(true)
+          } else if (result.ok && req.action === 'undoAgent') {
+            setHasAgentUiEdits(false)
+          }
+          await submitAgentUiBridgeResult(targetSessionId, req.requestId, result)
+        })
+        .catch(() => {
+          // Ignore transient network errors; server park deadline handles fallback cleanly.
+        })
+    }
+  }, [pendingUiRequests, selectedSessionId])
+
+  const resolveApprovalMutation = useMutation({
+    mutationFn: ({ approvalId, approved }: { approvalId: string; approved: boolean }) =>
+      resolveAgentApproval(selectedSessionId!, approvalId, { approved }),
+    onSuccess: (updated, variables) => {
+      setActionError(null)
+      setLiveDetail(updated)
+      queryClient.setQueryData(['agent-session-detail', updated.session.sessionId], updated)
+      flashNotice(
+        variables.approved
+          ? (zh ? '已确认执行高危临床操作，工作台将自动刷新。' : 'Approved action; workspace will refresh.')
+          : (zh ? '已拒绝该高危操作。' : 'Action rejected.'),
+      )
+    },
+    onError: (error) => setActionError(mapError(error)),
+  })
+
+  const resolveDevReflectionMutation = useMutation({
+    mutationFn: ({ reflectionId, action }: { reflectionId: string; action: 'save' | 'dismiss' }) =>
+      resolveAgentDevReflection(selectedSessionId!, reflectionId, { action }),
+    onSuccess: (res, variables) => {
+      setActionError(null)
+      setLiveDetail(res.detail)
+      queryClient.setQueryData(['agent-session-detail', res.detail.session.sessionId], res.detail)
+      if (variables.action === 'save' && res.savedPath) {
+        flashNotice(zh ? `已记录开发反思至 ${res.savedPath}` : `Saved dev reflection to ${res.savedPath}`)
+      }
+    },
+    onError: (error) => setActionError(mapError(error)),
+  })
 
   const refreshSessions = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: sessionsQueryKey })
@@ -960,6 +1627,90 @@ export function ClinicianAssistantSidebar({
     },
     onError: (error) => setActionError(mapError(error)),
   })
+  const stopRunRef = useRef<() => void>(() => {})
+  stopRunRef.current = () => {
+    if (selectedSessionId !== null && !stopMutation.isPending) {
+      stopMutation.mutate()
+    }
+  }
+
+  // Drive ClinMesh Agent Presence Overlay directly from real live SSE session activity & approvals
+  useEffect(() => {
+    const store = useAgentPresenceStore.getState()
+    if (pendingApprovals.length > 0) {
+      const first = pendingApprovals[0]!
+      const desc = describeToolPresence(first.toolName, zh)
+      const bridge = typeof window !== 'undefined' ? window.__clinmeshAgent : undefined
+      const sectionEl = desc.sectionHint && typeof bridge?.findTargetElement === 'function'
+        ? bridge.findTargetElement(desc.sectionHint, desc.sectionHint)
+        : null
+      store.syncSessionPresence({
+        active: true,
+        phase: 'approval',
+        headline: zh ? `等待医生一键确认：${first.title}` : `Approval required: ${first.title}`,
+        sublabel: first.operationId,
+        targetRect: readElementRect(sectionEl),
+        highlightLabel: desc.sectionHint ?? first.title,
+        onStop: () => stopRunRef.current(),
+      })
+      return
+    }
+
+    if (!isRunning) {
+      store.syncSessionPresence({
+        active: false,
+        phase: 'idle',
+        headline: '',
+        onStop: null,
+      })
+      return
+    }
+
+    // Find latest active tool call block from live stream
+    const latestMessages = activeDetail?.messages ?? []
+    let activeToolName: string | null = null
+    for (let i = latestMessages.length - 1; i >= 0; i -= 1) {
+      const msg = latestMessages[i]!
+      if (msg.role !== 'assistant') continue
+      for (let j = msg.blocks.length - 1; j >= 0; j -= 1) {
+        const blk = msg.blocks[j]!
+        if (blk.type === 'tool-call' && (blk.status === 'running' || blk.status === 'pending')) {
+          activeToolName = blk.name
+          break
+        }
+      }
+      if (activeToolName !== null) break
+    }
+
+    if (activeToolName !== null) {
+      const desc = describeToolPresence(activeToolName, zh)
+      const bridge = typeof window !== 'undefined' ? window.__clinmeshAgent : undefined
+      const sectionEl = desc.sectionHint && typeof bridge?.findTargetElement === 'function'
+        ? bridge.findTargetElement(desc.sectionHint, desc.sectionHint)
+        : null
+      store.syncSessionPresence({
+        active: true,
+        phase: desc.phase,
+        headline: desc.headline,
+        sublabel: activeToolName,
+        scanning: Boolean(desc.scanning),
+        targetRect: readElementRect(sectionEl),
+        highlightLabel: desc.sectionHint ?? null,
+        onStop: () => stopRunRef.current(),
+      })
+    } else {
+      store.syncSessionPresence({
+        active: true,
+        phase: 'compute',
+        headline: zh ? '临床助手正在分析当前病例并规划执行步骤' : 'Assistant is analyzing the case',
+        onStop: () => stopRunRef.current(),
+      })
+    }
+  }, [activeDetail?.messages, isRunning, pendingApprovals, zh])
+
+  useEffect(() => () => {
+    useAgentPresenceStore.getState().clearPresence()
+  }, [])
 
   const retryMutation = useMutation({
     mutationFn: () => retryLatestAgentMessage(selectedSessionId!),
@@ -1336,6 +2087,7 @@ export function ClinicianAssistantSidebar({
       <aside
         aria-label={zh ? '临床助手侧栏' : 'Clinician Assistant sidebar'}
         className="cm-assistant-sidebar"
+        data-agent-hidden=""
         data-clinmesh-assistant-sidebar=""
         data-wide={wideMode ? 'true' : 'false'}
         ref={sidebarRef}
@@ -1469,6 +2221,8 @@ export function ClinicianAssistantSidebar({
                 </PopoverContent>
               </Popover>
             ) : null}
+
+            <AssistantCapabilitiesMenu zh={zh} />
 
             <AssistantPreferencesMenu
               autoCompact={autoCompactEnabled}
@@ -1655,8 +2409,71 @@ export function ClinicianAssistantSidebar({
           </MessageScrollerProvider>
         </div>
 
-        {/* Bottom Status Banners + Selected-Text Quote Bar + Error Alert + Composer */}
+        {/* Bottom Status Banners + Approval Cards + Selected-Text Quote Bar + Error Alert + Composer */}
         <div className="flex shrink-0 flex-col gap-2 border-t border-border/70 bg-card px-3 pt-2.5 pb-3">
+          {pendingApprovals.length > 0 ? (
+            <div className="flex flex-col gap-2" data-testid="assistant-approvals-stack">
+              {pendingApprovals.map(approval => (
+                <ClinicianApprovalCard
+                  approval={approval}
+                  key={approval.approvalId}
+                  onDecision={(approvalId, approved) => resolveApprovalMutation.mutate({ approvalId, approved })}
+                  pending={resolveApprovalMutation.isPending}
+                  zh={zh}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {devReflections.length > 0 ? (
+            <div className="flex flex-col gap-2" data-testid="assistant-dev-reflections-stack">
+              {devReflections.slice(-2).map(reflection => (
+                <DevReflectionCard
+                  key={reflection.reflectionId}
+                  onAction={(reflectionId, action) => resolveDevReflectionMutation.mutate({ reflectionId, action })}
+                  onCopy={(brief) => {
+                    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                      void navigator.clipboard.writeText(brief).then(() => {
+                        flashNotice(zh ? '已复制开发反思工单，可直接发给研发 Agent 修复。' : 'Copied dev reflection brief.')
+                      })
+                    }
+                  }}
+                  pending={resolveDevReflectionMutation.isPending}
+                  reflection={reflection}
+                  zh={zh}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {hasAgentUiEdits ? (
+            <div
+              className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs"
+              data-testid="assistant-ui-undo-bar"
+            >
+              <span className="truncate text-muted-foreground">
+                {zh ? '助手已预填当前表单草稿（手改字段已保护）' : 'Assistant staged form draft (manual edits protected)'}
+              </span>
+              <Button
+                className="h-6 shrink-0 px-2 text-[0.6875rem]"
+                data-testid="assistant-ui-undo-btn"
+                onClick={() => {
+                  void window.__clinmeshAgent?.undoAgent().then(() => {
+                    clearAgentDraftMarks()
+                    setHasAgentUiEdits(false)
+                    flashNotice(zh ? '已撤销助手界面填写，医生手改内容保持不变。' : 'Reverted assistant UI edits; manual edits preserved.')
+                  })
+                }}
+                size="xs"
+                type="button"
+                variant="outline"
+              >
+                <Undo2Icon aria-hidden="true" className="size-3" />
+                {zh ? '撤销助手填写' : 'Undo agent edits'}
+              </Button>
+            </div>
+          ) : null}
+
           {compactionActive ? (
             <div
               className="flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground"
