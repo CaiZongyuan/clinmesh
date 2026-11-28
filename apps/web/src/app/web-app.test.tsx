@@ -98,10 +98,12 @@ async function openSettings(user: ReturnType<typeof userEvent.setup>) {
 describe('Web application shell', () => {
   beforeEach(() => {
     localStorage.clear()
+    sessionStorage.clear()
     document.body.removeAttribute('style')
     document.documentElement.className = ''
     document.documentElement.lang = 'zh-CN'
     document.documentElement.removeAttribute('data-theme')
+    document.documentElement.removeAttribute('data-color-mode')
     document.documentElement.removeAttribute('data-font-size')
     window.history.replaceState(null, '', '/')
     vi.stubGlobal('matchMedia', vi.fn((query: string) => createMediaQueryList(query)))
@@ -332,9 +334,10 @@ describe('Web application shell', () => {
     const media = installMatchMedia(false)
     window.history.replaceState(null, '', '/components')
     await renderWebApp()
-    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(document.documentElement.dataset.colorMode).toBe('light')
+    expect(document.documentElement.dataset.theme).toBe('default')
     await act(() => media.setPrefersDark(true))
-    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.colorMode).toBe('dark')
   })
 
   it('localizes the public component catalog from the saved Web preference', async () => {
@@ -526,25 +529,26 @@ describe('Web application shell', () => {
     const user = userEvent.setup()
     await renderWebApp()
 
-    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.colorMode).toBe('dark')
+    expect(document.documentElement.dataset.theme).toBe('default')
     expect(document.documentElement.classList.contains('dark')).toBe(true)
 
     act(() => media.setPrefersDark(false))
-    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(document.documentElement.dataset.colorMode).toBe('light')
 
     await openSettings(user)
     const appearance = screen.getByRole('region', { name: '外观' })
     await user.click(within(appearance).getByRole('button', { name: '暗色' }))
-    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.colorMode).toBe('dark')
 
     act(() => media.setPrefersDark(false))
-    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.colorMode).toBe('dark')
 
     await user.click(within(appearance).getByRole('button', { name: '亮色' }))
-    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(document.documentElement.dataset.colorMode).toBe('light')
 
     await user.click(within(appearance).getByRole('button', { name: '跟随系统' }))
-    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(document.documentElement.dataset.colorMode).toBe('light')
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
       fontSize: 'standard',
       locale: 'zh-CN',

@@ -8,33 +8,55 @@
     <title>Clinmesh | 科灵脉智医疗智能体平台</title>
     <script>
       (() => {
-        const preferenceKey = 'clinmesh.preferences:v1'
+        const appearanceKey = 'clinmesh.appearance:v2'
+        const legacyKey = 'clinmesh.preferences:v1'
         const root = document.documentElement
         root.dataset.clinmeshApp = 'web'
         let locale = 'zh-CN'
-        let theme = 'system'
+        let colorMode = 'system'
+        let density = 'default'
+        let themeId = 'default'
 
         try {
-          const stored = localStorage.getItem(preferenceKey)
-          const preferences = stored === null ? null : JSON.parse(stored)
-
-          if (preferences?.locale === 'zh-CN' || preferences?.locale === 'en-US') {
-            locale = preferences.locale
+          const legacyStored = localStorage.getItem(legacyKey)
+          const legacy = legacyStored === null ? null : JSON.parse(legacyStored)
+          if (legacy?.locale === 'zh-CN' || legacy?.locale === 'en-US') locale = legacy.locale
+          if (legacy?.theme === 'system' || legacy?.theme === 'light' || legacy?.theme === 'dark') {
+            colorMode = legacy.theme
           }
-          if (preferences?.theme === 'system' || preferences?.theme === 'light' || preferences?.theme === 'dark') {
-            theme = preferences.theme
+          const storedV2 = localStorage.getItem(appearanceKey)
+          const v2 = storedV2 === null ? null : JSON.parse(storedV2)
+          if (v2?.version === 2) {
+            if (v2.colorMode === 'system' || v2.colorMode === 'light' || v2.colorMode === 'dark') {
+              colorMode = v2.colorMode
+            }
+            if (typeof v2.theme === 'string' && v2.theme.length > 0) themeId = v2.theme
+            if (v2.density === 'compact' || v2.density === 'default' || v2.density === 'comfortable') {
+              density = v2.density
+            }
+          }
+          const params = new URLSearchParams(location.search)
+          if (params.get('theme') === 'default') {
+            sessionStorage.setItem('clinmesh.themeSafeMode', '1')
+            themeId = 'default'
+          } else if (sessionStorage.getItem('clinmesh.themeSafeMode') === '1') {
+            themeId = 'default'
           }
         } catch {
           // Browser storage is optional; defaults remain deterministic.
         }
 
-        const resolvedTheme = theme === 'system'
+        const resolvedMode = colorMode === 'system'
           ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-          : theme
+          : colorMode
         root.lang = locale
-        root.classList.toggle('dark', resolvedTheme === 'dark')
-        root.dataset.theme = resolvedTheme
-        root.style.colorScheme = resolvedTheme
+        root.classList.toggle('dark', resolvedMode === 'dark')
+        root.classList.toggle('theme-dark', resolvedMode === 'dark')
+        root.classList.toggle('theme-light', resolvedMode !== 'dark')
+        root.dataset.theme = themeId
+        root.dataset.colorMode = resolvedMode
+        root.dataset.density = density
+        root.style.colorScheme = resolvedMode
       })()
     </script>
   </head>

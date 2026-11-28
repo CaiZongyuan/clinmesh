@@ -1,20 +1,3 @@
-import {
-  type AppSection,
-  isSettingsSection,
-  roleSections,
-  settingsRoutes,
-  WorkspaceShell,
-  workspaceRoutes,
-} from './workspace-shell.tsx'
-import {
-  createRootRoute,
-  createRoute,
-  createRouter,
-  Outlet,
-  RouterProvider,
-  type RouterHistory,
-  useNavigate,
-} from '@tanstack/react-router'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import {
@@ -27,6 +10,7 @@ import {
 } from '@clinmesh/ui/components/card'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
+import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Toaster } from '@clinmesh/ui/components/toast'
 import {
@@ -36,46 +20,60 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { CircleAlertIcon, LogInIcon } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  applyResolvedWebTheme,
-  readWebPreferences,
-  writeWebPreferences,
-  type ResolvedWebTheme,
-} from './preferences.ts'
-import { useWebPreferences, WebPreferencesProvider } from './preferences-context.tsx'
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+  type RouterHistory,
+  useNavigate,
+} from '@tanstack/react-router'
+import { CircleAlertIcon, LogInIcon } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
+import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 import {
   ApiClientError,
+  configureApiBasePath,
   getSession,
+  onAuthenticationFailure,
   selectRole,
   sessionQueryKey,
   signIn,
   signOut,
-  configureApiBasePath,
-  onAuthenticationFailure,
 } from './api-client.ts'
-import { getWorkspaceMessages } from './workspace-i18n.ts'
-import { RoleWorkspace } from './role-workspaces.tsx'
-import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
+import { AppearanceProvider } from './appearance-context.tsx'
 import { ComponentCatalog } from './component-catalog.tsx'
-import { SettingsWorkspace } from './settings-workspace.tsx'
-import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
-import {
-  WebRuntimeProvider,
-  type WebRuntimeOptions,
-} from './web-runtime.tsx'
-import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
-import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
+import { WebPreferencesProvider, useWebPreferences } from './preferences-context.tsx'
+import { readWebPreferences, writeWebPreferences } from './preferences.ts'
+import { RoleWorkspace } from './role-workspaces.tsx'
 import { RuntimeErrorBoundary } from './runtime-error-boundary.tsx'
-
-const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
+import { SettingsWorkspace } from './settings-workspace.tsx'
+import { ChatSpace } from './spaces/chat-space.tsx'
+import { PersonalAgentSpace } from './spaces/personal-agent-space.tsx'
+import { ResearchSpace } from './spaces/research-space.tsx'
+import { WebRuntimeProvider, type WebRuntimeOptions } from './web-runtime.tsx'
+import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
+import { getWorkspaceMessages } from './workspace-i18n.ts'
+import {
+  type AppSection,
+  isPlatformSpaceSection,
+  isSettingsSection,
+  platformSpaceRoutes,
+  roleSections,
+  settingsRoutes,
+  WorkspaceShell,
+  workspaceRoutes,
+} from './workspace-shell.tsx'
 
 function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.JSX.Element {
   const { preferences, setPreferences } = useWebPreferences()
   const messages = getWorkspaceMessages(preferences.locale)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [highlightAnchor, setHighlightAnchor] = useState<string | null>(null)
+
   const session = useQuery({
     queryFn: ({ signal }) => getSession(signal),
     queryKey: sessionQueryKey,
@@ -107,7 +105,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
 
   useEffect(() => {
     if (roleCode === undefined) return
-    if (isSettingsSection(activeSection)) return
+    if (isSettingsSection(activeSection) || isPlatformSpaceSection(activeSection)) return
     const roleSection = roleSections[roleCode]
     if (activeSection === roleSection) return
     const roleRoute = workspaceRoutes.find(route => route.key === roleSection)
@@ -117,6 +115,11 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
   useEffect(() => {
     document.documentElement.lang = preferences.locale
   }, [preferences.locale])
+
+  const handleJump = useCallback((path: string, anchor?: string) => {
+    setHighlightAnchor(anchor ?? null)
+    void navigate({ to: path })
+  }, [navigate])
 
   if (session.isPending) {
     return (
@@ -144,7 +147,8 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
   }
 
   const roleSection = roleSections[session.data.actor.roleCode]
-  const effectiveSection = isSettingsSection(activeSection)
+  const clinicalHomePath = workspaceRoutes.find(route => route.key === roleSection)?.path ?? '/'
+  const effectiveSection: AppSection = isSettingsSection(activeSection) || isPlatformSpaceSection(activeSection)
     ? activeSection
     : activeSection === roleSection
       ? activeSection
@@ -154,6 +158,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
     <WorkspaceShell
       activeSection={effectiveSection}
       locale={preferences.locale}
+      onJumpToSettingsAnchor={handleJump}
       onLocaleChange={locale => setPreferences(current => ({ ...current, locale }))}
       onRoleChange={practitionerRoleId => roleChange.mutate(practitionerRoleId)}
       onSignOut={() => signOutRequest.mutate()}
@@ -180,13 +185,33 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       {isSettingsSection(effectiveSection) ? (
         <SettingsWorkspace
           activeSection={effectiveSection}
-          session={session.data}
           fontSize={preferences.fontSize}
+          highlightAnchor={highlightAnchor}
           locale={preferences.locale}
           onFontSizeChange={fontSize => setPreferences(current => ({ ...current, fontSize }))}
           onLocaleChange={locale => setPreferences(current => ({ ...current, locale }))}
           onThemeChange={theme => setPreferences(current => ({ ...current, theme }))}
+          session={session.data}
           theme={preferences.theme}
+        />
+      ) : effectiveSection === 'chatSpace' ? (
+        <ChatSpace
+          locale={preferences.locale}
+          onNavigate={path => handleJump(path)}
+          session={session.data}
+        />
+      ) : effectiveSection === 'agentsSpace' ? (
+        <PersonalAgentSpace
+          clinicalHomePath={clinicalHomePath}
+          locale={preferences.locale}
+          onNavigate={path => handleJump(path)}
+          session={session.data}
+        />
+      ) : effectiveSection === 'researchSpace' ? (
+        <ResearchSpace
+          locale={preferences.locale}
+          onNavigate={path => handleJump(path)}
+          session={session.data}
         />
       ) : (
         <RoleWorkspace
@@ -295,6 +320,12 @@ const routes = workspaceRoutes.map(({ key, path }) => createRoute({
   path,
 }))
 
+const platformSpaceRouteTree = platformSpaceRoutes.map(({ key, path }) => createRoute({
+  component: () => <WorkspacePage activeSection={key} />,
+  getParentRoute: () => rootRoute,
+  path,
+}))
+
 const settingsRouteTree = settingsRoutes.map(({ key, path }) => createRoute({
   component: () => <WorkspacePage activeSection={key} />,
   getParentRoute: () => rootRoute,
@@ -309,6 +340,7 @@ const componentCatalogRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   ...routes,
+  ...platformSpaceRouteTree,
   ...settingsRouteTree,
   componentCatalogRoute,
 ])
@@ -372,47 +404,44 @@ function WebApplication({
   }), [preferences])
   useEffect(() => writeWebPreferences(preferences), [preferences])
 
-  useEffect(() => {
-    const applyTheme = (theme: ResolvedWebTheme): void => {
-      applyResolvedWebTheme(theme, document.documentElement)
-      const appRoot = applicationRoot.current
-      if (appRoot !== null) applyResolvedWebTheme(theme, appRoot)
-    }
-    if (preferences.theme !== 'system') {
-      applyTheme(preferences.theme)
-      return
-    }
-
-    const mediaQuery = window.matchMedia(DARK_MODE_QUERY)
-    const applySystemTheme = (): void => applyTheme(
-      mediaQuery.matches ? 'dark' : 'light',
-    )
-
-    applySystemTheme()
-    mediaQuery.addEventListener('change', applySystemTheme)
-
-    return () => mediaQuery.removeEventListener('change', applySystemTheme)
-  }, [preferences.theme])
+  const syncLegacyFromAppearance = useCallback((patch: {
+    theme?: 'system' | 'light' | 'dark'
+    fontSize?: 'standard' | 'larger' | 'large'
+  }) => {
+    setPreferences(current => {
+      const nextTheme = patch.theme ?? current.theme
+      const nextFontSize = patch.fontSize ?? current.fontSize
+      if (nextTheme === current.theme && nextFontSize === current.fontSize) return current
+      return { ...current, theme: nextTheme, fontSize: nextFontSize }
+    })
+  }, [])
 
   return (
     <WebPreferencesProvider value={preferencesContext}>
       <WebRuntimeProvider value={runtime}>
-        <PortalContainerProvider container={portalRoot}>
-          <div
-            className="clinmesh-web-root"
-            data-clinmesh-app="web"
-            data-font-size={preferences.fontSize}
-            lang={preferences.locale}
-            ref={applicationRoot}
-          >
-            <div data-clinmesh-portal-root="" ref={portalRoot} />
-            <QueryClientProvider client={queryClient}>
-              <Toaster>
-                <RouterProvider router={router} />
-              </Toaster>
-            </QueryClientProvider>
-          </div>
-        </PortalContainerProvider>
+        <AppearanceProvider
+          appRootRef={applicationRoot}
+          legacyFontSize={preferences.fontSize}
+          legacyTheme={preferences.theme}
+          onSyncLegacyPreferences={syncLegacyFromAppearance}
+        >
+          <PortalContainerProvider container={portalRoot}>
+            <div
+              className="clinmesh-web-root"
+              data-clinmesh-app="web"
+              data-font-size={preferences.fontSize}
+              lang={preferences.locale}
+              ref={applicationRoot}
+            >
+              <div data-clinmesh-portal-root="" ref={portalRoot} />
+              <QueryClientProvider client={queryClient}>
+                <Toaster>
+                  <RouterProvider router={router} />
+                </Toaster>
+              </QueryClientProvider>
+            </div>
+          </PortalContainerProvider>
+        </AppearanceProvider>
       </WebRuntimeProvider>
     </WebPreferencesProvider>
   )

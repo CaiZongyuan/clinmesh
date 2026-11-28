@@ -10,6 +10,7 @@
   },
   "exports": {
     "./styles.css": "./src/styles.css",
+    "./appearance": "./src/appearance/index.ts",
     "./components/*": "./src/components/*.tsx",
     "./hooks/*": "./src/hooks/*.ts",
     "./lib/*": "./src/lib/*.ts"

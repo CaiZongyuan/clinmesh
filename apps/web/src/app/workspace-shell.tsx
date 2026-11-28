@@ -1,11 +1,7 @@
-import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
-import { WorkspaceHeaderFlowSlot, WorkspaceHeaderLeadSlot, WorkspaceHeaderPatientSlot, WorkspaceHeaderProvider } from './workspace-card-layout.tsx'
-import { useWorkspaceMode, workspaceModeScope } from './workspace-mode.tsx'
+import type { AppSpaceId } from '@clinmesh/ui/appearance'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
-import { WorkspaceSelect } from './workspace-select.tsx'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +16,17 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@clinmesh/ui/components/dropdown-menu'
+import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
+import { HighlightText } from '@clinmesh/ui/components/highlight-text'
+import { Input } from '@clinmesh/ui/components/input'
+import { Kbd } from '@clinmesh/ui/components/kbd'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@clinmesh/ui/components/sheet'
 import {
   Sidebar,
   SidebarContent,
@@ -34,43 +41,67 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@clinmesh/ui/components/sidebar'
+import { ThemeSwatch } from '@clinmesh/ui/components/theme-swatch'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { TooltipProvider } from '@clinmesh/ui/components/tooltip'
-import { Link } from '@tanstack/react-router'
 import type { SessionContext } from '@clinmesh/contracts/his'
+import { Link, useNavigate } from '@tanstack/react-router'
 import {
+  ArrowLeftIcon,
   BellIcon,
+  BotIcon,
   ChartNoAxesCombinedIcon,
-  ClipboardPlusIcon,
   ChevronDownIcon,
+  ClipboardPlusIcon,
   ComponentIcon,
   CpuIcon,
   DatabaseIcon,
   FlaskConicalIcon,
   HeartPulseIcon,
+  KeyboardIcon,
   LayoutDashboardIcon,
   LogOutIcon,
-  MonitorIcon,
   MaximizeIcon,
+  MenuIcon,
+  MessageSquareIcon,
+  MicroscopeIcon,
   MinimizeIcon,
+  MonitorIcon,
   MoonIcon,
+  PaletteIcon,
+  PanelLeftOpenIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
   PillIcon,
   ReceiptTextIcon,
+  SearchIcon,
   SettingsIcon,
-  SlidersHorizontalIcon,
   StethoscopeIcon,
   SunIcon,
   UserRoundIcon,
+  XIcon,
 } from 'lucide-react'
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
-import { useWebRuntime } from './web-runtime.tsx'
+import { AppRail } from './app-rail.tsx'
+import { useAppearance } from './appearance-context.tsx'
 import { ClinicianAssistantSidebar } from './clinician-assistant-sidebar.tsx'
+import { GlobalCommandPalette } from './command-palette.tsx'
 import { useLlmSettings } from './llm-settings-storage.ts'
+import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
+import { SETTINGS_SEARCH_INDEX } from './settings-layout.tsx'
+import { useSpaceNavigationStore } from './space-navigation-store.ts'
+import { useWebRuntime } from './web-runtime.tsx'
+import {
+  WorkspaceHeaderFlowSlot,
+  WorkspaceHeaderLeadSlot,
+  WorkspaceHeaderPatientSlot,
+  WorkspaceHeaderProvider,
+} from './workspace-card-layout.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessageKey } from './workspace-i18n.ts'
+import { useWorkspaceMode, workspaceModeScope } from './workspace-mode.tsx'
+import { WorkspaceSelect } from './workspace-select.tsx'
 
 export type WorkspaceTheme = 'system' | 'light' | 'dark'
 
@@ -87,18 +118,39 @@ export const workspaceRoutes = [
 
 export type WorkspaceSection = (typeof workspaceRoutes)[number]['key']
 
+export const platformSpaceRoutes = [
+  { key: 'chatSpace', path: '/chat', icon: MessageSquareIcon },
+  { key: 'agentsSpace', path: '/agents', icon: BotIcon },
+  { key: 'researchSpace', path: '/research', icon: MicroscopeIcon },
+] as const
+
+export type PlatformSpaceSection = (typeof platformSpaceRoutes)[number]['key']
+
 export const settingsRoutes = [
-  { key: 'settingsGeneral', path: '/settings', icon: SlidersHorizontalIcon },
+  { key: 'settingsGeneral', path: '/settings', icon: PaletteIcon },
+  { key: 'settingsShortcuts', path: '/settings/shortcuts', icon: KeyboardIcon },
   { key: 'modelsProvider', path: '/settings/models', icon: CpuIcon },
   { key: 'modelUsage', path: '/settings/model-usage', icon: ChartNoAxesCombinedIcon },
   { key: 'uiComponents', path: '/settings/developer/components', icon: ComponentIcon },
 ] as const
 
 export type SettingsSection = (typeof settingsRoutes)[number]['key']
-export type AppSection = WorkspaceSection | SettingsSection
+export type AppSection = WorkspaceSection | PlatformSpaceSection | SettingsSection
 
 export function isSettingsSection(section: AppSection): section is SettingsSection {
   return settingsRoutes.some(route => route.key === section)
+}
+
+export function isPlatformSpaceSection(section: AppSection): section is PlatformSpaceSection {
+  return platformSpaceRoutes.some(route => route.key === section)
+}
+
+export function sectionToAppSpace(section: AppSection): AppSpaceId {
+  if (isSettingsSection(section)) return 'settings'
+  if (section === 'chatSpace') return 'chat'
+  if (section === 'agentsSpace') return 'agents'
+  if (section === 'researchSpace') return 'research'
+  return 'clinical'
 }
 
 interface WorkspaceShellProps {
@@ -110,6 +162,7 @@ interface WorkspaceShellProps {
   onRoleChange: (practitionerRoleId: string) => void
   onSignOut: () => void
   onThemeChange: (theme: WorkspaceTheme) => void
+  onJumpToSettingsAnchor?: (path: string, anchor?: string) => void
   roleChangePending: boolean
   signOutPending: boolean
   theme: WorkspaceTheme
@@ -300,6 +353,7 @@ export function AppearanceControls({
 
 function UserMenu({
   settingsMode,
+  locale,
   messages,
   onRoleChange,
   onSignOut,
@@ -310,12 +364,15 @@ function UserMenu({
   session,
 }: Pick<PreferenceControlProps, 'messages' | 'onThemeChange' | 'theme'> & {
   settingsMode: boolean
+  locale: WorkspaceLocale
   onRoleChange: (practitionerRoleId: string) => void
   onSignOut: () => void
   roleChangePending: boolean
   session: SessionContext
   signOutPending: boolean
 }): React.JSX.Element {
+  const { allThemes, activeTheme, resolvedColorMode, setTheme } = useAppearance()
+  const zh = locale === 'zh-CN'
   const activeRole = session.availableRoles.find(role => role.id === session.actor.practitionerRoleId)
   const people = new Map<string, SessionContext['availableRoles'][number]>()
   for (const role of session.availableRoles) {
@@ -389,6 +446,15 @@ function UserMenu({
           <DropdownMenuItem render={<Link to={workspaceRoutes.find(route => route.key === roleSections[session.actor.roleCode])?.path ?? '/'} />}>
             <LayoutDashboardIcon aria-hidden="true" />{messages[roleSections[session.actor.roleCode]]}
           </DropdownMenuItem>
+          <DropdownMenuItem render={<Link to="/chat" />}>
+            <MessageSquareIcon aria-hidden="true" />{messages.chatSpace}
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link to="/agents" />}>
+            <BotIcon aria-hidden="true" />{messages.agentsSpace}
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link to="/research" />}>
+            <MicroscopeIcon aria-hidden="true" />{messages.researchSpace}
+          </DropdownMenuItem>
           <DropdownMenuItem render={<Link to="/settings" />}><SettingsIcon aria-hidden="true" />{messages.settings}</DropdownMenuItem>
           {settingsMode ? <SettingsNavigationItem label={messages.settingsNavigation} /> : null}
           <NotificationsMenu messages={messages} />
@@ -407,6 +473,28 @@ function UserMenu({
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <PaletteIcon aria-hidden="true" data-icon="inline-start" />
+              <span>{zh ? '界面皮肤' : 'Interface Theme'}</span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {zh ? activeTheme.name : (activeTheme.enName ?? activeTheme.name)}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="min-w-52">
+              <DropdownMenuRadioGroup
+                onValueChange={value => setTheme(value)}
+                value={activeTheme.id}
+              >
+                {allThemes.map(item => (
+                  <DropdownMenuRadioItem key={item.id} value={item.id}>
+                    <ThemeSwatch mode={resolvedColorMode} theme={item} />
+                    <span className="truncate">{zh ? item.name : (item.enName ?? item.name)}</span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem disabled={signOutPending} onClick={onSignOut}>
@@ -440,10 +528,6 @@ function SettingsNavigationItem({ label }: { label: string }) {
   return <DropdownMenuItem onClick={toggleSidebar}><LayoutDashboardIcon aria-hidden="true" />{label}</DropdownMenuItem>
 }
 
-function WorkspaceDisplayButton({ locale }: { locale: WorkspaceLocale }) {
-  return <StandaloneDisplayButton locale={locale} />
-}
-
 function StandaloneDisplayButton({ locale }: { locale: WorkspaceLocale }) {
   const runtime = useWebRuntime()
   const [fullscreen, setFullscreen] = useState(false)
@@ -462,10 +546,228 @@ function StandaloneDisplayButton({ locale }: { locale: WorkspaceLocale }) {
       else await (runtime.appearanceRoot.current ?? document.documentElement).requestFullscreen()
     } catch { setFailed(true) }
   }
-  return <Button type="button" variant="ghost" size="icon" aria-label={label} disabled={!available}
-    title={!available ? locale === 'zh-CN' ? '此浏览器不支持全屏' : 'Fullscreen is unavailable in this browser'
-      : failed ? locale === 'zh-CN' ? '无法切换全屏，请重试' : 'Unable to change fullscreen; try again' : label}
-    onClick={() => void toggle()}><Icon aria-hidden="true" /></Button>
+  return (
+    <Button
+      aria-label={label}
+      disabled={!available}
+      onClick={() => void toggle()}
+      size="icon"
+      title={!available
+        ? locale === 'zh-CN' ? '此浏览器不支持全屏' : 'Fullscreen is unavailable in this browser'
+        : failed ? locale === 'zh-CN' ? '无法切换全屏，请重试' : 'Unable to change fullscreen; try again' : label}
+      type="button"
+      variant="ghost"
+    >
+      <Icon aria-hidden="true" />
+    </Button>
+  )
+}
+
+function SettingsSidebarSearch({
+  locale,
+  onSelect,
+}: {
+  locale: WorkspaceLocale
+  onSelect: (path: string, anchor?: string) => void
+}): React.JSX.Element {
+  const zh = locale === 'zh-CN'
+  const [query, setQuery] = useState('')
+  const [activeIndex, setActiveIndex] = useState(0)
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (q.length === 0) return []
+    return SETTINGS_SEARCH_INDEX.filter(item =>
+      item.titleZh.toLowerCase().includes(q)
+      || item.titleEn.toLowerCase().includes(q)
+      || item.sectionZh.toLowerCase().includes(q)
+      || item.sectionEn.toLowerCase().includes(q)
+      || item.keywords.some(k => k.toLowerCase().includes(q)),
+    )
+  }, [query])
+
+  const openMatch = (index: number) => {
+    const chosen = matches[index]
+    if (!chosen) return
+    onSelect(chosen.path, chosen.anchor)
+    setQuery('')
+    setActiveIndex(0)
+  }
+
+  return (
+    <div className="px-2 pb-1 group-data-[collapsible=icon]:hidden">
+      <div className="relative">
+        <SearchIcon aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          aria-label={zh ? '搜索设置项' : 'Search settings'}
+          className="h-8 pr-7 pl-8 text-xs"
+          onChange={event => {
+            setQuery(event.currentTarget.value)
+            setActiveIndex(0)
+          }}
+          onKeyDown={event => {
+            if (event.nativeEvent.isComposing) return
+            if (event.key === 'ArrowDown' && matches.length > 0) {
+              event.preventDefault()
+              setActiveIndex(curr => Math.min(curr + 1, matches.length - 1))
+            } else if (event.key === 'ArrowUp' && matches.length > 0) {
+              event.preventDefault()
+              setActiveIndex(curr => Math.max(curr - 1, 0))
+            } else if (event.key === 'Enter' && matches.length > 0) {
+              event.preventDefault()
+              openMatch(activeIndex)
+            } else if (event.key === 'Escape' && query.length > 0) {
+              event.preventDefault()
+              setQuery('')
+              setActiveIndex(0)
+            }
+          }}
+          placeholder={zh ? '搜索设置项…' : 'Search settings…'}
+          value={query}
+        />
+        {query.length > 0 ? (
+          <Button
+            aria-label={zh ? '清空设置搜索' : 'Clear settings search'}
+            className="absolute top-1/2 right-1 size-6 -translate-y-1/2 text-muted-foreground"
+            onClick={() => {
+              setQuery('')
+              setActiveIndex(0)
+            }}
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          >
+            <XIcon aria-hidden="true" className="size-3" />
+          </Button>
+        ) : null}
+      </div>
+      {query.trim().length > 0 ? (
+        <div
+          aria-label={zh ? '设置搜索结果' : 'Settings search results'}
+          className="mt-1.5 flex max-h-56 flex-col gap-0.5 overflow-y-auto rounded-md border bg-card p-1 shadow-sm"
+          role="listbox"
+        >
+          {matches.length === 0 ? (
+            <div className="px-2 py-2 text-xs text-muted-foreground">
+              {zh ? '无匹配设置项' : 'No matching settings'}
+            </div>
+          ) : (
+            matches.map((item, index) => (
+              <Button
+                aria-selected={index === activeIndex}
+                className="h-auto w-full flex-col items-start gap-0.5 px-2 py-1.5 text-left font-normal"
+                key={item.id}
+                onClick={() => openMatch(index)}
+                onMouseEnter={() => setActiveIndex(index)}
+                role="option"
+                size="sm"
+                type="button"
+                variant={index === activeIndex ? 'secondary' : 'ghost'}
+              >
+                <span className="w-full truncate text-xs font-medium text-foreground">
+                  <HighlightText query={query} text={zh ? item.titleZh : item.titleEn} />
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  <HighlightText query={query} text={zh ? item.sectionZh : item.sectionEn} />
+                </span>
+              </Button>
+            ))
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function NavigationProgress({ sectionKey }: { sectionKey: string }): React.JSX.Element {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    setVisible(true)
+    const timer = window.setTimeout(() => setVisible(false), 320)
+    return () => window.clearTimeout(timer)
+  }, [sectionKey])
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-x-0 top-0 z-30 h-0.5 overflow-hidden transition-opacity duration-200"
+      data-cm="nav-progress"
+      style={{ opacity: visible ? 1 : 0 }}
+    >
+      {visible ? <div className="clinmesh-nav-progress-sweep h-full w-1/3 bg-brand" /> : null}
+    </div>
+  )
+}
+
+function CompactSpaceSheet({
+  open,
+  onOpenChange,
+  activeSpace,
+  locale,
+  onSelectSpace,
+  onOpenCommandPalette,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  activeSpace: AppSpaceId
+  locale: WorkspaceLocale
+  onSelectSpace: (space: AppSpaceId) => void
+  onOpenCommandPalette: () => void
+}): React.JSX.Element {
+  const zh = locale === 'zh-CN'
+  const items: Array<{ id: AppSpaceId; label: string; icon: typeof StethoscopeIcon }> = [
+    { id: 'clinical', label: zh ? '临床工作台' : 'Clinical Workbench', icon: StethoscopeIcon },
+    { id: 'chat', label: zh ? '全屏聊天' : 'Chat', icon: MessageSquareIcon },
+    { id: 'agents', label: zh ? '个人智能体' : 'Personal Agents', icon: BotIcon },
+    { id: 'research', label: zh ? '临床科研' : 'Clinical Research', icon: MicroscopeIcon },
+    { id: 'settings', label: zh ? '设置中心' : 'Settings', icon: SettingsIcon },
+  ]
+  return (
+    <Sheet onOpenChange={onOpenChange} open={open}>
+      <SheetContent className="w-64 p-0" side="left">
+        <SheetHeader className="border-b px-4 py-3 text-left">
+          <SheetTitle className="text-sm">{zh ? '应用空间导航' : 'App Spaces'}</SheetTitle>
+          <SheetDescription className="text-xs">
+            {zh ? '在临床工作台、聊天、智能体、科研与设置间快速切换。' : 'Switch between Clinical, Chat, Agents, Research, and Settings.'}
+          </SheetDescription>
+        </SheetHeader>
+        <div className="flex flex-col gap-1 p-3">
+          <Button
+            className="mb-2 w-full justify-start gap-2 text-muted-foreground"
+            onClick={() => {
+              onOpenChange(false)
+              onOpenCommandPalette()
+            }}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <SearchIcon aria-hidden="true" className="size-3.5" />
+            <span>{zh ? '搜索或跳转…' : 'Search or jump…'}</span>
+          </Button>
+          {items.map(item => {
+            const Icon = item.icon
+            const active = activeSpace === item.id
+            return (
+              <Button
+                aria-current={active ? 'page' : undefined}
+                className="w-full justify-start gap-2.5"
+                key={item.id}
+                onClick={() => {
+                  onSelectSpace(item.id)
+                  onOpenChange(false)
+                }}
+                size="sm"
+                type="button"
+                variant={active ? 'secondary' : 'ghost'}
+              >
+                <Icon aria-hidden="true" className="size-4 shrink-0" />
+                <span>{item.label}</span>
+              </Button>
+            )
+          })}
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
 }
 
 export function WorkspaceShell({
@@ -476,40 +778,124 @@ export function WorkspaceShell({
   onRoleChange,
   onSignOut,
   onThemeChange,
+  onJumpToSettingsAnchor,
   roleChangePending,
   session,
   signOutPending,
   theme,
 }: WorkspaceShellProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const zh = locale === 'zh-CN'
+  const navigate = useNavigate()
   const llmSettings = useLlmSettings()
+  const { appearance, setRailMode } = useAppearance()
+  const spaceLastUrls = useSpaceNavigationStore(s => s.spaceLastUrls)
+  const lastNonSettingsPath = useSpaceNavigationStore(s => s.lastNonSettingsPath)
+  const recordVisit = useSpaceNavigationStore(s => s.recordVisit)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantRunning, setAssistantRunning] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+
   const mode = useWorkspaceMode(workspaceModeScope(session))
   const activeRoleSection = roleSections[session.actor.roleCode]
+  const clinicalHomePath = workspaceRoutes.find(route => route.key === activeRoleSection)?.path ?? '/'
   const inpatientTitles: Partial<Record<SessionContext['actor']['roleCode'], string>> = {
     registrar: locale === 'zh-CN' ? '住院登记' : 'Inpatient registration',
     cashier: locale === 'zh-CN' ? '住院收费' : 'Inpatient billing',
     pharmacist: locale === 'zh-CN' ? '住院药房' : 'Inpatient pharmacy',
   }
-  const workspaceTitle = mode === 'inpatient' ? inpatientTitles[session.actor.roleCode] ?? messages[activeRoleSection] : messages[activeRoleSection]
-  const visibleRoutes = useMemo(() => workspaceRoutes.filter(route => (
-    route.key === activeRoleSection
-  )), [activeRoleSection])
+  const workspaceTitle = mode === 'inpatient'
+    ? inpatientTitles[session.actor.roleCode] ?? messages[activeRoleSection]
+    : messages[activeRoleSection]
+
   const settingsMode = isSettingsSection(activeSection)
+  const platformSpaceMode = isPlatformSpaceSection(activeSection)
+  const clinicalMode = !settingsMode && !platformSpaceMode
+  const activeSpace = sectionToAppSpace(activeSection)
   const workingRoles = session.availableRoles.filter(role => role.practitionerId === session.actor.practitionerId
     && role.code === session.actor.roleCode)
-  const navigationLabel = settingsMode ? messages.settingsNavigation : messages.navigationLabel
-  const mobileDescription = settingsMode
-    ? messages.mobileSettingsNavigationDescription
-    : messages.mobileNavigationDescription
+
+  const headerTitle = activeSection === activeRoleSection ? workspaceTitle : messages[activeSection]
+  const backToAppPath = lastNonSettingsPath ?? clinicalHomePath
+
+  // Record per-space last URL and recent visits (Multica space-memory pattern)
+  useEffect(() => {
+    const pathname = typeof window !== 'undefined' ? window.location.pathname : clinicalHomePath
+    recordVisit({
+      path: pathname,
+      space: activeSpace,
+      labelZh: headerTitle,
+      labelEn: headerTitle,
+    })
+  }, [activeSection, activeSpace, clinicalHomePath, headerTitle, recordVisit])
+
+  const handleNavigate = useCallback((path: string, anchor?: string) => {
+    if (onJumpToSettingsAnchor) {
+      onJumpToSettingsAnchor(path, anchor)
+    } else {
+      void navigate({ to: path })
+    }
+  }, [navigate, onJumpToSettingsAnchor])
+
+  const handleSelectSpace = useCallback((space: AppSpaceId) => {
+    const home =
+      space === 'clinical'
+        ? clinicalHomePath
+        : space === 'chat'
+          ? '/chat'
+          : space === 'agents'
+            ? '/agents'
+            : space === 'research'
+              ? '/research'
+              : '/settings'
+    // Clicking another space restores its last visited path; clicking active space returns to its home.
+    const target = space === activeSpace ? home : (spaceLastUrls[space] ?? home)
+    handleNavigate(target)
+  }, [activeSpace, clinicalHomePath, handleNavigate, spaceLastUrls])
 
   const content = (
     <>
-      <header className="@container/workspace-header sticky top-0 z-10 flex h-12 shrink-0 items-center gap-2 border-b bg-card px-3">
+      <header className="@container/workspace-header sticky top-0 z-10 flex h-12 shrink-0 items-center gap-2 border-b bg-card px-3" data-cm="header">
+        <Button
+          aria-label={zh ? '打开应用空间导航' : 'Open space navigation'}
+          className="md:hidden"
+          onClick={() => setMobileNavOpen(true)}
+          size="icon-sm"
+          title={zh ? '切换空间' : 'Switch space'}
+          type="button"
+          variant="ghost"
+        >
+          <MenuIcon aria-hidden="true" className="size-4" />
+        </Button>
+        {settingsMode ? (
+          <Button
+            aria-label={zh ? '返回工作台' : 'Back to workspace'}
+            className="gap-1 md:hidden"
+            onClick={() => handleNavigate(backToAppPath)}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            <ArrowLeftIcon aria-hidden="true" className="size-3.5" />
+            <span>{zh ? '返回' : 'Back'}</span>
+          </Button>
+        ) : null}
+        {appearance.railMode === 'hidden' ? (
+          <Button
+            aria-label={locale === 'zh-CN' ? '显示左侧应用导航轨' : 'Show left navigation rail'}
+            onClick={() => setRailMode('rail')}
+            size="icon-sm"
+            title={locale === 'zh-CN' ? '显示左侧应用导航轨 (Ctrl+B)' : 'Show navigation rail (Ctrl+B)'}
+            type="button"
+            variant="ghost"
+          >
+            <PanelLeftOpenIcon aria-hidden="true" className="size-4" />
+          </Button>
+        ) : null}
         <WorkspaceHeaderLeadSlot />
-        <h1 data-agent-page-title="" className="min-w-0 max-w-40 shrink-0 truncate text-[0.9375rem] font-semibold">
-          {activeSection === activeRoleSection ? workspaceTitle : messages[activeSection]}
+        <h1 data-agent-page-title="" className="min-w-0 max-w-44 shrink-0 truncate text-[0.9375rem] font-semibold">
+          {headerTitle}
         </h1>
         <WorkspaceHeaderPatientSlot />
         <WorkspaceHeaderFlowSlot />
@@ -526,7 +912,7 @@ export function WorkspaceShell({
               </Badge>
             </Link>
           ) : null}
-          {!settingsMode ? (
+          {clinicalMode ? (
             <Button
               aria-expanded={assistantOpen}
               aria-label={locale === 'zh-CN'
@@ -549,34 +935,39 @@ export function WorkspaceShell({
               ) : null}
             </Button>
           ) : null}
-          <WorkspaceDisplayButton locale={locale} />
+          <StandaloneDisplayButton locale={locale} />
           <UserMenu
-            settingsMode={settingsMode}
+            locale={locale}
             messages={messages}
             onRoleChange={onRoleChange}
             onSignOut={onSignOut}
             onThemeChange={onThemeChange}
             roleChangePending={roleChangePending}
             session={session}
+            settingsMode={settingsMode}
             signOutPending={signOutPending}
             theme={theme}
           />
         </div>
       </header>
       <div
-        className={settingsMode ? 'flex min-h-0 flex-1 flex-col overflow-y-auto bg-background outline-none' : 'flex min-h-0 flex-1 flex-col overflow-hidden bg-background outline-none'}
+        className={settingsMode
+          ? 'flex min-h-0 flex-1 flex-col overflow-y-auto bg-background outline-none'
+          : 'flex min-h-0 flex-1 flex-col overflow-hidden bg-background outline-none'}
         data-clinmesh-workspace-panel=""
         tabIndex={-1}
       >
-        {/* 住院工作台先绑定会话的单一病区，不展示工作病区切换；其他岗位保留工作地点选择。 */}
-        {!settingsMode && workingRoles.length > 1 && activeSection !== 'inpatient' ? (
+        {clinicalMode && workingRoles.length > 1 && activeSection !== 'inpatient' ? (
           <FieldSet className="shrink-0 border-b p-3" disabled={roleChangePending}>
             <FieldGroup className="max-w-sm">
               <Field>
                 <FieldLabel htmlFor="workspace-working-location">{messages.workingLocation}</FieldLabel>
-                <WorkspaceSelect id="workspace-working-location" value={session.actor.practitionerRoleId ?? null}
+                <WorkspaceSelect
+                  id="workspace-working-location"
                   items={workingRoles.map(role => ({ value: role.id, label: clinicalDisplayName(role.locationName ?? role.locationId) }))}
-                  onValueChange={value => { if (value !== null) onRoleChange(value) }} />
+                  onValueChange={value => { if (value !== null) onRoleChange(value) }}
+                  value={session.actor.practitionerRoleId ?? null}
+                />
               </Field>
             </FieldGroup>
           </FieldSet>
@@ -586,139 +977,185 @@ export function WorkspaceShell({
     </>
   )
 
+  const commandPalette = (
+    <GlobalCommandPalette
+      clinicalHomePath={clinicalHomePath}
+      locale={locale}
+      onNavigate={handleNavigate}
+      onOpenChange={setCommandOpen}
+      onToggleAssistant={clinicalMode ? () => setAssistantOpen(open => !open) : undefined}
+      open={commandOpen}
+    />
+  )
+
+  const compactNavSheet = (
+    <CompactSpaceSheet
+      activeSpace={activeSpace}
+      locale={locale}
+      onOpenChange={setMobileNavOpen}
+      onOpenCommandPalette={() => setCommandOpen(true)}
+      onSelectSpace={handleSelectSpace}
+      open={mobileNavOpen}
+    />
+  )
+
   if (!settingsMode) {
     return (
-      <WorkspaceHeaderProvider><TooltipProvider>
-        <div className="flex h-svh min-h-0 min-w-0 overflow-hidden">
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            {content}
-          </main>
-          <ClinicianAssistantSidebar
-            locale={locale}
-            onCollapse={() => setAssistantOpen(false)}
-            onExpand={() => setAssistantOpen(true)}
-            onRunningChange={setAssistantRunning}
-            open={assistantOpen}
-            session={session}
-          />
-        </div>
-      </TooltipProvider></WorkspaceHeaderProvider>
+      <WorkspaceHeaderProvider>
+        <TooltipProvider>
+          <div className="flex h-svh min-h-0 min-w-0 overflow-hidden bg-app-shell">
+            <AppRail
+              activeSpace={activeSpace}
+              assistantRunning={assistantRunning}
+              locale={locale}
+              onOpenCommandPalette={() => setCommandOpen(true)}
+              onSelectSpace={handleSelectSpace}
+            />
+            <div
+              className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background md:my-1.5 md:mr-1.5 md:rounded-xl md:border md:border-border/80 md:shadow-2xs"
+              data-cm="app-shell-card"
+            >
+              <NavigationProgress sectionKey={activeSection} />
+              <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                {content}
+              </main>
+              {clinicalMode ? (
+                <ClinicianAssistantSidebar
+                  locale={locale}
+                  onCollapse={() => setAssistantOpen(false)}
+                  onExpand={() => setAssistantOpen(true)}
+                  onRunningChange={setAssistantRunning}
+                  open={assistantOpen}
+                  session={session}
+                />
+              ) : null}
+            </div>
+          </div>
+          {compactNavSheet}
+          {commandPalette}
+        </TooltipProvider>
+      </WorkspaceHeaderProvider>
     )
   }
 
   return (
-    <WorkspaceHeaderProvider><TooltipProvider>
-      <ResponsiveSidebarProvider
-        className={['consultation', 'inpatient', 'registration', 'billing', 'pharmacy'].includes(activeSection)
-          ? 'h-svh overflow-hidden' : undefined}
-        heightMode="viewport"
-        style={{
-          '--sidebar-width': '13.75rem',
-          '--sidebar-width-icon': '3rem',
-        } as React.CSSProperties}
-      >
-        <Sidebar
-          collapsible="icon"
-          mobileDescription={mobileDescription}
-          mobileTitle={navigationLabel}
-          variant="inset"
-        >
-          <SidebarHeader>
-            <Brand
-              appName={messages.appName}
-              logoAlt={messages.logoAlt}
-              productTagline={messages.productTagline}
-            />
-          </SidebarHeader>
-          <SidebarContent>
-            {settingsMode ? (
-              <nav aria-label={messages.settingsNavigation}>
-                <SidebarGroup>
-                  <SidebarGroupLabel>{messages.settings}</SidebarGroupLabel>
-                  <SidebarGroupContent>
-                    <SidebarMenu>
-                      {settingsRoutes.filter(item => item.key !== 'uiComponents').map(item => (
-                        <SidebarMenuItem key={item.key}>
-                          <SidebarMenuButton
-                            aria-current={item.key === activeSection ? 'page' : undefined}
-                            isActive={item.key === activeSection}
-                            render={<Link to={item.path} />}
-                            tooltip={messages[item.key]}
-                          >
-                            <item.icon aria-hidden="true" />
-                            <span>{messages[item.key]}</span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      ))}
-                    </SidebarMenu>
-                  </SidebarGroupContent>
-                </SidebarGroup>
-                <SidebarGroup>
-                  <SidebarGroupLabel>{messages.developer}</SidebarGroupLabel>
-                  <SidebarGroupContent>
-                    <SidebarMenu>
-                      {settingsRoutes.filter(item => item.key === 'uiComponents').map(item => (
-                        <SidebarMenuItem key={item.key}>
-                          <SidebarMenuButton
-                            aria-current={item.key === activeSection ? 'page' : undefined}
-                            isActive={item.key === activeSection}
-                            render={<Link to={item.path} />}
-                            tooltip={messages[item.key]}
-                          >
-                            <item.icon aria-hidden="true" />
-                            <span>{messages[item.key]}</span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      ))}
-                    </SidebarMenu>
-                  </SidebarGroupContent>
-                </SidebarGroup>
-              </nav>
-            ) : (
-              <SidebarGroup>
-                <SidebarGroupLabel>{messages.navigationGroup}</SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <nav aria-label={messages.navigationLabel}>
-                  <SidebarMenu>
-                    {visibleRoutes.map(item => (
-                      <SidebarMenuItem key={item.key}>
-                        <SidebarMenuButton
-                          aria-current={item.key === activeSection ? 'page' : undefined}
-                          isActive={item.key === activeSection}
-                          render={<Link to={item.path} />}
-                          tooltip={messages[item.key]}
-                        >
-                          <item.icon aria-hidden="true" />
-                          <span>{messages[item.key]}</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    ))}
-                  </SidebarMenu>
+    <WorkspaceHeaderProvider>
+      <TooltipProvider>
+        <div className="flex h-svh min-h-0 min-w-0 overflow-hidden bg-app-shell">
+          <AppRail
+            activeSpace={activeSpace}
+            assistantRunning={assistantRunning}
+            locale={locale}
+            onOpenCommandPalette={() => setCommandOpen(true)}
+            onSelectSpace={handleSelectSpace}
+          />
+          <div
+            className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background md:my-1.5 md:mr-1.5 md:rounded-xl md:border md:border-border/80 md:shadow-2xs"
+            data-cm="app-shell-card"
+          >
+            <NavigationProgress sectionKey={activeSection} />
+            <ResponsiveSidebarProvider
+              heightMode="viewport"
+              style={{
+                '--sidebar-width': '14.5rem',
+                '--sidebar-width-icon': '3rem',
+              } as React.CSSProperties}
+            >
+              <Sidebar
+                className="absolute"
+                collapsible="icon"
+                mobileDescription={messages.mobileSettingsNavigationDescription}
+                mobileTitle={messages.settingsNavigation}
+                variant="sidebar"
+              >
+                <SidebarHeader className="gap-2 border-b pb-2.5">
+                  <Button
+                    className="h-8 w-full justify-start gap-2 px-2 text-xs font-medium text-foreground"
+                    data-cm="settings-back-to-app"
+                    onClick={() => handleNavigate(backToAppPath)}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <ArrowLeftIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                    <span className="truncate">{zh ? '返回工作台' : 'Back to workspace'}</span>
+                  </Button>
+                  <Brand
+                    appName={messages.appName}
+                    logoAlt={messages.logoAlt}
+                    productTagline={messages.productTagline}
+                  />
+                </SidebarHeader>
+                <SidebarContent className="pt-2">
+                  <SettingsSidebarSearch locale={locale} onSelect={handleNavigate} />
+                  <nav aria-label={messages.settingsNavigation}>
+                    <SidebarGroup>
+                      <SidebarGroupLabel>{messages.settings}</SidebarGroupLabel>
+                      <SidebarGroupContent>
+                        <SidebarMenu>
+                          {settingsRoutes.filter(item => item.key !== 'uiComponents').map(item => (
+                            <SidebarMenuItem key={item.key}>
+                              <SidebarMenuButton
+                                aria-current={item.key === activeSection ? 'page' : undefined}
+                                isActive={item.key === activeSection}
+                                render={<Link to={item.path} />}
+                                tooltip={messages[item.key]}
+                              >
+                                <item.icon aria-hidden="true" />
+                                <span>{messages[item.key]}</span>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                          ))}
+                        </SidebarMenu>
+                      </SidebarGroupContent>
+                    </SidebarGroup>
+                    <SidebarGroup>
+                      <SidebarGroupLabel>{messages.developer}</SidebarGroupLabel>
+                      <SidebarGroupContent>
+                        <SidebarMenu>
+                          {settingsRoutes.filter(item => item.key === 'uiComponents').map(item => (
+                            <SidebarMenuItem key={item.key}>
+                              <SidebarMenuButton
+                                aria-current={item.key === activeSection ? 'page' : undefined}
+                                isActive={item.key === activeSection}
+                                render={<Link to={item.path} />}
+                                tooltip={messages[item.key]}
+                              >
+                                <item.icon aria-hidden="true" />
+                                <span>{messages[item.key]}</span>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                          ))}
+                        </SidebarMenu>
+                      </SidebarGroupContent>
+                    </SidebarGroup>
                   </nav>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            )}
-          </SidebarContent>
-          <SidebarFooter>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  aria-label={messages.settings}
-                  isActive={settingsMode}
-                  render={<Link to="/settings" />}
-                  tooltip={messages.settings}
-                >
-                  <SettingsIcon aria-hidden="true" />
-                  <span>{messages.settings}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarFooter>
-        </Sidebar>
-        <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
-          {content}
-        </SidebarInset>
-      </ResponsiveSidebarProvider>
-    </TooltipProvider></WorkspaceHeaderProvider>
+                </SidebarContent>
+                <SidebarFooter className="border-t pt-2">
+                  <Button
+                    className="h-8 w-full justify-between px-2 text-xs text-muted-foreground"
+                    onClick={() => setCommandOpen(true)}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <span className="inline-flex items-center gap-1.5">
+                      <SearchIcon aria-hidden="true" className="size-3.5" />
+                      <span>{zh ? '命令面板' : 'Commands'}</span>
+                    </span>
+                    <Kbd>Ctrl K</Kbd>
+                  </Button>
+                </SidebarFooter>
+              </Sidebar>
+              <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
+                {content}
+              </SidebarInset>
+            </ResponsiveSidebarProvider>
+          </div>
+        </div>
+        {compactNavSheet}
+        {commandPalette}
+      </TooltipProvider>
+    </WorkspaceHeaderProvider>
   )
 }

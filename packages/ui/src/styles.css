@@ -128,6 +128,9 @@
   --font-sans: var(--font-ui);
   --font-mono: var(--font-code);
   --color-background: var(--background);
+  --color-app-shell: var(--app-shell);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -181,6 +184,7 @@
   --text-control-sm: 0.875rem;
   --text-data: 0.8125rem;
   --background: #f5f6f7;
+  --app-shell: #eceff3;
   --foreground: #0f1115;
   --card: #ffffff;
   --card-foreground: #0f1115;
@@ -202,6 +206,10 @@
   --warning-foreground: #ffffff;
   --info: #1764c0;
   --info-foreground: #ffffff;
+  --brand: var(--info);
+  --brand-foreground: var(--info-foreground);
+  --surface-shadow: none;
+  --content-leading: 1.625;
   --border: #dce0e5;
   --input: #7e8793;
   --ring: var(--info);
@@ -245,6 +253,7 @@
 .dark {
   color-scheme: dark;
   --background: #151517;
+  --app-shell: #101012;
   --foreground: #f9fafb;
   --card: #232324;
   --card-foreground: #f9fafb;
@@ -404,7 +413,7 @@
   box-shadow: var(--clinmesh-glow);
 }
 
-/* 检验真空采血管管帽语义标识色点（与文字容器名共同出现，不单独承载语义）。 */
+/* 检验真空采血管管帽语义标识色点（医疗安全护栏锁定：任何主题不可覆写物理管帽色）。 */
 .clinmesh-specimen-cap {
   display: inline-block;
   width: 0.625rem;
@@ -413,11 +422,47 @@
   border-radius: 9999px;
   background-color: var(--specimen-cap-neutral);
 }
-.clinmesh-specimen-cap[data-cap="purple"] { background-color: var(--specimen-cap-purple); }
-.clinmesh-specimen-cap[data-cap="yellow"] { background-color: var(--specimen-cap-yellow); }
-.clinmesh-specimen-cap[data-cap="blue"] { background-color: var(--specimen-cap-blue); }
-.clinmesh-specimen-cap[data-cap="black"] { background-color: var(--specimen-cap-black); box-shadow: 0 0 0 1px var(--border); }
-.clinmesh-specimen-cap[data-cap="amber"] { background-color: var(--specimen-cap-amber); }
+.clinmesh-specimen-cap[data-cap="purple"] { background-color: #7c3aed !important; }
+.clinmesh-specimen-cap[data-cap="yellow"] { background-color: #ca8a04 !important; }
+.clinmesh-specimen-cap[data-cap="blue"] { background-color: #0284c7 !important; }
+.clinmesh-specimen-cap[data-cap="black"] { background-color: #18181b !important; box-shadow: 0 0 0 1px var(--border) !important; }
+.clinmesh-specimen-cap[data-cap="amber"] { background-color: #d97706 !important; }
+.dark .clinmesh-specimen-cap[data-cap="purple"] { background-color: #c084fc !important; }
+.dark .clinmesh-specimen-cap[data-cap="yellow"] { background-color: #facc15 !important; }
+.dark .clinmesh-specimen-cap[data-cap="blue"] { background-color: #38bdf8 !important; }
+.dark .clinmesh-specimen-cap[data-cap="black"] { background-color: #e4e4e7 !important; }
+.dark .clinmesh-specimen-cap[data-cap="amber"] { background-color: #fb923c !important; }
+
+/* 医疗安全护栏：任何自定义主题不可隐藏或禁用人工确认提交按钮。 */
+[data-agent-confirm] {
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+/* 信息密度档位与临床阅读排版 */
+:root[data-density="compact"] [data-slot="table"] :is(th, td),
+.clinmesh-web-root[data-density="compact"] [data-slot="table"] :is(th, td) {
+  padding-top: 0.3125rem;
+  padding-bottom: 0.3125rem;
+}
+:root[data-density="comfortable"] [data-slot="table"] :is(th, td),
+.clinmesh-web-root[data-density="comfortable"] [data-slot="table"] :is(th, td) {
+  padding-top: 0.6875rem;
+  padding-bottom: 0.6875rem;
+}
+[data-cm="clinical-prose"] {
+  line-height: var(--content-leading, 1.625);
+}
+
+@keyframes clinmesh-nav-progress-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.clinmesh-nav-progress-sweep {
+  animation: clinmesh-nav-progress-sweep 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
 
 /* Compatibility styles for the pre-prototype application shell. */
 .cm-shell {

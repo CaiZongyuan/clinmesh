@@ -1,3 +1,4 @@
+import { BUILT_IN_THEMES } from '@clinmesh/ui/appearance'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -38,6 +39,7 @@ import {
   CardTitle,
 } from '@clinmesh/ui/components/card'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
+import { Command, CommandInput, CommandItem, CommandList } from '@clinmesh/ui/components/command'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,12 +55,14 @@ import {
   EmptyTitle,
 } from '@clinmesh/ui/components/empty'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { HoldButton } from '@clinmesh/ui/components/hold-button'
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
 } from '@clinmesh/ui/components/input-group'
 import { Input } from '@clinmesh/ui/components/input'
+import { Kbd } from '@clinmesh/ui/components/kbd'
 import { Marker, MarkerContent, MarkerIcon } from '@clinmesh/ui/components/marker'
 import {
   Message,
@@ -94,7 +98,9 @@ import {
   SheetTrigger,
 } from '@clinmesh/ui/components/sheet'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { Slider } from '@clinmesh/ui/components/slider'
 import { Spinner } from '@clinmesh/ui/components/spinner'
+import { ThemeSwatch } from '@clinmesh/ui/components/theme-swatch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -129,6 +135,7 @@ import {
   getComponentCatalogMessages,
   type ComponentCatalogMessages,
 } from './component-catalog-i18n.ts'
+import { ComponentCatalogSink } from './component-catalog-sink.tsx'
 import { useWebPreferences } from './preferences-context.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
@@ -242,6 +249,29 @@ function FoundationShowcase({ messages }: { messages: ComponentCatalogMessages }
             <InfoIcon aria-hidden="true" />
             <span>{messages.sheetDescription}</span>
           </div>
+          <div className="flex flex-wrap items-center gap-4 pt-2">
+            <div className="flex w-44 items-center gap-2">
+              <Slider defaultValue={14} max={18} min={12} step={1} thumbLabel="Font scale preview" />
+              <span className="font-mono text-xs text-muted-foreground tabular-nums">14px</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Kbd>Ctrl</Kbd>
+              <Kbd>K</Kbd>
+            </div>
+            <HoldButton label="Hold to reset" onConfirmed={() => undefined} size="sm" variant="outline" />
+            <div className="flex items-center gap-2">
+              {BUILT_IN_THEMES.slice(0, 3).map(theme => (
+                <ThemeSwatch key={theme.id} mode="light" theme={theme} />
+              ))}
+            </div>
+          </div>
+          <Command className="max-w-sm rounded-lg border">
+            <CommandInput placeholder="Command preview…" />
+            <CommandList>
+              <CommandItem value="clinical">Clinical Workbench</CommandItem>
+              <CommandItem value="chat">Agent Chat</CommandItem>
+            </CommandList>
+          </Command>
         </div>
       </section>
     </div>
@@ -614,6 +644,7 @@ export function ComponentCatalog({
           <h2 className="text-base font-semibold" id="catalog-conversation-group-heading">{messages.conversationTab}</h2>
           <ConversationShowcase messages={messages} />
         </section>
+        <ComponentCatalogSink locale={locale} />
       </div>
       <section aria-label={messages.submitRegion} className="sticky bottom-0 flex min-h-14 items-center justify-end gap-2 border-t bg-background px-4 py-3 sm:px-6">
         <Button form="component-catalog-form" type="button" variant="outline">

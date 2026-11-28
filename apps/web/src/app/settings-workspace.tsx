@@ -1,69 +1,19 @@
+import type { SessionContext } from '@clinmesh/contracts/his'
+import { AppearanceSettingsPage } from './appearance-settings-page.tsx'
 import { ComponentCatalog } from './component-catalog.tsx'
 import { ModelUsageWorkspace } from './model-usage-workspace.tsx'
 import { ModelsSettingsPage } from './models-settings-page.tsx'
-import { WorkspaceCard, WorkspaceCardLayout } from './workspace-card-layout.tsx'
-import type { SessionContext } from '@clinmesh/contracts/his'
-import { Field, FieldTitle } from '@clinmesh/ui/components/field'
-import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import {
-  AppearanceControls,
-  type SettingsSection,
-  type WorkspaceTheme,
-} from './workspace-shell.tsx'
 import type { FontSizePreference } from './preferences.ts'
-import {
-  getWorkspaceMessages,
-  type WorkspaceLocale,
-  type WorkspaceMessageKey,
-} from './workspace-i18n.ts'
-
-const fontSizeOptions = [
-  { value: 'standard', label: 'fontSizeStandard' },
-  { value: 'larger', label: 'fontSizeLarger' },
-  { value: 'large', label: 'fontSizeLarge' },
-] satisfies Array<{
-  value: FontSizePreference
-  label: WorkspaceMessageKey
-}>
-
-function FontSizeControl({
-  fontSize,
-  messages,
-  onFontSizeChange,
-}: {
-  fontSize: FontSizePreference
-  messages: ReturnType<typeof getWorkspaceMessages>
-  onFontSizeChange: (fontSize: FontSizePreference) => void
-}): React.JSX.Element {
-  return (
-    <Field orientation="responsive">
-      <FieldTitle id="settings-font-size-label">{messages.fontSizeLabel}</FieldTitle>
-      <ToggleGroup
-        aria-labelledby="settings-font-size-label"
-        onValueChange={values => {
-          const value = (values as FontSizePreference[])[0]
-          if (value !== undefined) onFontSizeChange(value)
-        }}
-        size="sm"
-        spacing={0}
-        value={[fontSize]}
-        variant="outline"
-      >
-        {fontSizeOptions.map(option => (
-          <ToggleGroupItem key={option.value} value={option.value}>
-            {messages[option.label]}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-    </Field>
-  )
-}
+import { ShortcutsSettingsPage } from './shortcuts-settings-page.tsx'
+import type { WorkspaceLocale } from './workspace-i18n.ts'
+import type { SettingsSection, WorkspaceTheme } from './workspace-shell.tsx'
 
 interface SettingsWorkspaceProps {
   activeSection: SettingsSection
   session: SessionContext
   fontSize: FontSizePreference
   locale: WorkspaceLocale
+  highlightAnchor?: string | null
   onFontSizeChange: (fontSize: FontSizePreference) => void
   onLocaleChange: (locale: WorkspaceLocale) => void
   onThemeChange: (theme: WorkspaceTheme) => void
@@ -73,22 +23,28 @@ interface SettingsWorkspaceProps {
 export function SettingsWorkspace({
   activeSection,
   session,
-  fontSize,
   locale,
-  onFontSizeChange,
+  highlightAnchor,
   onLocaleChange,
-  onThemeChange,
-  theme,
 }: SettingsWorkspaceProps): React.JSX.Element {
-  const messages = getWorkspaceMessages(locale)
+  if (activeSection === 'settingsShortcuts') {
+    return <ShortcutsSettingsPage locale={locale} />
+  }
 
   if (activeSection === 'modelsProvider') {
     return <ModelsSettingsPage locale={locale} />
   }
 
   if (activeSection === 'modelUsage') {
-    return <div className="min-h-0 flex-1 overflow-y-auto p-4"><ModelUsageWorkspace key={`${session.actor.workspaceId}:${session.actor.epoch}:${session.actor.practitionerRoleId}`}
-      locale={locale} session={session} /></div>
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <ModelUsageWorkspace
+          key={`${session.actor.workspaceId}:${session.actor.epoch}:${session.actor.practitionerRoleId}`}
+          locale={locale}
+          session={session}
+        />
+      </div>
+    )
   }
 
   if (activeSection === 'uiComponents') {
@@ -96,27 +52,10 @@ export function SettingsWorkspace({
   }
 
   return (
-    <WorkspaceCardLayout id="settings-appearance" locale={locale}><section
-      aria-labelledby="settings-appearance-heading"
-      className="max-w-2xl"
-    >
-      <WorkspaceCard title={<h2 id="settings-appearance-heading">
-        {messages.appearanceLabel}
-      </h2>}><div className="flex flex-col gap-4">
-      <AppearanceControls
-        locale={locale}
-        messages={messages}
-        onLocaleChange={onLocaleChange}
-        onThemeChange={onThemeChange}
-        showLabel={false}
-        theme={theme}
-      />
-      <FontSizeControl
-        fontSize={fontSize}
-        messages={messages}
-        onFontSizeChange={onFontSizeChange}
-      />
-      </div></WorkspaceCard>
-    </section></WorkspaceCardLayout>
+    <AppearanceSettingsPage
+      highlightAnchor={highlightAnchor ?? null}
+      locale={locale}
+      onLocaleChange={onLocaleChange}
+    />
   )
 }
